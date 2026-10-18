@@ -36,7 +36,7 @@
 ### 1. Clone the Repository
 
 ```bash
-git clone <repo-url> ~/tvremote
+git clone https://github.com/Obada-Fa/imac-tv.git ~/tvremote
 cd ~/tvremote
 ```
 
