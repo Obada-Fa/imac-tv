@@ -1,0 +1,118 @@
+{
+  "continue_watching": [
+    {
+      "title": "The last train",
+      "subtitle": "Series \u00b7 S1:E4 \u00b7 24 min left",
+      "app": "stremio",
+      "source": "STREMIO",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-mystery.png",
+      "progress": 0.62
+    },
+    {
+      "title": "Beyond the red planet",
+      "subtitle": "Movie \u00b7 38 min left",
+      "app": "stremio",
+      "source": "STREMIO",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-space.png",
+      "progress": 0.34
+    },
+    {
+      "title": "Life below the ice",
+      "subtitle": "YouTube \u00b7 12 min left",
+      "app": "youtube",
+      "source": "YOUTUBE",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-nature.png",
+      "progress": 0.48
+    },
+    {
+      "title": "Coast to coast",
+      "subtitle": "YouTube \u00b7 16 min left",
+      "app": "youtube",
+      "source": "YOUTUBE",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-travel.png",
+      "progress": 0.2
+    },
+    {
+      "title": "The perfect plate",
+      "subtitle": "YouTube \u00b7 9 min left",
+      "app": "youtube",
+      "source": "YOUTUBE",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-cooking.png",
+      "progress": 0.71
+    }
+  ],
+  "stremio": [
+    {
+      "title": "The midnight express",
+      "subtitle": "Mystery \u00b7 Film",
+      "app": "stremio",
+      "source": "STREMIO PICK",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-mystery.png"
+    },
+    {
+      "title": "A distant world",
+      "subtitle": "Science fiction \u00b7 Film",
+      "app": "stremio",
+      "source": "STREMIO PICK",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-space.png"
+    },
+    {
+      "title": "Beneath the blue",
+      "subtitle": "Documentary \u00b7 Film",
+      "app": "stremio",
+      "source": "STREMIO PICK",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-nature.png"
+    },
+    {
+      "title": "Edge of the Atlantic",
+      "subtitle": "Adventure \u00b7 Film",
+      "app": "stremio",
+      "source": "STREMIO PICK",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-travel.png"
+    },
+    {
+      "title": "The chef\u2019s table",
+      "subtitle": "Drama \u00b7 Series",
+      "app": "stremio",
+      "source": "STREMIO PICK",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-cooking.png"
+    }
+  ],
+  "youtube": [
+    {
+      "title": "Wild Arctic",
+      "subtitle": "Nature \u00b7 22 min",
+      "app": "youtube",
+      "source": "YOUTUBE HOME",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-nature.png"
+    },
+    {
+      "title": "Night journey",
+      "subtitle": "Travel \u00b7 16 min",
+      "app": "youtube",
+      "source": "YOUTUBE HOME",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-mystery.png"
+    },
+    {
+      "title": "New worlds",
+      "subtitle": "Science \u00b7 19 min",
+      "app": "youtube",
+      "source": "YOUTUBE HOME",
+      "image": "/home/obada/Imac/tvapp/assets/preview-stremio-space.png"
+    },
+    {
+      "title": "A weekend by the sea",
+      "subtitle": "Travel \u00b7 14 min",
+      "app": "youtube",
+      "source": "YOUTUBE HOME",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-travel.png"
+    },
+    {
+      "title": "From the kitchen",
+      "subtitle": "Food \u00b7 12 min",
+      "app": "youtube",
+      "source": "YOUTUBE HOME",
+      "image": "/home/obada/Imac/tvapp/assets/preview-youtube-cooking.png"
+    }
+  ]
+}

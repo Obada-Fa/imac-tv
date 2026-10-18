@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#11151c"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>iMac TV Remote</title><link rel="stylesheet" href="/app.css" defer><script src="/app.js" defer></script></head>
+<body>
+<main id="remote" class="shell" hidden>
+  <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
+  <div class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
+  <nav class="apps" aria-label="TV apps"><button data-app="home">Home</button><button data-app="stremio">◆ Stremio</button><button data-app="youtube">▶ YouTube</button><button data-app="vlc">VLC</button></nav>
+  <div class="topbar">
+    <div class="brightness">
+      <button id="screen-off" type="button" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <rect x="2.5" y="4" width="19" height="12.5" rx="2.4"/>
+          <path d="M8.5 20.5h7M12 16.5v4"/>
+          <g class="power"><path d="M12 6.8v3.4"/><path d="M9.3 5.6a4.2 4.2 0 0 1 5.4 0"/></g>
+          <path class="slash" d="M3.8 20.2 20.2 3.8"/>
+        </svg>
+      </button>
+      <input id="brightness" type="range" min="5" max="100" step="5" value="100" aria-label="TV screen brightness">
+      <span id="brightness-level">100%</span>
+    </div>
+    <button id="fullscreen" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen">⛶<span>Full</span></button>
+  </div>
+  <div id="message" role="alert" hidden></div>
+  <section id="controls" class="controls" aria-label="Remote controls">
+    <div id="dpad" class="dpad">
+      <button data-action="up" class="up" aria-label="Up">▲</button>
+      <button data-action="left" class="left" aria-label="Left">◀</button>
+      <button data-action="ok" class="ok" aria-label="Select">OK</button>
+      <button data-action="right" class="right" aria-label="Right">▶</button>
+      <button data-action="down" class="down" aria-label="Down">▼</button>
+    </div>
+    <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click</small></div>
+    <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button data-action="play" aria-label="Play or pause">⏯<span>Play / Pause</span></button></div>
+    <div id="timeline" class="timeline" hidden><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">0:00</span></div>
+    <div class="volume"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
+  </section>
+  <footer><button id="mode" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open">Type</button><button id="more-open">More</button></footer>
+</main>
+
+<section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown along the bottom of TV Home.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
+
+<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" aria-label="Close">✕</button></div><div id="sheet-content"></div></div></section>
+</body></html>

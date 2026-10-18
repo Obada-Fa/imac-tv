@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=Mint Welcome (disabled for iMac TV)
+Exec=/bin/true
+Hidden=true

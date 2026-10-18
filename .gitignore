@@ -1,0 +1,33 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Runtime state and secrets
+secret.txt
+devices.json
+pairing.json
+home_token
+selection.json
+timer.json
+recommendations.json
+*.sock
+*.lock
+*.log
+
+# Build artifacts & temp
+dist/
+build/
+node_modules/
+*.tar.gz
+backups/
+
+# Debug test screenshots in root directory
+/*.png
+!/tvapp/assets/**/*.png
+!/tvapp/previews/**/*.png
+
+# OS metadata
+.DS_Store
+Thumbs.db
