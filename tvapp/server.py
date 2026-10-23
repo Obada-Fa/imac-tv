@@ -606,12 +606,14 @@ class Controller:
             name = base_name + (f" S{season:02d}E{episode:02d}" if season else "")
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
+                sources = []
             else:
                 found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
                 chosen = media_streams.best(found, cfg)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
+                sources = chosen.get("sources") or []
             try:
                 tracks = media_subs.pick(addons.subtitles(kind, video_id), cfg["sub_langs"])
             except addons.AddonError:
@@ -625,6 +627,8 @@ class Controller:
                 self.session = {"engine": torrents, "info_hash": info_hash, "pos": 0.0, "dur": 0.0,
                                 "entry": {"type": kind, "id": item, "video_id": video_id, "season": season,
                                           "episode": episode, "name": base_name, "poster": meta.get("poster")}}
+            if not torrents.create(info_hash, sources):
+                LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
             try:
                 os.unlink("/tmp/mpv.sock")
             except OSError:
@@ -655,6 +659,11 @@ class Controller:
                     with self.lock:
                         if generation == self.generation and self.buffering:
                             self.buffering.update(peers=stats["peers"], speed=stats["speed"])
+                    # mpv's window covers TV Home's buffering overlay, so say it on the black screen too.
+                    try:
+                        mpv("show-text", f"Buffering…  {stats['peers']} peers  ·  {stats['speed'] / 1e6:.1f} MB/s", 1500)
+                    except (OSError, RuntimeError, ValueError, TimeoutError):
+                        pass
                 try:
                     if mpv("get_property", "time-pos") is not None:
                         with self.lock:

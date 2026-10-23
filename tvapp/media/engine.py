@@ -5,6 +5,10 @@ import urllib.parse
 import urllib.request
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# Public trackers added to every torrent, so a source picked without Torrentio's list still finds peers fast.
+TRACKERS = ("udp://tracker.opentrackr.org:1337/announce", "udp://open.demonii.com:1337/announce",
+            "udp://open.stealth.si:80/announce", "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce", "udp://tracker.openbittorrent.com:6969/announce")
 
 
 class Engine:
@@ -27,6 +31,21 @@ class Engine:
             return True
         except urllib.error.HTTPError:
             return True  # the server answered, just not with 2xx
+        except (urllib.error.URLError, OSError, ValueError):
+            return False
+
+    def create(self, info_hash, sources=()):
+        """Hand the server the torrent with its peer sources, as the Stremio app does before streaming.
+
+        Without this the server only searches DHT, which can take minutes or never find peers.
+        """
+        peers = [x for x in sources if isinstance(x, str)]
+        peers += ["tracker:" + t for t in TRACKERS if "tracker:" + t not in peers]
+        peers.append("dht:" + info_hash)
+        body = {"torrent": {"infoHash": info_hash}, "peerSearch": {"sources": peers, "min": 40, "max": 150}}
+        try:
+            self._get(f"/{info_hash}/create", timeout=10, data=json.dumps(body).encode())
+            return True
         except (urllib.error.URLError, OSError, ValueError):
             return False
 

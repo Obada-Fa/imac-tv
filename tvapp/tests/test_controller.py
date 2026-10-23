@@ -139,7 +139,8 @@ class PlayMediaTests(unittest.TestCase):
         with mock.patch.object(server.threading, "Thread"), mock.patch.object(server, "playback", return_value={"active": False}):
             c.action("play_media", {"type": "movie", "id": "tt0063350"})
         gen = c.generation
-        src = found if found is not None else [{"name": "Torrentio\n1080p", "title": "Movie 1080p WEB-DL x264\n\U0001f464 50 \U0001f4be 2 GB", "infoHash": "d" * 40, "fileIdx": 1}]
+        src = found if found is not None else [{"name": "Torrentio\n1080p", "title": "Movie 1080p WEB-DL x264\n\U0001f464 50 \U0001f4be 2 GB", "infoHash": "d" * 40, "fileIdx": 1,
+                                                 "sources": ["tracker:udp://t:1/announce", "dht:" + "d" * 40]}]
         proc = mock.Mock()
         proc.poll.return_value = None
         calls = []
@@ -184,6 +185,7 @@ class PlayMediaTests(unittest.TestCase):
         self.eng_holder["eng"].configure_cache.assert_called_once_with(3221225472)
         self.watcher.assert_called_once()
         self.activate.assert_called_once_with({"id": "0x5"})
+        self.eng_holder["eng"].create.assert_called_once_with("d" * 40, ["tracker:udp://t:1/announce", "dht:" + "d" * 40])
         self.assertIn("--ontop", argv)
         self.assertTrue(any(a.startswith("--log-file=") and a.endswith("mpv.log") for a in argv))
         self.assertEqual(c.session["entry"]["name"], "Night")

@@ -44,7 +44,8 @@ def parse(stream):
            "codec": codec, "source": source,
            "size_bytes": int(float(size.group(1)) * UNITS[size.group(2).upper()]) if size else 0,
            "seeders": int(seeds.group(1)) if seeds else 0,
-           "languages": languages}
+           "languages": languages,
+           "sources": [x for x in stream.get("sources") or [] if isinstance(x, str)]}
     out["label"] = label(out)
     return out
 

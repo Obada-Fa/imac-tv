@@ -157,6 +157,21 @@ class EngineTests(unittest.TestCase):
         with mock.patch.object(eng, "_get", side_effect=urllib.error.URLError("refused")):
             self.assertFalse(eng.healthy())
 
+    def test_create_sends_trackers_and_dht(self):
+        eng = engine.Engine("http://127.0.0.1:11470")
+        with mock.patch.object(eng, "_get", return_value=b"{}") as get:
+            self.assertTrue(eng.create("a" * 40, ["tracker:udp://x:1/announce", 7]))
+        path, = get.call_args.args
+        body = json.loads(get.call_args.kwargs["data"])
+        self.assertEqual(path, f"/{'a' * 40}/create")
+        self.assertEqual(body["torrent"], {"infoHash": "a" * 40})
+        found = body["peerSearch"]["sources"]
+        self.assertEqual(found[0], "tracker:udp://x:1/announce")
+        self.assertIn("tracker:udp://tracker.opentrackr.org:1337/announce", found)
+        self.assertEqual(found[-1], "dht:" + "a" * 40)
+        with mock.patch.object(eng, "_get", side_effect=OSError):
+            self.assertFalse(eng.create("a" * 40))
+
     def test_is_local(self):
         self.assertTrue(engine.Engine("http://127.0.0.1:11470").is_local)
         self.assertTrue(engine.Engine("http://localhost:11470/").is_local)
