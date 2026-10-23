@@ -16,6 +16,7 @@ DEFAULTS = {
     "max_size_gb": 25,
     "quality_order": ["1080p", "720p", "2160p", "480p"],
     "codec_order": ["H264", "", "HEVC", "AV1"],  # "" = codec not named in the release title
+    "torbox_key": "",  # TorBox API key; when set, Torrentio returns TorBox direct links
 }
 
 
@@ -33,9 +34,24 @@ def _merge(base, extra):
     return out
 
 
+def with_torbox(url, key):
+    """Add torbox=KEY to a Torrentio add-on URL's option segment, unless it already has a debrid key."""
+    if "torrentio" not in url or "torbox=" in url:
+        return url
+    base, _, opts = (url.rstrip("/") + "/").partition(".strem.fun/")
+    if not _:
+        return url
+    opts = opts.rstrip("/")
+    return f"{base}.strem.fun/{opts + '|' if opts else ''}torbox={key}"
+
+
 def load():
     try:
         user = json.loads((data_dir() / "media.json").read_text())
     except (OSError, ValueError):
         user = {}
-    return _merge(DEFAULTS, user if isinstance(user, dict) else {})
+    cfg = _merge(DEFAULTS, user if isinstance(user, dict) else {})
+    key = cfg.get("torbox_key")
+    if isinstance(key, str) and key.strip():
+        cfg["addons"] = dict(cfg["addons"], streams=[with_torbox(u, key.strip()) for u in cfg["addons"]["streams"]])
+    return cfg

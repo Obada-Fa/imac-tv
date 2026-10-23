@@ -40,6 +40,19 @@ Nothing is kept on disk: the engine cache is capped (`cache_bytes`, 3 GB) and th
 torrent is removed when playback ends. Continue Watching comes from
 `~/.local/share/imactv/history.json`.
 
+### TorBox
+
+With a TorBox key, Torrentio returns TorBox direct links. Cached ones play at once
+and are tried before torrents; torrents remain the fallback. On the TV machine run:
+
+```bash
+scripts/set-torbox-key.sh
+```
+
+It prompts for the key (not echoed), stores it as `torbox_key` in
+`~/.local/share/imactv/media.json` (mode 600), clears the cached source lists and
+restarts the controller. `scripts/set-torbox-key.sh --remove` turns it off.
+
 ### Using an existing Stremio server
 
 The engine **is** Stremio's streaming server. Torrentio, Cinemeta and OpenSubtitles are queried directly by the app (defaults in `tvapp/media/config.py`), not taken from your Stremio account, so only the streaming server is needed.

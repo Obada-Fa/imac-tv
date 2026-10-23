@@ -32,6 +32,18 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("torrentio", cfg["addons"]["streams"][0])
         self.assertEqual(config.load()["max_size_gb"], 25)
 
+    def test_torbox_key_adds_debrid_to_torrentio(self):
+        (Path(_temp.name) / "media.json").write_text(json.dumps({"torbox_key": " abc123 "}))
+        try:
+            cfg = config.load()
+        finally:
+            (Path(_temp.name) / "media.json").unlink()
+        self.assertEqual(cfg["addons"]["streams"],
+                         ["https://torrentio.strem.fun/sort=qualitysize|qualityfilter=cam,scr,unknown|torbox=abc123"])
+        self.assertEqual(config.with_torbox("https://torrentio.strem.fun", "k"), "https://torrentio.strem.fun/torbox=k")
+        self.assertEqual(config.with_torbox("https://torrentio.strem.fun/torbox=old", "k"), "https://torrentio.strem.fun/torbox=old")
+        self.assertNotIn("torbox", config.load()["addons"]["streams"][0])
+
 
 class StreamTests(unittest.TestCase):
     def test_parse_torrentio_title(self):
