@@ -724,7 +724,7 @@
 
   // ---- Tabs: Remote / Movies / Series / Search ----
   let tab = 'remote', titleToken = 0, findFocused = false;
-  try { const t = sessionStorage.getItem('tab'); if (['remote', 'movie', 'series', 'search'].includes(t)) tab = t; } catch (e) {}
+  try { const t = sessionStorage.getItem('tab'); if (['remote', 'movie', 'series', 'search', 'settings'].includes(t)) tab = t; } catch (e) {}
   const loaded = {movie: false, series: false}, items = {movie: [], series: []}, busy = {};
   let continueItems = null;
 
@@ -734,10 +734,12 @@
   function applyTab() {
     remote.hidden = tab !== 'remote';
     browser.hidden = tab === 'remote';
-    for (const id of ['movie', 'series', 'search']) $('tab-' + id).hidden = tab !== id;
+    for (const id of ['movie', 'series', 'search', 'settings']) $('tab-' + id).hidden = tab !== id;
     tabbar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     updateTabbar();
     if ((tab === 'movie' || tab === 'series') && online && !loaded[tab]) loadTab(tab);
+    if (tab === 'settings' && online) loadSettings();
+    else stopTrialPoll();
   }
   function showTab(name) {
     if (name === tab) { applyTab(); return; }
@@ -755,6 +757,98 @@
     if (changed && tvScreen[b.dataset.tab]) {
       try { Promise.resolve(send('show', {screen: tvScreen[b.dataset.tab]})).catch(() => {}); } catch (e) {}
     }
+  });
+
+
+  // ---- Settings tab: display modes (with a keep-or-revert trial) and the YouTube auto-close ----
+  let setState = null, trialTimer = null, setBusy = false;
+  const rateText = r => (Math.round(r * 100) / 100) + ' Hz';
+  const sizeText = m => m.replace('x', ' × ');
+  const wideEnough = m => (parseInt(m, 10) || 0) >= 640;
+  function stopTrialPoll() { clearInterval(trialTimer); trialTimer = null; }
+  async function loadSettings() {
+    try {
+      setState = await api('/api/settings');
+      $('set-error').textContent = setState.display_error || '';
+      renderSettings();
+    } catch (err) { $('set-error').textContent = err.message; }
+  }
+  function renderSettings() {
+    const t = setState.trial || {active: false};
+    $('trial').hidden = !t.active;
+    if (t.active) {
+      $('trial-mode').textContent = sizeText(t.mode) + ' · ' + rateText(t.rate);
+      $('trial-sec').textContent = Math.max(0, Math.ceil(t.remaining));
+      if (!trialTimer) trialTimer = setInterval(pollTrial, 1000);
+    } else stopTrialPoll();
+    const box = $('set-display');
+    box.replaceChildren();
+    const outs = (setState.outputs || []).filter(o => o.connected);
+    if (!outs.length) {
+      const p = document.createElement('p'); p.className = 'muted';
+      p.textContent = setState.display_error || 'No connected screen found'; box.append(p);
+    }
+    for (const o of outs) {
+      const card = document.createElement('div'); card.className = 'card setcard';
+      const h = document.createElement('h4'); h.textContent = o.name;
+      const now = document.createElement('div'); now.className = 'now';
+      const cur = o.current;
+      now.textContent = cur ? `Now ${sizeText(cur.mode)} at ${rateText(cur.rate)}` : 'Screen is off';
+      card.append(h, now);
+      const modes = (o.modes || []).filter(m => wideEnough(m.mode) && !/i$/.test(m.mode));
+      const lbl1 = document.createElement('div'); lbl1.className = 'lbl'; lbl1.textContent = 'Resolution';
+      const res = document.createElement('div'); res.className = 'chips';
+      for (const m of modes) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = sizeText(m.mode);
+        if (cur && cur.mode === m.mode) b.classList.add('cur', 'on');
+        const t0 = (cur && cur.mode === m.mode && m.rates.includes(cur.rate)) ? cur.rate : m.rates[0];
+        b.onclick = () => startTrial(o.name, m.mode, t0);
+        res.append(b);
+      }
+      card.append(lbl1, res);
+      const curMode = cur && modes.find(m => m.mode === cur.mode);
+      if (curMode && curMode.rates.length > 1) {
+        const lbl2 = document.createElement('div'); lbl2.className = 'lbl'; lbl2.textContent = 'Refresh rate';
+        const rates = document.createElement('div'); rates.className = 'chips';
+        for (const r of curMode.rates) {
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = rateText(r);
+          if (cur.rate === r) b.classList.add('cur', 'on');
+          b.onclick = () => startTrial(o.name, curMode.mode, r);
+          rates.append(b);
+        }
+        card.append(lbl2, rates);
+      }
+      box.append(card);
+    }
+    const min = setState.youtube_close_after_paused_min || 0;
+    document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
+  }
+  async function settingsCall(action, params) {
+    if (setBusy) return;
+    setBusy = true;
+    try {
+      await send(action, params);
+      $('set-error').textContent = '';
+    } catch (err) { $('set-error').textContent = err.message; }
+    setBusy = false;
+    await loadSettings();
+  }
+  function startTrial(output, mode, rate) {
+    const t = setState && setState.trial;
+    if (t && t.active && t.mode === mode && t.rate === rate) return;
+    settingsCall('display_trial', {output, mode, rate});
+  }
+  async function pollTrial() {
+    if (tab !== 'settings') { stopTrialPoll(); return; }
+    try {
+      const s = await api('/api/settings');
+      setState = s; renderSettings();
+    } catch (err) { /* keep counting; the TV reverts on its own */ }
+  }
+  $('trial-keep').onclick = () => { buzz(8); settingsCall('display_keep'); };
+  $('trial-revert').onclick = () => { buzz(8); settingsCall('display_revert'); };
+  document.querySelectorAll('#yt-close button').forEach(b => b.onclick = () => {
+    buzz(8); settingsCall('youtube_close', {minutes: Number(b.dataset.min)});
   });
 
   const data = r => (r && r.result) || {};

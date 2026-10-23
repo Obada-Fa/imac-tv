@@ -26,7 +26,7 @@ header{display:flex;justify-content:space-between;align-items:center;gap:14px}.c
 /* Tabs, browse grids, title sheet */
 [hidden]{display:none!important}
 .shell{padding-bottom:calc(env(safe-area-inset-bottom) + 84px)}
-.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:6px 10px calc(env(safe-area-inset-bottom) + 6px);background:#151b24f5;border-top:1px solid #303d4f}
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:5;max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr);gap:4px;padding:6px 10px calc(env(safe-area-inset-bottom) + 6px);background:#151b24f5;border-top:1px solid #303d4f}
 .tabbar button{min-height:54px;border:0;background:none;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#9dacbd;font-size:11px;font-weight:650;padding:0}
 .tabbar svg{width:23px;height:23px}.tabbar button.on{color:#add4ff;background:#223246}
 .pane{display:flex;flex-direction:column;gap:12px}.ptitle{font-size:24px}.pane h3{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#9dacbd;margin:0 0 8px}
@@ -109,3 +109,10 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .prompt[hidden],.skipbtn[hidden]{display:none!important}
 .ptext{display:flex;flex-direction:column;gap:3px;min-width:0}.ptext small{letter-spacing:.1em;color:#9dacbd;font-size:11px}.ptext b{font-size:16px;line-height:1.25;overflow-wrap:anywhere}
 .prow{display:grid;grid-template-columns:1.4fr 1fr;gap:8px}.prow button{min-height:48px;font-size:15px;font-weight:700;background:#1f2a37}.prow .go{background:#2f5a96;border-color:#a8cfff}
+
+/* ---- Settings tab ---- */
+.setcard{gap:10px;padding:14px}.setcard h4{margin:0;font-size:17px}.setcard .now{font-size:14px;color:#cfdcea}
+.setcard .chips button{min-height:44px;padding:0 14px}.setcard .chips button.cur{border-color:#a8cfff}
+.setcard .chips button.on{background:#2f5a96;border-color:#a8cfff}
+.setcard+.setcard{margin-top:10px}
+.trial{position:sticky;top:6px;z-index:3}

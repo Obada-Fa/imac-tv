@@ -373,6 +373,7 @@ class Controller:
     def __init__(self):
         self.lock = threading.RLock()
         self.action_lock = threading.RLock()
+        self.settings_lock = threading.Lock()
         self.home_lock = threading.Lock()
         self.selection_path = DATA / "selection.json"
         selection = self._read_json(self.selection_path, {})
@@ -1477,7 +1478,63 @@ class Controller:
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
+    SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close")
+
+    def settings(self):
+        """Phone Settings tab: outputs and trial (xrandr, ~1 s) plus the YouTube auto-close setting."""
+        out = {"outputs": [], "trial": {"active": False}, "display_error": "",
+               "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
+        if display is None:
+            out["display_error"] = "Display control is not available"
+            return out
+        try:
+            display.check_trial()
+            out["outputs"] = display.list_outputs()
+        except display.DisplayError as exc:
+            out["display_error"] = str(exc)[:200]
+        out["trial"] = display.trial_state()
+        return out
+
+    def settings_action(self, action, params):
+        """Runs outside action_lock: xrandr can take a second and must not stall the remote."""
+        if action == "youtube_close":
+            minutes = params.get("minutes")
+            if minutes not in (0, 30, 60) or isinstance(minutes, bool):
+                raise ValueError("Minutes must be 0, 30 or 60")
+            path = media_config.data_dir() / "media.json"
+            with self.settings_lock:
+                try:
+                    user = json.loads(path.read_text())
+                except (OSError, ValueError):
+                    user = {}
+                if not isinstance(user, dict):
+                    user = {}
+                user["youtube_close_after_paused_min"] = minutes
+                tmp = path.with_suffix(".tmp")
+                with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+                    json.dump(user, f, indent=2)
+                os.replace(tmp, path)
+            return {"youtube_close_after_paused_min": minutes}
+        if display is None:
+            raise RuntimeError("Display control is not available")
+        try:
+            with self.settings_lock:
+                if action == "display_trial":
+                    output, mode, rate = params.get("output"), params.get("mode"), params.get("rate")
+                    if not isinstance(output, str) or not isinstance(mode, str):
+                        raise ValueError("Choose an output and a resolution")
+                    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+                        raise ValueError("Choose a refresh rate")
+                    return {"trial": display.start_trial(output, mode, float(rate))}
+                if action == "display_keep":
+                    return {"kept": bool(display.confirm_trial()), "trial": display.trial_state()}
+                return {"reverted": bool(display.revert_trial()), "trial": display.trial_state()}
+        except display.DisplayError as exc:
+            raise RuntimeError(str(exc)[:200])
+
     def action(self, action, params):
+        if action in self.SETTINGS_ACTIONS:
+            return self.settings_action(action, params)
         with self.action_lock:
             with self.lock:
                 self.flow.note_input()
@@ -1858,6 +1915,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._note_presence()
             self.respond(200, CONTROL.status())
+            return
+        if parsed.path == "/api/settings":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            self._note_presence()
+            self.respond(200, CONTROL.settings())
             return
         if parsed.path == "/api/pair-status":
             CONTROL.renew_pairing()
