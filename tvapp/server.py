@@ -104,6 +104,12 @@ def activate(win):
     command(["wmctrl", "-i", "-r", win["id"], "-b", "add,fullscreen"], check=False)
 
 
+def minimize(win):
+    """Iconify a window. Chromium/Electron then treats the page as hidden and stops painting and decoding
+    its video while audio keeps playing."""
+    command(["xdotool", "windowminimize", win["id"]], check=False)
+
+
 def fullscreen_state(window_id):
     state = command(["xprop", "-id", window_id, "_NET_WM_STATE"], timeout=1, check=False)
     return "_NET_WM_STATE_FULLSCREEN" in state
@@ -609,9 +615,37 @@ class Controller:
         if app == "home":
             self._ui_request("home")
             self._show_home()
+            self._minimize_youtube()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
+
+    def _minimize_youtube(self):
+        """YouTube keeps playing behind Home: minimize it (only once Home is up) so the video isn't rendered.
+        Music must go on, so a worker resumes it once if the minimize paused something that was playing."""
+        try:
+            win = window_for("youtube")
+            if not (win and window_for("home")):
+                return
+            try:
+                before = nowplaying.current()
+            except Exception:
+                before = None
+            minimize(win)
+            if before and before.get("status") == "Playing":
+                threading.Thread(target=self._resume_if_paused, daemon=True).start()
+        except Exception:
+            LOG.exception("Could not minimize YouTube")
+
+    def _resume_if_paused(self, delay=2.0):
+        time.sleep(delay)
+        try:
+            now = nowplaying.current()
+            if now and now.get("status") == "Paused":
+                nowplaying.control("play_pause")
+                LOG.info("YouTube paused when minimized; resumed it")
+        except Exception:
+            LOG.exception("Could not resume YouTube after minimizing")
 
     def _stop_proc(self):
         proc, self.proc = self.proc, None
