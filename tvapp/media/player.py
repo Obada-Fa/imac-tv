@@ -14,11 +14,37 @@ def slang_arg(langs, default=None):
     return ",".join(ALIASES.get(lang, lang) for lang in order) or DEFAULT_SLANG
 
 
+def sink_volume(text):
+    """`pactl get-sink-volume` output -> first channel's percent, or None."""
+    import re
+    m = re.search(r"(\d+)%", text or "")
+    return int(m.group(1)) if m else None
+
+
+def audio_warning(sinks_text, default_sink):
+    """`pactl list short sinks` + default sink name -> warning text when an HDMI sink exists but isn't the default."""
+    names = [line.split("\t")[1] if "\t" in line else (line.split() + ["", ""])[1] for line in (sinks_text or "").splitlines() if line.strip()]
+    hdmi = [n for n in names if "hdmi" in n.lower()]
+    if hdmi and "hdmi" not in (default_sink or "").lower():
+        return f"Default audio output is {default_sink or 'unknown'}, not HDMI ({hdmi[0]}); TV sound may be silent"
+    return None
+
+
+def volume_osd(percent, muted=False, width=20):
+    """Text bar for mpv's show-text."""
+    if percent is None:
+        return "Volume unavailable"
+    if muted:
+        return "Muted"
+    filled = round(max(0, min(100, percent)) * width / 100)
+    return f"Volume {'█' * filled}{'░' * (width - filled)} {percent}%"
+
+
 def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_file=None):
     # --force-window=no: the window maps with the first video frame, so TV Home's loading screen
     # shows until then. --ontop: GNOME opens new windows behind the focused fullscreen Home.
     argv = ["mpv", "--fs", "--ontop", f"--input-ipc-server={ipc}", "--force-window=no", "--keep-open=no",
-            "--idle=no", "--no-terminal", f"--title={title}", f"--force-media-title={title}",
+            "--idle=no", "--no-terminal", "--volume=100", f"--title={title}", f"--force-media-title={title}",
             f"--slang={slang or DEFAULT_SLANG}",
             "--hwdec=auto-safe", "--cache=yes", "--demuxer-max-bytes=200MiB", "--demuxer-readahead-secs=90",
             "--cache-pause-initial=yes", "--network-timeout=60",

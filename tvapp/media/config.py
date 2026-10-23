@@ -21,6 +21,7 @@ DEFAULTS = {
     "auto_skip_intro": False,       # skip intros and recaps without asking
     "still_watching_episodes": 3,   # autoplayed episodes in a row before "Are you still watching?"
     "still_watching_hours": 2.5,    # ...or this long without any remote input
+    "youtube_close_after_paused_min": 0,  # close VacuumTube after this many minutes paused (0 = never)
     "torbox_key": "",  # legacy place for the TorBox key; $DATA/torbox.key wins when present
 }
 

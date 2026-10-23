@@ -161,6 +161,58 @@ def control(cmd, value=None):
     return True
 
 
+def select_playing(rows, exclude=()):
+    """rows: [(bus_name, identity, status)] -> bus names to pause: every Playing player except mpv's own
+    and anything whose bus name or identity contains one of the `exclude` words."""
+    skip = ("mpv",) + tuple(str(e).lower() for e in exclude if e)
+    return [name for name, identity, status in rows
+            if status == "Playing" and not any(k in f"{name} {identity}".lower() for k in skip)]
+
+
+def _playing_rows():
+    Gio, GLib, bus = _bus()
+
+    def get(dest, iface, prop):
+        return bus.call_sync(dest, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "Get",
+                             GLib.Variant("(ss)", (iface, prop)), GLib.VariantType("(v)"),
+                             Gio.DBusCallFlags.NONE, 800, None).unpack()[0]
+    names = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames",
+                          None, GLib.VariantType("(as)"), Gio.DBusCallFlags.NONE, 800, None).unpack()[0]
+    rows = []
+    for name in names:
+        if not name.startswith(MPRIS + "."):
+            continue
+        try:
+            rows.append((name, str(get(name, MPRIS, "Identity")), str(get(name, PLAYER_IFACE, "PlaybackStatus"))))
+        except Exception:
+            continue
+    return rows
+
+
+def pause_all_playing(exclude=()):
+    """Pause every MPRIS player that is Playing (mpv's own excluded). Returns the bus names paused."""
+    Gio, GLib, bus = _bus()
+    paused = []
+    for name in select_playing(_playing_rows(), exclude):
+        try:
+            bus.call_sync(name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, "Pause", None, None,
+                          Gio.DBusCallFlags.NONE, 1500, None)
+            paused.append(name)
+        except Exception:
+            continue
+    return paused
+
+
+def paused_close_step(since, status, now, minutes):
+    """One tick of the close-after-paused timer. since = monotonic time the player became Paused (or None).
+    Returns (new_since, close_now). minutes <= 0 disables it."""
+    if status != "Paused" or not minutes or minutes <= 0:
+        return None, False
+    if since is None:
+        return now, False
+    return since, now - since >= minutes * 60
+
+
 def _window_lines():
     try:
         return subprocess.run(["wmctrl", "-lx"], capture_output=True, text=True, timeout=2).stdout.splitlines()

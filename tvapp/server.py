@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import signal
 import socket
 import re
 import subprocess
@@ -84,7 +85,7 @@ def windows():
     for line in lines:
         part = line.split(None, 9)
         if len(part) >= 10:
-            found.append({"id": part[0], "class": part[7].lower(), "title": part[9]})
+            found.append({"id": part[0], "pid": part[2], "class": part[7].lower(), "title": part[9]})
     return found
 
 
@@ -413,6 +414,9 @@ class Controller:
         self.legacy_secret = self._legacy_secret()
         self.renew_pairing()
         self.started = time.monotonic()
+        self.audio_warning = None
+        self._yt_paused_since = None
+        self._yt_check_at = 0.0
         threading.Thread(target=self._watch, daemon=True).start()
 
     @staticmethod
@@ -533,9 +537,75 @@ class Controller:
         old_url = parse_qs(query).get("k", [""])[0]
         return bool(self.legacy_secret and old_url and hmac.compare_digest(old_url, self.legacy_secret))
 
+    def _check_audio(self):
+        try:
+            sinks = command(["pactl", "list", "short", "sinks"], timeout=2)
+            default = command(["pactl", "get-default-sink"], timeout=2)
+        except Exception:
+            return
+        self.audio_warning = player.audio_warning(sinks, default)
+        if self.audio_warning:
+            LOG.warning("Audio: %s", self.audio_warning)
+
+    def _close_youtube_if_long_paused(self):
+        """Free RAM: close VacuumTube once it has been Paused for youtube_close_after_paused_min minutes."""
+        try:
+            minutes = media_config.load().get("youtube_close_after_paused_min") or 0
+            now_playing = nowplaying.current() if minutes else None
+            status = (now_playing or {}).get("status")
+            self._yt_paused_since, due = nowplaying.paused_close_step(
+                self._yt_paused_since, status, time.monotonic(), minutes)
+            if not due:
+                return
+            self._yt_paused_since = None
+            win = window_for("youtube")
+            pid = int(win["pid"]) if win and str(win.get("pid", "0")).isdigit() and int(win["pid"]) > 1 else None
+            if pid is None:
+                found = command(["pgrep", "-xo", "vacuumtube"], timeout=2, check=False).split()
+                pid = int(found[0]) if found else None
+            if pid:
+                LOG.info("YouTube paused for %s min; closing VacuumTube (pid %s)", minutes, pid)
+                os.kill(pid, signal.SIGTERM)
+        except Exception:
+            LOG.exception("Could not close paused YouTube")
+
+    def _yield_audio(self):
+        """A movie is starting: pause whatever else is playing and hide VacuumTube. Never resumed afterwards."""
+        try:
+            for name in nowplaying.pause_all_playing():
+                LOG.info("Paused %s for the movie", name)
+        except Exception:
+            LOG.exception("Could not pause other players")
+        try:
+            win = window_for("youtube")
+            if win:
+                minimize(win)
+        except Exception:
+            LOG.exception("Could not minimize YouTube for the movie")
+
+    def _system_volume(self):
+        """(percent, muted) of the default sink, or (None, None)."""
+        try:
+            percent = player.sink_volume(command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=1))
+            muted = command(["pactl", "get-sink-mute", "@DEFAULT_SINK@"], timeout=1).endswith("yes")
+            return percent, muted
+        except Exception:
+            return None, None
+
+    def _volume_osd(self, percent, muted=False):
+        """Show our own volume bar on the TV through the mpv OSD (only while mpv plays)."""
+        try:
+            mpv("show-text", player.volume_osd(percent, muted), 1500)
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass
+
     def _watch(self):
+        threading.Thread(target=self._check_audio, daemon=True).start()
         while True:
             time.sleep(2)
+            if time.monotonic() - self._yt_check_at >= 60:
+                self._yt_check_at = time.monotonic()
+                threading.Thread(target=self._close_youtube_if_long_paused, daemon=True).start()
             self.renew_pairing()
             with self.lock:
                 deadline = self.timer.get("deadline")
@@ -1090,6 +1160,7 @@ class Controller:
                 os.unlink(MPV_SOCK)
             except OSError:
                 pass
+            self._yield_audio()
             slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
             # mpv.log records the stream URL (TorBox key included): create it 0600 before mpv opens it.
             # The URL is also visible in the process list to local users; this is a single-user machine.
@@ -1229,15 +1300,7 @@ class Controller:
             buffering = dict(self.buffering) if self.buffering and phase == "buffering" else None
             current_media = dict(self.media) if self.media else None
             deadline = self.timer.get("deadline")
-        try:  # while mpv plays, the remote's volume is mpv's own
-            percent, muted = round(mpv("get_property", "volume")), bool(mpv("get_property", "mute"))
-        except (OSError, RuntimeError, ValueError, TimeoutError, TypeError):
-            try:
-                volume = command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=1)
-                percent = int(volume.split("%", 1)[0].rsplit("/", 1)[-1].strip())
-                muted = command(["pactl", "get-sink-mute", "@DEFAULT_SINK@"], timeout=1).endswith("yes")
-            except Exception:
-                percent, muted = None, None
+        percent, muted = self._system_volume()  # one system volume, also while mpv plays
         temps = []
         for sensor in Path("/sys/class/hwmon").glob("hwmon*/temp*_input"):
             try:
@@ -1272,6 +1335,7 @@ class Controller:
             current_media["next"] = nxt
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "gui": gui, "volume": percent, "muted": muted,
+                "audio_warning": self.audio_warning,
                 "old_link_active": bool(self.legacy_secret),
                 "torbox": {"configured": bool(media_config.read_key())},
                 "playback": player, "remote": self.remote_state(), "youtube_now": self.youtube_now(), **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
@@ -1349,15 +1413,13 @@ class Controller:
                 direction = params.get("direction")
                 if direction not in (-1, 1):
                     raise ValueError("Invalid volume direction")
-                if playback()["active"]:
-                    # mpv's own volume works whatever sink HDMI audio uses, and shows a bar on the TV.
-                    mpv("osd-msg-bar", "add", "volume", direction * 5)
-                    return {"volume": round(mpv("get_property", "volume") or 0)}
-                volume = self.status()["volume"]
+                volume, _muted = self._system_volume()
                 if volume is None:
                     raise RuntimeError("Audio output is unavailable")
-                command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{max(0, min(100, volume + direction * 5))}%"])
-                return {"volume": max(0, min(100, volume + direction * 5))}
+                volume = max(0, min(100, volume + direction * 5))
+                command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{volume}%"])
+                self._volume_osd(volume)
+                return {"volume": volume}
             if action == "next_episode":
                 with self.lock:
                     nxt = (self.media or {}).get("next")
@@ -1367,10 +1429,9 @@ class Controller:
                 return self.play_media({"type": "series", "id": target["id"],
                                         "season": nxt["season"], "episode": nxt["episode"]})
             if action == "mute":
-                if playback()["active"]:
-                    mpv("osd-msg", "cycle", "mute")
-                    return {"ok": True}
                 command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+                percent, muted = self._system_volume()
+                self._volume_osd(percent, bool(muted))
                 return {"ok": True}
             if action == "brightness":
                 return self.set_brightness(params.get("level"))
