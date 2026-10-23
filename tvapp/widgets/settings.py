@@ -254,37 +254,50 @@ class SettingsScreen(Screen):
         use_retro = cfg["background"] == "retro" and bool(lib)
         self.content.pack_start(text_label("THEMES", "set-section"), False, False, 0)
         self.grid([self.button("Focus", "Nature photos", not use_retro, ("bg", "photos"),
-                               lambda: self.choose_background("photos", "shuffle")),
+                               lambda: self.choose_background("photos")),
                    self.button("Retro", ("%d pictures" % len(lib)) if lib else "None added yet", use_retro,
-                               ("bg", "retro"), lambda: self.choose_background("retro", cfg["retro_pick"]))])
+                               ("bg", "retro"), lambda: self.choose_background("retro"))])
         if lib:
-            pick = cfg["retro_pick"] if any(i["id"] == cfg["retro_pick"] for i in lib) else "shuffle"
-            hdr = text_label("RETRO BACKGROUNDS", "set-section")
+            off = set(cfg["retro_off"])
+            on = {i["id"] for i in lib} - off or {i["id"] for i in lib}
+            hdr = text_label("RETRO BACKGROUNDS · %d OF %d ON" % (len(on), len(lib)), "set-section")
             hdr.set_margin_top(px(16))
             self.content.pack_start(hdr, False, False, 0)
-            btns = [self.button("Shuffle all", "", pick == "shuffle", ("bg", "pick", "shuffle"),
-                                lambda: self.choose_background("retro", "shuffle"))]
-            for i in lib:
-                btns.append(self.button(i["name"][:18], "%d × %d" % (i["width"], i["height"]), pick == i["id"],
-                                        ("bg", "pick", i["id"]),
-                                        lambda b=i["id"]: self.choose_background("retro", b)))
-            self.grid(btns)
+            self.grid([self.button(i["name"][:18], ("On · " if i["id"] in on else "Off · ") + "%d × %d" % (i["width"], i["height"]),
+                                   i["id"] in on, ("bg", "pic", i["id"]), lambda b=i["id"]: self.toggle_retro(b))
+                       for i in lib])
         note = ("Add pictures from your phone (Settings, Themes)." if not lib else
-                "Add or replace pictures from your phone. They stay at full size.")
+                "Select a picture to switch it on or off. Add or replace pictures from your phone.")
         self.content.pack_start(text_label(note, "set-note"), False, False, 0)
 
-    def choose_background(self, source, pick):
-        if source == "retro" and not self.retro.count():
-            self.shell.toast("Add a retro picture from your phone first", 4)
-            return
-        widgets.save_keys(display.DATA, {"background": source, "retro_pick": pick})
-        self.shell.toast("Theme: " + ("Retro" if source == "retro" else "Focus"), 3)
+    def toggle_retro(self, bid):
+        lib = self.retro.list()
+        cfg = widgets.load_config(display.DATA)
+        off = set(cfg["retro_off"]) & {i["id"] for i in lib}
+        if bid in off:
+            off.discard(bid)
+        else:
+            off.add(bid)
+            if len(off) >= len(lib):
+                self.shell.toast("Keep at least one Retro background on", 4)
+                return
+        widgets.save_keys(display.DATA, {"retro_off": sorted(off)})
+        self.rerender(("bg", "pic", bid))
+
+    def rerender(self, key):
         self.render()
         self.content.show_all()
-        key = ("bg", "retro" if source == "retro" else "photos")
         self.last_focus = next((b for row in self.rows for b in row if b.sel_key == key), None)
         if self.last_focus:
             self.last_focus.grab_focus()
+
+    def choose_background(self, source):
+        if source == "retro" and not self.retro.count():
+            self.shell.toast("Add a retro picture from your phone first", 4)
+            return
+        widgets.save_keys(display.DATA, {"background": source})
+        self.shell.toast("Theme: " + ("Retro" if source == "retro" else "Focus"), 3)
+        self.rerender(("bg", "retro" if source == "retro" else "photos"))
 
     # ---- actions
     def pick(self, output, mode, rate):

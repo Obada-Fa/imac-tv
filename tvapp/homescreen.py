@@ -507,7 +507,7 @@ class AmbientHomeScreen(Screen):
         self.retro = backgrounds.Backgrounds(screens.DATA)
         threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
         self.bg_source = self.cfg["background"]      # "photos" | "retro", re-read from home.json when it changes
-        self.bg_pick = self.cfg["retro_pick"]
+        self.bg_off = tuple(self.cfg["retro_off"])
         self.bg_gen = 0                              # bumped on a source change: stale preloads are dropped
         self.home_mtime = self.home_stamp()
         self.style = self.cfg["style"]
@@ -692,16 +692,13 @@ class AmbientHomeScreen(Screen):
 
     # ---- photos
     def provider(self):
-        """(provider, only) for the chosen background; Retro with an empty library falls back to the photos."""
+        """(provider, switched-off ids) for the chosen background; an empty Retro library falls back to Focus."""
         if self.bg_source == "retro" and self.retro.count():
-            only = self.bg_pick if self.bg_pick != "shuffle" else None
-            if only and not any(i["id"] == only for i in self.retro.list()):
-                only = None
-            return self.retro, only
-        return self.library, None
+            return self.retro, self.bg_off
+        return self.library, ()
 
     def preload(self):
-        prov, only = self.provider()
+        prov, off = self.provider()
         if self.loading or not prov:
             return
         self.loading = True
@@ -710,7 +707,7 @@ class AmbientHomeScreen(Screen):
         def work():
             item, surf = None, None
             try:
-                item = prov.next(only) if prov is self.retro else prov.next()
+                item = prov.next(off) if prov is self.retro else prov.next()
                 if item:
                     surf = load_surface(item["path"], self.shell.sw, self.shell.sh)   # (photo, blurred copy)
                     trace = traced(item["path"], self.shell.sw, self.shell.sh) if self.style == "network" else None
@@ -739,12 +736,12 @@ class AmbientHomeScreen(Screen):
             return
         self.home_mtime = stamp
         cfg = widgets.load_config(screens.DATA)
-        self.set_background(cfg["background"], cfg["retro_pick"])
+        self.set_background(cfg["background"], tuple(cfg["retro_off"]))
 
-    def set_background(self, source, pick):
-        if (source, pick) == (self.bg_source, self.bg_pick):
+    def set_background(self, source, off):
+        if (source, off) == (self.bg_source, self.bg_off):
             return
-        self.bg_source, self.bg_pick = source, pick
+        self.bg_source, self.bg_off = source, off
         self.bg_gen += 1
         self.pending = None
         self.loading = False

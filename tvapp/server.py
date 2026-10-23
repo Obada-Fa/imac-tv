@@ -1483,14 +1483,19 @@ class Controller:
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
-                        "background_set", "retro_remove")
+                        "background_set", "retro_toggle", "retro_remove")
 
     def background_state(self):
         cfg = widgets.load_config(DATA)
         lib = self.retro.list()
-        pick = cfg["retro_pick"] if any(i["id"] == cfg["retro_pick"] for i in lib) else "shuffle"
+        ids = {i["id"] for i in lib}
+        off = [i for i in cfg["retro_off"] if i in ids]
+        if len(off) >= len(ids):
+            off = []                        # nothing left on: Home shows them all
+        for i in lib:
+            i["on"] = i["id"] not in off
         return {"source": "retro" if cfg["background"] == "retro" and lib else "photos",
-                "wanted": cfg["background"], "pick": pick, "retro": lib,
+                "wanted": cfg["background"], "retro": lib,
                 "formats": backgrounds.supported_formats()}
 
     def settings(self):
@@ -1529,16 +1534,28 @@ class Controller:
                 os.replace(tmp, path)
             return {"youtube_close_after_paused_min": minutes}
         if action == "background_set":
-            source, pick = params.get("source"), params.get("pick", "shuffle")
+            source = params.get("source")
             if source not in widgets.BACKGROUNDS:
-                raise ValueError("Choose Photos or Retro")
-            lib = self.retro.list()
-            if source == "retro" and not lib:
+                raise ValueError("Choose Focus or Retro")
+            if source == "retro" and not self.retro.list():
                 raise ValueError("Add a retro picture first")
-            if pick != "shuffle" and not any(i["id"] == pick for i in lib):
+            with self.settings_lock:
+                widgets.save_keys(DATA, {"background": source})
+            return {"background": self.background_state()}
+        if action == "retro_toggle":
+            bid, enabled = params.get("id"), params.get("enabled")
+            lib = self.retro.list()
+            if not isinstance(enabled, bool) or not any(i["id"] == bid for i in lib):
                 raise ValueError("That background no longer exists")
             with self.settings_lock:
-                widgets.save_keys(DATA, {"background": source, "retro_pick": pick})
+                off = set(widgets.load_config(DATA)["retro_off"]) & {i["id"] for i in lib}
+                if enabled:
+                    off.discard(bid)
+                else:
+                    off.add(bid)
+                    if len(off) >= len(lib):
+                        raise ValueError("Keep at least one Retro background on")
+                widgets.save_keys(DATA, {"retro_off": sorted(off)})
             return {"background": self.background_state()}
         if action == "retro_remove":
             try:

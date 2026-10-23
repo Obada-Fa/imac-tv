@@ -825,23 +825,22 @@
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
   function renderBackground() {
-    const bg = setState.background || {source: 'photos', retro: [], pick: 'shuffle'};
+    const bg = setState.background || {source: 'photos', retro: []};
     document.querySelectorAll('#bg-source button').forEach(b => b.classList.toggle('on', b.dataset.src === bg.source));
     const list = $('bg-list');
     list.replaceChildren();
     $('bg-retro').hidden = !bg.retro.length;
-    const mk = (id, label, sub, thumb) => {
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'bgitem';
-      b.classList.toggle('on', bg.pick === id);
-      if (thumb) { const i = document.createElement('img'); i.alt = ''; i.loading = 'lazy'; i.src = thumb; b.append(i); }
-      const n = document.createElement('span'); n.textContent = label; b.append(n);
-      if (sub) { const m = document.createElement('small'); m.textContent = sub; b.append(m); }
-      b.onclick = () => settingsCall('background_set', {source: 'retro', pick: id});
-      return b;
-    };
-    list.append(mk('shuffle', 'Shuffle all', bg.retro.length + ' pictures', null));
+    const active = bg.retro.filter(r => r.on).length;
+    $('bg-count').textContent = active + ' of ' + bg.retro.length + ' on';
     for (const r of bg.retro) {
-      const b = mk(r.id, r.name, r.width + ' × ' + r.height, '/api/retro/thumb/' + r.id);
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'bgitem';
+      b.classList.toggle('on', r.on);
+      b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(r.on));
+      const i = document.createElement('img'); i.alt = ''; i.loading = 'lazy'; i.src = '/api/retro/thumb/' + r.id; b.append(i);
+      const tick = document.createElement('i'); tick.className = 'bgtick'; tick.textContent = r.on ? '✓' : ''; b.append(tick);
+      const n = document.createElement('span'); n.textContent = r.name; b.append(n);
+      const m = document.createElement('small'); m.textContent = r.width + ' × ' + r.height; b.append(m);
+      b.onclick = () => settingsCall('retro_toggle', {id: r.id, enabled: !r.on});
       const d = document.createElement('button'); d.type = 'button'; d.className = 'bgdel'; d.textContent = '✕';
       d.setAttribute('aria-label', 'Remove ' + r.name);
       d.onclick = ev => { ev.stopPropagation(); if (confirm('Remove "' + r.name + '"?')) settingsCall('retro_remove', {id: r.id}); };
@@ -852,7 +851,7 @@
   document.querySelectorAll('#bg-source button').forEach(b => b.onclick = () => {
     const bg = (setState && setState.background) || {};
     if (b.dataset.src === 'retro' && !(bg.retro || []).length) { $('bg-note').textContent = 'Add a picture first.'; return; }
-    settingsCall('background_set', {source: b.dataset.src, pick: bg.pick || 'shuffle'});
+    settingsCall('background_set', {source: b.dataset.src});
   });
   $('bg-file').onchange = async ev => {
     const f = ev.target.files[0]; ev.target.value = '';

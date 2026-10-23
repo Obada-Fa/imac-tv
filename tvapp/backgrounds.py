@@ -282,18 +282,19 @@ class Backgrounds:
         return added
 
     # ---- provider boundary (same as ambient.Library)
-    def items(self, only=None):
+    def items(self, off=()):
+        """Pictures that are switched on. Switching every one off shows them all rather than nothing."""
+        recs = sorted(self.scan(), key=lambda i: i.get("added", 0), reverse=True)
+        on = [r for r in recs if r["id"] not in set(off)] or recs
         out = []
-        for rec in sorted(self.scan(), key=lambda i: i.get("added", 0), reverse=True):
-            if only and rec["id"] != only:
-                continue
+        for rec in on:
             out.append({"path": str(self._file(rec)), "caption": rec.get("name", ""), "credit": CREDIT,
                         "source": "retro", "id": rec["id"]})
         return out
 
-    def next(self, only=None):
+    def next(self, off=()):
         with self._lock:
-            have = {i["path"]: i for i in self.items(only)}
+            have = {i["path"]: i for i in self.items(off)}
             if not have:
                 self._queue = []
                 return None

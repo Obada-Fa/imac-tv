@@ -88,14 +88,14 @@ class LibraryTests(unittest.TestCase):
         (self.lib.dir / "dropped.png").unlink()
         self.assertEqual(self.lib.list(), [])
 
-    def test_next_cycles_and_can_be_pinned_to_one(self):
+    def test_next_cycles_skips_switched_off_and_never_goes_empty(self):
         ids = [self.lib.import_file(image(self.src / ("p%d.png" % n), 1280 + n * 10, 720, rgb=0x10000000 * n + 0xff))["id"]
                for n in range(3)]
         seen = {self.lib.next()["id"] for _ in range(3)}
         self.assertEqual(seen, set(ids))
-        for _ in range(3):
-            self.assertEqual(self.lib.next(ids[1])["id"], ids[1])
-        self.assertIsNone(self.lib.next("f" * 12))
+        for _ in range(4):
+            self.assertIn(self.lib.next((ids[1],))["id"], (ids[0], ids[2]))
+        self.assertEqual({self.lib.next(tuple(ids))["id"] for _ in range(6)}, set(ids))   # all off: show all
 
     def test_seed_imports_once_and_respects_removal(self):
         assets = self.root / "assets"
@@ -131,21 +131,22 @@ class LibraryTests(unittest.TestCase):
 class ConfigTests(unittest.TestCase):
     def test_defaults_and_validation(self):
         cfg = widgets.parse_config({})
-        self.assertEqual((cfg["background"], cfg["retro_pick"]), ("photos", "shuffle"))
+        self.assertEqual((cfg["background"], cfg["retro_off"]), ("photos", []))
         for bad in ("retr0", 5, None, ["retro"]):
             self.assertEqual(widgets.parse_config({"background": bad})["background"], "photos")
-        for bad in ("../../etc", "ABCDEF123456", "abc", 7, ""):
-            self.assertEqual(widgets.parse_config({"retro_pick": bad})["retro_pick"], "shuffle")
-        cfg = widgets.parse_config({"background": "retro", "retro_pick": "0123456789ab"})
-        self.assertEqual((cfg["background"], cfg["retro_pick"]), ("retro", "0123456789ab"))
+        for bad in ("0123456789ab", 7, None, {"a": 1}):
+            self.assertEqual(widgets.parse_config({"retro_off": bad})["retro_off"], [])
+        cfg = widgets.parse_config({"background": "retro",
+                                    "retro_off": ["bbbbbbbbbbbb", "../../etc", 5, "aaaaaaaaaaaa", "bbbbbbbbbbbb"]})
+        self.assertEqual((cfg["background"], cfg["retro_off"]), ("retro", ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]))
 
     def test_round_trip_keeps_other_keys(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "home.json").write_text(json.dumps({"style": "bubbles", "display": {"output": "HDMI-1", "mode": "1920x1080"}}))
-            cfg = widgets.save_keys(d, {"background": "retro", "retro_pick": "0123456789ab"})
+            cfg = widgets.save_keys(d, {"background": "retro", "retro_off": ["0123456789ab"]})
             self.assertEqual(cfg["background"], "retro")
             again = widgets.load_config(d)
-            self.assertEqual((again["background"], again["retro_pick"], again["style"]), ("retro", "0123456789ab", "bubbles"))
+            self.assertEqual((again["background"], again["retro_off"], again["style"]), ("retro", ["0123456789ab"], "bubbles"))
             raw = json.loads((Path(d) / "home.json").read_text())
             self.assertEqual(raw["display"]["mode"], "1920x1080")
             (Path(d) / "home.json").write_text("{corrupt")
@@ -162,22 +163,42 @@ class PhoneTests(TorboxCase):
         self.src = self.data / "src"
         self.src.mkdir()
 
-    def test_choose_requires_pictures_and_persists(self):
+    def test_choose_theme_requires_pictures_and_persists(self):
         with self.assertRaisesRegex(ValueError, "Add a retro picture"):
             self.c.action("background_set", {"source": "retro"})
         r = self.c.retro.import_file(image(self.src / "a.png", 1280, 720))
-        res = self.c.action("background_set", {"source": "retro", "pick": r["id"]})
-        self.assertEqual((res["background"]["source"], res["background"]["pick"]), ("retro", r["id"]))
-        cfg = widgets.load_config(self.data)
-        self.assertEqual((cfg["background"], cfg["retro_pick"]), ("retro", r["id"]))
+        res = self.c.action("background_set", {"source": "retro"})
+        self.assertEqual(res["background"]["source"], "retro")
+        self.assertEqual(widgets.load_config(self.data)["background"], "retro")
         self.assertEqual(self.c.settings()["background"]["retro"][0]["id"], r["id"])
-        for bad in ({"source": "tv"}, {"source": "retro", "pick": "0" * 12}, {"source": "retro", "pick": 4}, {}):
+        self.assertEqual(self.c.action("background_set", {"source": "photos"})["background"]["source"], "photos")
+        for bad in ({"source": "tv"}, {"source": 4}, {}):
             with self.assertRaises(ValueError):
                 self.c.action("background_set", bad)
 
+    def test_all_on_by_default_and_toggle_round_trip(self):
+        ids = [self.c.retro.import_file(image(self.src / ("p%d.png" % n), 1280 + n, 720, rgb=n * 0x01000000 + 0xff))["id"]
+               for n in range(3)]
+        self.assertTrue(all(i["on"] for i in self.c.settings()["background"]["retro"]))
+        res = self.c.action("retro_toggle", {"id": ids[0], "enabled": False})
+        self.assertEqual({i["id"]: i["on"] for i in res["background"]["retro"]}, {ids[0]: False, ids[1]: True, ids[2]: True})
+        self.assertEqual(widgets.load_config(self.data)["retro_off"], [ids[0]])
+        self.c.action("retro_toggle", {"id": ids[1], "enabled": False})
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            self.c.action("retro_toggle", {"id": ids[2], "enabled": False})
+        self.assertEqual(sorted(widgets.load_config(self.data)["retro_off"]), sorted(ids[:2]))
+        self.c.action("retro_toggle", {"id": ids[0], "enabled": True})
+        self.assertEqual(widgets.load_config(self.data)["retro_off"], [ids[1]])
+        for bad in ({"id": "0" * 12, "enabled": True}, {"id": ids[0], "enabled": "no"}, {"id": 3, "enabled": True}, {}):
+            with self.assertRaises(ValueError):
+                self.c.action("retro_toggle", bad)
+        # the provider honours the switches
+        seen = {self.c.retro.next(tuple(widgets.load_config(self.data)["retro_off"]))["id"] for _ in range(6)}
+        self.assertEqual(seen, {ids[0], ids[2]})
+
     def test_removing_the_last_picture_falls_back_to_photos(self):
         r = self.c.retro.import_file(image(self.src / "a.png", 1280, 720))
-        self.c.action("background_set", {"source": "retro", "pick": r["id"]})
+        self.c.action("background_set", {"source": "retro"})
         out = self.c.action("retro_remove", {"id": r["id"]})
         self.assertEqual(out["background"]["source"], "photos")
         self.assertEqual(out["background"]["wanted"], "retro")
@@ -217,34 +238,31 @@ class PhoneTests(TorboxCase):
 
 
 class HomeSwitchTests(unittest.TestCase):
-    def home(self, retro_count, listing=()):
+    def home(self, retro_count):
         import homescreen
         retro = mock.Mock()
         retro.count.return_value = retro_count
-        retro.list.return_value = list(listing)
-        return homescreen, SimpleNamespace(bg_source="photos", bg_pick="shuffle", bg_gen=0, retro=retro,
+        return homescreen, SimpleNamespace(bg_source="photos", bg_off=(), bg_gen=0, retro=retro,
                                            library=mock.Mock(), pending=("x",), loading=True, photo_due=5.0,
                                            preload=mock.Mock())
 
     def test_provider_choice_and_empty_retro_fallback(self):
-        hs, h = self.home(2, [{"id": "a" * 12}])
-        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.library, None))
-        h.bg_source = "retro"
-        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.retro, None))
-        h.bg_pick = "a" * 12
-        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.retro, "a" * 12))
-        h.bg_pick = "b" * 12                                    # picture was removed: shuffle instead
-        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.retro, None))
+        hs, h = self.home(2)
+        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.library, ()))
+        h.bg_source, h.bg_off = "retro", ("a" * 12,)
+        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.retro, ("a" * 12,)))
         h.retro.count.return_value = 0
-        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.library, None))
+        self.assertEqual(hs.AmbientHomeScreen.provider(h), (h.library, ()))
 
     def test_switch_drops_stale_loads_and_reloads(self):
         hs, h = self.home(1)
-        hs.AmbientHomeScreen.set_background(h, "retro", "shuffle")
+        hs.AmbientHomeScreen.set_background(h, "retro", ())
         self.assertEqual((h.bg_source, h.bg_gen, h.pending, h.loading, h.photo_due), ("retro", 1, None, False, 0.0))
         h.preload.assert_called_once()
-        hs.AmbientHomeScreen.set_background(h, "retro", "shuffle")
+        hs.AmbientHomeScreen.set_background(h, "retro", ())
         h.preload.assert_called_once()                          # unchanged: nothing to do
+        hs.AmbientHomeScreen.set_background(h, "retro", ("a" * 12,))   # toggling a picture also reloads
+        self.assertEqual(h.preload.call_count, 2)
         h.pending = ("fresh",)
         self.assertFalse(hs.AmbientHomeScreen.preloaded(h, {}, object(), 0))
         self.assertEqual(h.pending, ("fresh",))                 # the stale result was ignored
@@ -262,7 +280,7 @@ class HomeSwitchTests(unittest.TestCase):
                 prov.next.return_value = {"path": "/p.png", "source": source}
                 h = SimpleNamespace(style="network", viz_on=True, shell=SimpleNamespace(sw=1920, sh=1080), loading=False,
                                     bg_gen=0, retro=mock.Mock(), library=prov, preloaded=None)
-                h.provider = lambda prov=prov: (prov, None)
+                h.provider = lambda prov=prov: (prov, ())
                 homescreen.AmbientHomeScreen.preload(h)
                 item = idle.call_args[0][1]
                 self.assertEqual(item["reactive_paths"], expect)

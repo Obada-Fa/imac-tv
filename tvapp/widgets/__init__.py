@@ -24,7 +24,7 @@ DEFAULT_CONFIG = {
     "visualizer": True,
     "qr_style": "glass",
     "background": "photos",      # "photos" (Bing/Wikimedia) or "retro" (imported images, with Circuit)
-    "retro_pick": "shuffle",     # "shuffle" or one retro background id
+    "retro_off": [],             # retro background ids switched off (everything is on by default)
 }
 STYLES = ("network", "bubbles")
 NODE_SHAPES = ("hexagon", "octagon")
@@ -94,7 +94,7 @@ def parse_config(raw):
            "node_shape": DEFAULT_CONFIG["node_shape"], "tile_shape": DEFAULT_CONFIG["tile_shape"],
            "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
            "qr_style": DEFAULT_CONFIG["qr_style"], "background": DEFAULT_CONFIG["background"],
-           "retro_pick": DEFAULT_CONFIG["retro_pick"]}
+           "retro_off": []}
     if not isinstance(raw, dict):
         return cfg
     if raw.get("style") in STYLES:
@@ -105,9 +105,9 @@ def parse_config(raw):
         cfg["qr_style"] = raw["qr_style"]
     if raw.get("background") in BACKGROUNDS:
         cfg["background"] = raw["background"]
-    pick = raw.get("retro_pick")
-    if isinstance(pick, str) and (pick == "shuffle" or re.fullmatch(r"[0-9a-f]{12}", pick)):
-        cfg["retro_pick"] = pick
+    off = raw.get("retro_off")
+    if isinstance(off, list):
+        cfg["retro_off"] = sorted({i for i in off if isinstance(i, str) and re.fullmatch(r"[0-9a-f]{12}", i)})[:400]
     if raw.get("shapes") in SHAPE_MODES:
         cfg["shapes"] = raw["shapes"]
     if isinstance(raw.get("visualizer"), bool):
