@@ -6,8 +6,8 @@
 <div id="message" class="toast" role="alert" hidden></div>
 <main id="remote" class="shell" hidden>
   <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
-  <div class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
-  <nav class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
+  <div id="nowcard" class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
+  <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
   <div class="topbar">
     <div class="brightness">
       <button id="screen-off" type="button" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
@@ -32,18 +32,17 @@
       <button id="buf-cancel" data-action="back" class="wide">Cancel</button>
     </div>
     <div id="nowplaying" class="card np" hidden>
-      <small>NOW PLAYING</small>
-      <h2 id="np-title">Video</h2>
+      <div class="np-head"><img id="np-poster" alt="" hidden><div class="np-titles"><h2 id="np-title">Video</h2><p id="np-sub" class="muted" hidden></p></div></div>
       <div class="timeline"><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">-0:00</span></div>
       <div class="skip">
-        <button data-skip="-60">−60</button><button data-skip="-10">−10</button>
+        <button data-skip="-60" class="sm" aria-label="Back 60 seconds">−60</button><button data-skip="-10" aria-label="Back 10 seconds">−10</button>
         <button id="np-play" data-action="play" class="big" aria-label="Play or pause">⏯</button>
-        <button data-skip="10">+10</button><button data-skip="60">+60</button>
+        <button data-skip="10" aria-label="Forward 10 seconds">+10</button><button data-skip="60" class="sm" aria-label="Forward 60 seconds">+60</button>
       </div>
-      <label class="lbl">Subtitles</label><div id="np-subs" class="chips"></div>
-      <div class="delay"><button data-subdelay="-0.1" aria-label="Subtitles earlier">−</button><span id="np-delay">Delay 0.0s</span><button data-subdelay="0.1" aria-label="Subtitles later">＋</button></div>
-      <div id="np-audio-wrap"><label class="lbl">Audio</label><div id="np-audio" class="chips"></div></div>
-      <button data-action="back" class="wide">■ Stop · back to details</button>
+      <button id="np-next" class="nextbtn" hidden><span>Next episode</span><b id="np-next-label">S01E02</b><span aria-hidden="true">▶|</span></button>
+      <div class="npvol"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="np-volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
+      <div class="pickers"><button id="pick-sub" type="button"><small>SUBTITLES</small><b id="pick-sub-label">Off</b></button><button id="pick-audio" type="button" hidden><small>AUDIO</small><b id="pick-audio-label">—</b></button></div>
+      <button data-action="back" class="wide stop">■ Stop · back to details</button>
     </div>
     <div id="browse" class="browse">
       <div id="dpad" class="dpad">
@@ -53,7 +52,7 @@
         <button data-action="right" class="right" aria-label="Right">▶</button>
         <button data-action="down" class="down" aria-label="Down">▼</button>
       </div>
-      <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click</small></div>
+      <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click · Two fingers to scroll</small></div>
       <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button id="search-open" class="accent" aria-label="Type on TV">⌕<span>Type on TV</span></button></div>
       <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" aria-label="Backspace">⌫</button></form>
     </div>

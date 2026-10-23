@@ -267,6 +267,81 @@ def _season_list(videos):
             for n in sorted(seasons, key=lambda n: (n == 0, n))]
 
 
+class XPointer:
+    """Pointer and button events through XTest on one lazily opened display connection.
+    Every method returns False when XTest is unavailable so callers can fall back to xdotool."""
+
+    def __init__(self, display=":0", xauthority=None):
+        self.display, self.xauthority = display, xauthority
+        self.lock = threading.Lock()
+        self.x11 = self.xtst = self.dpy = None
+        self.broken = False
+
+    def _libs(self):
+        if self.x11 is None:
+            import ctypes
+            x11, xtst = ctypes.CDLL("libX11.so.6"), ctypes.CDLL("libXtst.so.6")
+            x11.XInitThreads()
+            x11.XOpenDisplay.restype = ctypes.c_void_p
+            x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            x11.XFlush.argtypes = [ctypes.c_void_p]
+            xtst.XTestFakeRelativeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+            xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+            self.x11, self.xtst = x11, xtst
+        return self.x11, self.xtst
+
+    def _display(self):
+        x11, _ = self._libs()
+        if not self.dpy:
+            if self.xauthority:
+                os.environ.setdefault("XAUTHORITY", self.xauthority)
+            self.dpy = x11.XOpenDisplay(self.display.encode())
+            if not self.dpy:
+                raise OSError("cannot open X display " + self.display)
+        return self.dpy
+
+    def _run(self, work):
+        if self.broken:
+            return False
+        with self.lock:
+            for attempt in (0, 1):
+                try:
+                    dpy = self._display()
+                    work(self.xtst, dpy)
+                    self.x11.XFlush(dpy)
+                    return True
+                except OSError as exc:
+                    if self.x11 is None or self.xtst is None:
+                        self.broken = True  # libXtst missing: stop retrying
+                        return False
+                    LOG.warning("XTest failed (%s); reconnecting", exc)
+                    self._close()
+                    if attempt:
+                        return False
+        return False
+
+    def _close(self):
+        if self.dpy and self.x11:
+            try:
+                self.x11.XCloseDisplay(self.dpy)
+            except Exception:
+                pass
+        self.dpy = None
+
+    def move(self, steps):
+        def work(xtst, dpy):
+            for dx, dy in steps:
+                xtst.XTestFakeRelativeMotionEvent(dpy, dx, dy, 0)
+        return self._run(work)
+
+    def click(self, button):
+        def work(xtst, dpy):
+            xtst.XTestFakeButtonEvent(dpy, button, 1, 0)
+            xtst.XTestFakeButtonEvent(dpy, button, 0, 0)
+        return self._run(work)
+
+
 class Controller:
     def __init__(self):
         self.lock = threading.RLock()
@@ -287,6 +362,8 @@ class Controller:
         self.ui_path = DATA / "ui_request.json"
         self.media_path = DATA / "last_media.json"
         self.media = self._read_json(self.media_path, None)
+        self.pointer = XPointer(DISPLAY_ENV["DISPLAY"], DISPLAY_ENV["XAUTHORITY"])
+        self.last_focus = 0.0
         self.pair_code = ""
         self.pair_expiry = 0
         self.pair_attempts = {}
@@ -708,6 +785,9 @@ class Controller:
             with self.lock:
                 if generation == self.generation:
                     self.media.update(name=name, poster=meta.get("poster"), background=meta.get("background"))
+                    # status() is polled every 2 s, so the next episode is worked out here, once.
+                    self.media["next"] = (history.next_video(meta.get("videos"), season, episode)
+                                          if kind == "series" else None)
             direct = None
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
@@ -901,6 +981,11 @@ class Controller:
         cpu_temp = max(temps) if temps else None
         gpu_temp = max(gpu_temps) if gpu_temps else None
         win = window_for(app) if gui else None
+        if current_media is not None:
+            nxt = current_media.pop("next", None)
+            if current_media.get("type") != "series" or not (phase == "buffering" or player["active"]):
+                nxt = None
+            current_media["next"] = nxt
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
@@ -987,6 +1072,14 @@ class Controller:
                     raise RuntimeError("Audio output is unavailable")
                 command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{max(0, min(100, volume + direction * 5))}%"])
                 return {"volume": max(0, min(100, volume + direction * 5))}
+            if action == "next_episode":
+                with self.lock:
+                    nxt = (self.media or {}).get("next")
+                    target = dict(self.media) if self.media else {}
+                if target.get("type") != "series" or not nxt:
+                    raise RuntimeError("No next episode")
+                return self.play_media({"type": "series", "id": target["id"],
+                                        "season": nxt["season"], "episode": nxt["episode"]})
             if action == "mute":
                 if playback()["active"]:
                     mpv("osd-msg", "cycle", "mute")
@@ -1134,16 +1227,33 @@ class Controller:
                 command(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", value], timeout=10)
                 return {"typed": len(value)}
             if action == "move":
-                dx, dy = int(params.get("dx", 0)), int(params.get("dy", 0))
-                if max(abs(dx), abs(dy)) > 300:
-                    raise ValueError("Pointer movement too large")
-                self._focus_target()
-                command(["xdotool", "mousemove_relative", "--", str(dx), str(dy)])
+                steps = params.get("steps")
+                if steps is None:
+                    steps = [[params.get("dx", 0), params.get("dy", 0)]]
+                if not isinstance(steps, list) or not 0 < len(steps) <= 20:
+                    raise ValueError("Pointer steps must be 1–20 pairs")
+                clean = []
+                for pair in steps:
+                    if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                        raise ValueError("Each pointer step is [dx, dy]")
+                    dx, dy = int(pair[0]), int(pair[1])
+                    if max(abs(dx), abs(dy)) > 300:
+                        raise ValueError("Pointer movement too large")
+                    clean.append((dx, dy))
+                now = time.monotonic()
+                if now - self.last_focus > 2:
+                    self._focus_target()
+                    self.last_focus = now
+                if not self.pointer.move(clean):
+                    for dx, dy in clean:
+                        command(["xdotool", "mousemove_relative", "--", str(dx), str(dy)])
                 return {"ok": True}
             if action in ("click", "rightclick", "scrollup", "scrolldown"):
                 self._focus_target()
+                self.last_focus = time.monotonic()
                 button = {"click": 1, "rightclick": 3, "scrollup": 4, "scrolldown": 5}[action]
-                command(["xdotool", "click", str(button)])
+                if not self.pointer.click(button):
+                    command(["xdotool", "click", str(button)])
                 return {"ok": True}
             raise ValueError("Unknown action")
 

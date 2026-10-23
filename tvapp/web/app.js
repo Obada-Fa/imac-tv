@@ -63,7 +63,8 @@
     $('temperature').textContent = (s.thermal_warning ? '⚠ Hot · ' : '') + heat.join(' · ');
     $('temperature').classList.toggle('warn', Boolean(s.thermal_warning));
     document.querySelectorAll('.apps button').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
-    $('volume-label').textContent = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
+    const vol = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
+    $('volume-label').textContent = vol; $('np-volume-label').textContent = vol;
     const light = s.brightness;
     const off = Boolean(s.screen_off);
     const reason = light === undefined ? 'Restart the TV controller to update' :
@@ -103,18 +104,21 @@
     if (sheetName === 'more') renderMoreDynamic();
   }
 
-  const LANG = {ara: 'Arabic', ar: 'Arabic', dut: 'Nederlands', nld: 'Nederlands', nl: 'Nederlands', eng: 'English', en: 'English'};
-  const langName = t => LANG[String(t.lang || '').toLowerCase()] || t.title || t.lang || `Track ${t.id}`;
+  const LANG = {ara: 'Arabic', ar: 'Arabic', dut: 'Dutch', nld: 'Dutch', nl: 'Dutch', eng: 'English', en: 'English',
+    bul: 'Bulgarian', chi: 'Chinese', zho: 'Chinese', zh: 'Chinese', hrv: 'Croatian', cze: 'Czech', ces: 'Czech', dan: 'Danish',
+    fin: 'Finnish', fre: 'French', fra: 'French', fr: 'French', ger: 'German', deu: 'German', de: 'German', gre: 'Greek', ell: 'Greek',
+    heb: 'Hebrew', hun: 'Hungarian', ind: 'Indonesian', ita: 'Italian', it: 'Italian', jpn: 'Japanese', ja: 'Japanese', kor: 'Korean',
+    nor: 'Norwegian', nob: 'Norwegian', per: 'Persian', fas: 'Persian', pol: 'Polish', pl: 'Polish', por: 'Portuguese', pt: 'Portuguese',
+    pob: 'Portuguese (BR)', rum: 'Romanian', ron: 'Romanian', rus: 'Russian', ru: 'Russian', spa: 'Spanish', es: 'Spanish',
+    swe: 'Swedish', sv: 'Swedish', tha: 'Thai', tur: 'Turkish', tr: 'Turkish', ukr: 'Ukrainian', vie: 'Vietnamese', hin: 'Hindi'};
+  const PREFERRED = ['Arabic', 'Dutch', 'English'];
+  const langName = t => (t.title && String(t.title).length > 3 ? t.title : '') || LANG[String(t.lang || '').toLowerCase()] || t.title || t.lang || `Track ${t.id}`;
+  const isPreferred = t => PREFERRED.includes(LANG[String(t.lang || '').toLowerCase()]);
   let sigs = {}, subDelay = 0, searching = false, sent = '', typeTimer = null;
 
-  function chips(el, key, items, make) {
-    const sig = JSON.stringify(items.map(t => [t.id, t.selected]));
-    if (sigs[key] === sig) return;
-    sigs[key] = sig; el.replaceChildren(...make());
-  }
   function chip(label, on, fn) {
     const b = document.createElement('button');
-    b.textContent = label; b.classList.toggle('on', on); b.onclick = () => { buzz(8); fn(); };
+    b.type = 'button'; b.textContent = label; b.classList.toggle('on', on); b.onclick = () => { buzz(8); fn(); };
     return b;
   }
   function labelled(tracks) {
@@ -128,8 +132,10 @@
     if (c.dataset.view !== view) {
       c.dataset.view = view;
       if (view !== 'browse') { closeSearch(); showTab('remote'); }
-      if (view !== 'playing') { subDelay = 0; sigs = {}; }
+      if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
+    $('nowcard').hidden = view === 'playing';
+    $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
     $('buffer').hidden = view !== 'buffering';
     $('nowplaying').hidden = view !== 'playing';
@@ -140,7 +146,14 @@
       $('buf-source').textContent = [b.stage || 'Finding the best source…', b.source].filter(Boolean).join(' · ');
       $('buf-stats').textContent = b.source ? `${b.peers || 0} peers · ${((b.speed || 0) / 1048576).toFixed(1)} MB/s` : '';
     } else if (view === 'playing') {
+      const m = s.media || {};
       $('np-title').textContent = name || 'Video';
+      const ep = m.season != null && m.episode != null ? `S${String(m.season).padStart(2, '0')} · E${String(m.episode).padStart(2, '0')}` : '';
+      const sub = [ep, m.episode_name || m.episode_title].filter(Boolean).join(' · ');
+      $('np-sub').textContent = sub; $('np-sub').hidden = !sub;
+      const poster = $('np-poster');
+      if (m.poster) { if (poster.getAttribute('src') !== m.poster) poster.src = m.poster; poster.hidden = false; poster.onerror = () => { poster.hidden = true; }; }
+      else poster.hidden = true;
       $('np-play').textContent = pb.paused ? '▶' : '⏸';
       if (!draggingSeek) {
         $('seek').max = Math.max(1, pb.duration || 1);
@@ -148,15 +161,20 @@
         $('position').textContent = fmt(pb.position);
         $('duration').textContent = '-' + fmt((pb.duration || 0) - (pb.position || 0));
       }
+      const nx = s.next || (s.media && s.media.next);
+      $('np-next').hidden = !nx;
+      if (nx) {
+        $('np-next-label').textContent = `S${String(nx.season).padStart(2, '0')}E${String(nx.episode).padStart(2, '0')}`;
+        $('np-next').title = nx.name || '';
+      }
       const subs = pb.subtitles || [], audio = pb.audio || [];
-      chips($('np-subs'), 'sub', subs, () => {
-        const out = labelled(subs).map(([t, l]) => chip(l, t.selected, () => fire('subtitle', {id: t.id})));
-        out.push(chip('Off', !subs.some(t => t.selected), () => fire('subtitle', {id: 'no'})));
-        return out;
-      });
-      $('np-audio-wrap').hidden = audio.length < 2;
-      chips($('np-audio'), 'aud', audio, () => labelled(audio).map(([t, l]) => chip(l, t.selected, () => fire('audio', {id: t.id}))));
-      $('np-delay').textContent = `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
+      const subSel = labelled(subs).find(([t]) => t.selected);
+      $('pick-sub-label').textContent = (subSel ? subSel[1] : 'Off') + ' ▾';
+      const audSel = labelled(audio).find(([t]) => t.selected);
+      $('pick-audio').hidden = audio.length < 2;
+      $('pick-audio-label').textContent = (audSel ? audSel[1] : audio.length ? 'Auto' : '—') + ' ▾';
+      $('np-delay') && ($('np-delay').textContent = delayText());
+      if (sheetName === 'subs' || sheetName === 'audio') renderTrackSheet();
     }
     $('search-open').classList.toggle('on', searching);
     const yt = s.app === 'youtube', label = yt ? 'Search YouTube' : 'Type on TV';
@@ -206,11 +224,46 @@
     const p = state && state.playback; if (!p || !p.active) return;
     fire('seek', {seconds: Math.max(0, Math.min(p.duration || 86400, (p.position || 0) + Number(b.dataset.skip)))});
   });
-  document.querySelectorAll('[data-subdelay]').forEach(b => b.onclick = () => {
-    const d = Number(b.dataset.subdelay);
-    subDelay = Math.round((subDelay + d) * 10) / 10; $('np-delay').textContent = `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
-    fire('subdelay', {delta: d});
-  });
+  const delayText = () => `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
+  $('np-next').onclick = () => { buzz(10); fire('next_episode'); };
+  $('pick-sub').onclick = () => openSheet('subs');
+  $('pick-audio').onclick = () => openSheet('audio');
+
+  // Bottom-sheet track picker: Off + preferred languages first, the rest under "More languages".
+  function renderTrackSheet() {
+    const kind = sheetName, pb = (state && state.playback) || {};
+    const tracks = kind === 'subs' ? pb.subtitles || [] : pb.audio || [];
+    const sig = kind + JSON.stringify(tracks.map(t => [t.id, t.selected]));
+    const content = $('sheet-content');
+    if (content.dataset.sig === sig) return;
+    content.dataset.sig = sig;
+    const pick = t => { if (kind === 'subs') fire('subtitle', {id: t ? t.id : 'no'}); else fire('audio', {id: t.id}); };
+    const row = (label, on, fn) => { const b = chip((on ? '✓ ' : '') + label, on, fn); return b; };
+    const named = labelled(tracks);
+    const top = [], more = [];
+    for (const [t, l] of named) (isPreferred(t) ? top : more).push([t, l]);
+    const rank = ([t]) => PREFERRED.indexOf(LANG[String(t.lang || '').toLowerCase()]);
+    top.sort((a, b) => rank(a) - rank(b));
+    const list = document.createElement('div'); list.className = 'tracklist';
+    if (kind === 'subs') list.append(row('Off', !tracks.some(t => t.selected), () => pick(null)));
+    for (const [t, l] of top) list.append(row(l, t.selected, () => pick(t)));
+    if (more.length) {
+      const h = document.createElement('h3'); h.textContent = 'More languages'; list.append(h);
+      for (const [t, l] of more) list.append(row(l, t.selected, () => pick(t)));
+    }
+    if (!tracks.length) { const p = document.createElement('p'); p.textContent = 'No tracks in this video.'; list.append(p); }
+    const parts = [list];
+    if (kind === 'subs') {
+      const d = document.createElement('div'); d.className = 'delay';
+      d.innerHTML = '<button type="button" aria-label="Subtitles earlier">−</button><span id="np-delay"></span><button type="button" aria-label="Subtitles later">＋</button>';
+      const [minus, , plus] = d.children, label = d.children[1];
+      label.textContent = delayText();
+      const bump = x => () => { subDelay = Math.round((subDelay + x) * 10) / 10; label.textContent = delayText(); fire('subdelay', {delta: x}); };
+      minus.onclick = bump(-0.1); plus.onclick = bump(0.1);
+      parts.push(d);
+    }
+    content.replaceChildren(...parts);
+  }
 
   async function refresh() {
     try {
@@ -250,8 +303,10 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off', torbox: 'Connect TorBox'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio'}[name];
     const content = $('sheet-content');
+    delete content.dataset.sig;
+    if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'type') {
       content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
       $('text-form').onsubmit = e => {
@@ -452,47 +507,102 @@
     }
   });
 
+  // ---- Touchpad: quiet, coalesced per frame, one move request in flight ----
   const pad = $('pad');
-  let gesture = null;
-  let motion = {dx: 0, dy: 0, timer: null};
-  function flushMotion() {
-    motion.timer = null;
-    if (!motion.dx && !motion.dy) return;
-    const dx = Math.max(-300, Math.min(300, motion.dx));
-    const dy = Math.max(-300, Math.min(300, motion.dy));
-    motion.dx -= dx; motion.dy -= dy;
-    fire('move', {dx, dy});
-    if (motion.dx || motion.dy) motion.timer = setTimeout(flushMotion, 50);
+  const quiet = (action, params) => online ? api('/api/commands', {action, params}).catch(() => {}) : Promise.resolve();
+  const touches = new Map();   // pointerId -> {x, y, t}
+  let gesture = null;          // {start, moved, right, multi, hold}
+  let queue = [], remX = 0, remY = 0, moveBusy = false, rafId = 0, rafTimer = 0, scrollAcc = 0, scrollBusy = false;
+
+  function takeSteps() {
+    let q = queue; queue = [];
+    if (q.length > 20) {   // squeeze into at most 20 pairs by summing neighbours
+      const per = Math.ceil(q.length / 20), out = [];
+      for (let i = 0; i < q.length; i += per) {
+        let x = 0, y = 0;
+        for (const [a, b] of q.slice(i, i + per)) { x += a; y += b; }
+        out.push([x, y]);
+      }
+      q = out;
+    }
+    const c = v => Math.max(-300, Math.min(300, v));
+    return q.map(([x, y]) => [c(x), c(y)]).filter(([x, y]) => x || y);
   }
+  async function flushMove() {
+    cancelAnimationFrame(rafId); clearTimeout(rafTimer); rafId = 0; rafTimer = 0;
+    if (moveBusy || !queue.length) return;
+    const steps = takeSteps();
+    if (!steps.length) return;
+    moveBusy = true;
+    await quiet('move', steps.length === 1 ? {dx: steps[0][0], dy: steps[0][1]} : {steps});
+    moveBusy = false;
+    if (queue.length) scheduleMove();
+  }
+  // rAF coalesces per frame; the timeout covers webviews that pause rAF.
+  const scheduleMove = () => { if (!rafId && !moveBusy) { rafId = requestAnimationFrame(flushMove); rafTimer = setTimeout(flushMove, 40); } };
+  async function flushScroll() {
+    if (scrollBusy) return;
+    scrollBusy = true;
+    while (Math.abs(scrollAcc) >= 24) {
+      const down = scrollAcc < 0;     // finger up = page down
+      scrollAcc += down ? 24 : -24;
+      await quiet(down ? 'scrolldown' : 'scrollup', {});
+    }
+    scrollBusy = false;
+  }
+  // 1.5x for slow movement up to 3x for fast flicks (speed in px/ms).
+  function gain(dx, dy, dt) {
+    const v = Math.hypot(dx, dy) / Math.max(4, dt);
+    return 1.5 + Math.min(1, Math.max(0, (v - 0.2) / 1.6)) * 1.5;
+  }
+  pad.addEventListener('contextmenu', e => e.preventDefault());
   pad.addEventListener('pointerdown', e => {
     if (!online) return;
-    e.preventDefault(); pad.setPointerCapture(e.pointerId);
-    gesture = {id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, right: false};
-    gesture.hold = setTimeout(() => {
-      if (gesture && !gesture.moved) { gesture.right = true; fire('rightclick'); }
-    }, 550);
-  });
-  pad.addEventListener('pointermove', e => {
-    if (!gesture || e.pointerId !== gesture.id) return;
-    const dx = e.clientX - gesture.x, dy = e.clientY - gesture.y;
-    if (Math.abs(dx) + Math.abs(dy) > 7) { gesture.moved = true; clearTimeout(gesture.hold); }
-    if (gesture.moved) {
-      gesture.x = e.clientX; gesture.y = e.clientY;
-      if (Math.abs(dx) + Math.abs(dy) > 1) {
-        motion.dx += Math.round(dx * 2); motion.dy += Math.round(dy * 2);
-        if (!motion.timer) motion.timer = setTimeout(flushMotion, 50);
-      }
+    e.preventDefault(); try { pad.setPointerCapture(e.pointerId); } catch (x) {}
+    touches.set(e.pointerId, {x: e.clientX, y: e.clientY, t: e.timeStamp});
+    if (!gesture) {
+      gesture = {sx: e.clientX, sy: e.clientY, moved: false, right: false, multi: false};
+      gesture.hold = setTimeout(() => {
+        if (gesture && !gesture.moved && !gesture.multi) { gesture.right = true; buzz(15); quiet('rightclick', {}); }
+      }, 550);
+    } else {
+      gesture.multi = true; clearTimeout(gesture.hold);
+      queue = []; remX = remY = 0;
     }
   });
-  function finish(cancelled) {
-    if (!gesture) return;
+  pad.addEventListener('pointermove', e => {
+    const t = touches.get(e.pointerId);
+    if (!t || !gesture) return;
+    const dx = e.clientX - t.x, dy = e.clientY - t.y, dt = e.timeStamp - t.t;
+    t.x = e.clientX; t.y = e.clientY; t.t = e.timeStamp;
+    if (gesture.multi) {
+      if (touches.size >= 2) scrollAcc += dy / touches.size;
+      flushScroll();
+      return;
+    }
+    if (!gesture.moved) {
+      if (Math.abs(e.clientX - gesture.sx) + Math.abs(e.clientY - gesture.sy) <= 7) return;
+      gesture.moved = true; clearTimeout(gesture.hold);
+    }
+    if (!dx && !dy) return;
+    const g = gain(dx, dy, dt);
+    remX += dx * g; remY += dy * g;
+    const ix = Math.trunc(remX), iy = Math.trunc(remY);
+    if (!ix && !iy) return;
+    remX -= ix; remY -= iy;
+    queue.push([ix, iy]);
+    scheduleMove();
+  });
+  function endTouch(e, cancelled) {
+    if (!touches.delete(e.pointerId) || !gesture) return;
+    if (touches.size) return;
     clearTimeout(gesture.hold);
-    if (!cancelled && !gesture.moved && !gesture.right) fire('click');
-    gesture = null;
+    if (!cancelled && !gesture.moved && !gesture.right && !gesture.multi) { buzz(8); quiet('click', {}); }
+    gesture = null; scrollAcc = 0; remX = remY = 0;
   }
-  pad.addEventListener('pointerup', () => finish(false));
-  pad.addEventListener('pointercancel', () => finish(true));
-  pad.addEventListener('wheel', e => {e.preventDefault(); fire(e.deltaY > 0 ? 'scrolldown' : 'scrollup');}, {passive: false});
+  pad.addEventListener('pointerup', e => endTouch(e, false));
+  pad.addEventListener('pointercancel', e => endTouch(e, true));
+  pad.addEventListener('wheel', e => {e.preventDefault(); quiet(e.deltaY > 0 ? 'scrolldown' : 'scrollup', {});}, {passive: false});
 
   $('pair-form').onsubmit = async e => {
     e.preventDefault();

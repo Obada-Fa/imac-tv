@@ -99,6 +99,28 @@ def _next_episode(item, videos):
     return None
 
 
+def next_video(videos, season, episode):
+    """The episode after (season, episode) in a meta `videos` list, rolling over to the next season.
+    Returns {"season", "episode", "name"} or None. Specials (season 0) only follow season 0."""
+    try:
+        season, episode = int(season), int(episode)
+    except (TypeError, ValueError):
+        return None
+    best = None
+    for video in videos or []:
+        try:
+            key = (int(video.get("season")), int(video.get("episode")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if key <= (season, episode) or (key[0] == 0 and season != 0) or key[1] < 1:
+            continue
+        if best is None or key < best[0]:
+            best = (key, video.get("name") or video.get("title"))
+    if not best:
+        return None
+    return {"season": best[0][0], "episode": best[0][1], "name": best[1]}
+
+
 def continue_watching(limit=20, videos=cached_videos):
     """Newest first: unfinished entries past 60s, plus the next episode after a finished one."""
     data = load()

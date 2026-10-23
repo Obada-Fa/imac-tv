@@ -464,6 +464,73 @@ class LifecycleTests(unittest.TestCase):
                 self.assertFalse(c._end_playback())
         self.eng.remove.assert_called_once()
 
+    def _ready(self):
+        with mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+        c.app, c.phase = "youtube", "ready"
+        return c
+
+    def test_move_uses_xtest_without_spawning(self):
+        c = self._ready()
+        with mock.patch.object(c, "_focus_target") as focus, mock.patch.object(c.pointer, "move", return_value=True) as move, \
+                mock.patch.object(server, "command") as run:
+            c.action("move", {"dx": 5, "dy": -3})
+            c.action("move", {"dx": 1, "dy": 1})
+        self.assertEqual(move.call_args_list[0].args[0], [(5, -3)])
+        run.assert_not_called()
+        self.assertEqual(focus.call_count, 1)  # throttled to once per 2 s
+
+    def test_move_falls_back_to_xdotool(self):
+        c = self._ready()
+        with mock.patch.object(c, "_focus_target"), mock.patch.object(c.pointer, "move", return_value=False), \
+                mock.patch.object(server, "command") as run:
+            c.action("move", {"dx": 5, "dy": -3})
+        self.assertEqual(run.call_args.args[0], ["xdotool", "mousemove_relative", "--", "5", "-3"])
+
+    def test_move_steps_are_validated(self):
+        c = self._ready()
+        with mock.patch.object(c, "_focus_target"), mock.patch.object(c.pointer, "move", return_value=True) as move:
+            c.action("move", {"steps": [[1, 2], [3, 4]]})
+            self.assertEqual(move.call_args.args[0], [(1, 2), (3, 4)])
+            for bad in ([], [[1, 2]] * 21, [[1]], [[301, 0]], "x"):
+                with self.assertRaises(ValueError):
+                    c.action("move", {"steps": bad})
+
+    def test_click_uses_xtest(self):
+        c = self._ready()
+        with mock.patch.object(c, "_focus_target"), mock.patch.object(c.pointer, "click", return_value=True) as click, \
+                mock.patch.object(server, "command") as run:
+            c.action("scrolldown", {})
+        click.assert_called_once_with(5)
+        run.assert_not_called()
+
+    def _series(self, c, phase="buffering"):
+        c.phase = phase
+        c.media = {"type": "series", "id": "tt1", "video_id": "tt1:1:10", "season": 1, "episode": 10,
+                   "name": "Show", "next": {"season": 2, "episode": 1, "name": "Pilot 2"}}
+
+    def test_status_next_only_for_active_series(self):
+        c = self._ready()
+        self._series(c)
+        with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv", side_effect=OSError), \
+                mock.patch.object(server, "command", return_value=""):
+            self.assertEqual(c.status()["media"]["next"], {"season": 2, "episode": 1, "name": "Pilot 2"})
+            c.phase = "ready"
+            self.assertIsNone(c.status()["media"]["next"])
+            c.media = {"type": "movie", "id": "tt2", "video_id": "tt2", "next": None}
+            c.phase = "buffering"
+            self.assertIsNone(c.status()["media"]["next"])
+
+    def test_next_episode_plays_stored_next(self):
+        c = self._ready()
+        self._series(c, "ready")
+        with mock.patch.object(c, "play_media", return_value={"ok": True}) as play:
+            c.action("next_episode", {})
+        play.assert_called_once_with({"type": "series", "id": "tt1", "season": 2, "episode": 1})
+        c.media["next"] = None
+        with self.assertRaisesRegex(RuntimeError, "No next episode"):
+            c.action("next_episode", {})
+
 
 if __name__ == "__main__":
     unittest.main()

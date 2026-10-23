@@ -64,3 +64,13 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(history.continue_watching(videos=lambda k, i: [VIDEOS[0]]), [])
         history.record(ep(3, position=990, updated=11))
         self.assertEqual([i["video_id"] for i in history.continue_watching(videos=lambda k, i: VIDEOS)], ["tt1:1:2"])
+
+
+class NextVideoTests(unittest.TestCase):
+    def test_rolls_over_season_and_skips_specials(self):
+        videos = [{"season": 0, "episode": 1}, {"season": 1, "episode": 9}, {"season": 1, "episode": 10},
+                  {"season": 2, "episode": 1, "name": "Premiere"}, {"season": 2, "episode": 2}]
+        self.assertEqual(history.next_video(videos, 1, 10), {"season": 2, "episode": 1, "name": "Premiere"})
+        self.assertEqual(history.next_video(videos, 1, 9)["episode"], 10)
+        self.assertIsNone(history.next_video(videos, 2, 2))
+        self.assertIsNone(history.next_video(None, 1, 1))
