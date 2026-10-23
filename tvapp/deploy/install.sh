@@ -72,6 +72,8 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable tvremote.service
 systemctl --user restart tvremote.service
+# The TV screen (home.py) is a separate process: close it so the controller relaunches it with the new code.
+pkill -f "python3 .*/home.py" 2>/dev/null || true
 for try in $(seq 1 20); do
   if curl -fsS --max-time 2 http://127.0.0.1:8765/api/pair-status | grep -q '"paired"'; then
     printf 'Controller ready. Backup: %s\n' "$backup_dir"
