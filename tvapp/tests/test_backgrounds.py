@@ -97,22 +97,29 @@ class LibraryTests(unittest.TestCase):
             self.assertIn(self.lib.next((ids[1],))["id"], (ids[0], ids[2]))
         self.assertEqual({self.lib.next(tuple(ids))["id"] for _ in range(6)}, set(ids))   # all off: show all
 
-    def test_seed_imports_once_and_respects_removal(self):
+    def test_seed_imports_each_file_once_with_credits_and_respects_removal(self):
         assets = self.root / "assets"
         assets.mkdir()
         image(assets / "neon-grid.jpg", 1920, 1080, "jpeg")
         image(assets / "sun-set.jpg", 1920, 1080, "jpeg", rgb=0xcc5500ff)
+        (assets / "credits.json").write_text(json.dumps({"sun-set.jpg": {"name": "Sunny", "credit": "A. Person · Unsplash"}}))
         self.assertEqual(self.lib.seed(assets), 2)
-        self.assertEqual(sorted(i["name"] for i in self.lib.list()), ["Neon Grid", "Sun Set"])
+        self.assertEqual(sorted(i["name"] for i in self.lib.list()), ["Neon Grid", "Sunny"])
+        self.assertEqual({i["caption"]: i["credit"] for i in self.lib.items()},
+                         {"Neon Grid": backgrounds.CREDIT, "Sunny": "A. Person · Unsplash"})
         self.lib.remove(self.lib.list()[0]["id"])
-        self.assertEqual(self.lib.seed(assets), 0)             # marker: removed pictures stay removed
-        self.assertEqual(len(self.lib.list()), 1)
+        self.assertEqual(self.lib.seed(assets), 0)             # removed pictures stay removed
+        image(assets / "later.jpg", 1920, 1080, "jpeg", rgb=0x112233ff)   # a newly bundled picture still arrives
+        self.assertEqual(self.lib.seed(assets), 1)
+        self.assertEqual(len(self.lib.list()), 2)
 
     def test_bundled_starter_set_is_full_resolution_and_valid(self):
         files = sorted(backgrounds.SEED_DIR.glob("*.jpg"))
         self.assertGreaterEqual(len(files), 5)
         for f in files:
-            self.assertEqual(backgrounds.probe(f)[1:], (3840, 2160), f.name)
+            w, h = backgrounds.probe(f)[1:]
+            self.assertGreaterEqual(max(w, h), 3840, f.name)
+            self.assertGreaterEqual(min(w, h), 2160, f.name)
 
     def test_remove(self):
         a = self.lib.import_file(image(self.src / "x.png", 1280, 720))

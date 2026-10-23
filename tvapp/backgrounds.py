@@ -183,7 +183,7 @@ class Backgrounds:
                 return t if t.is_file() else None
         return None
 
-    def import_file(self, src, name=None, replace=None):
+    def import_file(self, src, name=None, replace=None, credit=None):
         """Copy a picture in at full resolution. Returns {"id", "status"}: added | replaced | kept (an existing
         picture of the same name already has as many pixels). `replace` forces a replacement of that id."""
         src = Path(src)
@@ -235,6 +235,8 @@ class Backgrounds:
             os.replace(tmp, self.dir / fname)            # new inode/mtime: Home re-traces the contours
             rec = {"id": bid, "file": fname, "name": target.get("name") if target else _title(name),
                    "width": w, "height": h, "added": time.time(), "sha": sha}
+            if credit or (target and target.get("credit")):
+                rec["credit"] = str(credit or target.get("credit"))[:80]
             if target:
                 old_file = self._file(target)
                 if old_file.name != fname:
@@ -259,26 +261,37 @@ class Backgrounds:
             return True
 
     def seed(self, assets_dir):
-        """First run only: import the bundled starter pictures (scripts/make-retro-seed.py). A marker file keeps
-        pictures the user later removes from coming back. Returns how many were added."""
-        marker = self.dir / ".seeded"
+        """Import bundled starter pictures (tvapp/assets/retro; names and credits in credits.json, else from the
+        file name). Each file is imported once, tracked in .seeded.json, so pictures the user removes stay
+        removed while newly bundled ones still arrive. Returns how many were added."""
+        marker = self.dir / ".seeded.json"
         added = 0
         with self._lock:
-            if marker.exists():
-                return 0
             try:
-                files = sorted(Path(assets_dir).glob("*.jpg"))
+                done = set(json.loads(marker.read_text()))
+            except (OSError, ValueError, TypeError):
+                done = set()
+            assets_dir = Path(assets_dir)
+            try:
+                meta = json.loads((assets_dir / "credits.json").read_text())
+                meta = meta if isinstance(meta, dict) else {}
+            except (OSError, ValueError):
+                meta = {}
+            try:
+                files = sorted(f for f in assets_dir.glob("*.jpg") if f.name not in done)
             except OSError:
                 files = []
             for f in files:
+                info = meta.get(f.name) if isinstance(meta.get(f.name), dict) else {}
                 try:
-                    name = f.stem.replace("-", " ").title() + f.suffix
-                    added += self.import_file(f, name)["status"] == "added"
+                    name = (info.get("name") or f.stem.replace("-", " ").title()) + f.suffix
+                    added += self.import_file(f, name, credit=info.get("credit"))["status"] == "added"
                 except Exception as exc:
                     _log("seed %s:" % f.name, exc)
+                done.add(f.name)
             if files:
                 self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-                marker.write_text(str(added))
+                marker.write_text(json.dumps(sorted(done)))
         return added
 
     # ---- provider boundary (same as ambient.Library)
@@ -288,7 +301,7 @@ class Backgrounds:
         on = [r for r in recs if r["id"] not in set(off)] or recs
         out = []
         for rec in on:
-            out.append({"path": str(self._file(rec)), "caption": rec.get("name", ""), "credit": CREDIT,
+            out.append({"path": str(self._file(rec)), "caption": rec.get("name", ""), "credit": rec.get("credit") or CREDIT,
                         "source": "retro", "id": rec["id"]})
         return out
 
