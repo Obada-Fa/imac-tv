@@ -32,10 +32,40 @@ def parse_player(bus_name, identity, props):
     title = str(meta.get("xesam:title") or "").strip() or "YouTube"
     state = {"status": status, "title": title, "artist": str(artist or "").strip(),
              "art": str(meta.get("mpris:artUrl") or "") or None, "source": "youtube"}
-    for key, prop in (("can_next", "CanGoNext"), ("can_prev", "CanGoPrevious"), ("can_pause", "CanPause")):
+    for key, prop in (("can_next", "CanGoNext"), ("can_prev", "CanGoPrevious"), ("can_pause", "CanPause"),
+                      ("can_seek", "CanSeek")):
         if prop in props:
             state[key] = bool(props[prop])
+    length = _seconds(meta.get("mpris:length"))
+    if length:
+        state["length"] = length
+    position = _seconds(props.get("Position"))
+    if position is not None:
+        state["position"] = min(position, length) if length else position
+    if meta.get("mpris:trackid"):
+        state["track_id"] = str(meta["mpris:trackid"])
     return state
+
+
+def _seconds(micro):
+    """MPRIS microseconds -> seconds (None when missing/invalid)."""
+    if isinstance(micro, bool) or not isinstance(micro, (int, float)) or micro < 0:
+        return None
+    return round(micro / 1e6, 2)
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def seek_micros(offset):
+    """Relative seek in seconds -> microseconds, limited to +-1 hour."""
+    return int(clamp(float(offset), -3600, 3600) * 1e6)
+
+
+def position_micros(position, length=None):
+    """Absolute position in seconds -> microseconds, kept inside the track when its length is known."""
+    return int(clamp(float(position), 0, length if length else 86400) * 1e6)
 
 
 def pick_best(candidates):
@@ -87,20 +117,29 @@ def _mpris_named():
                                GLib.Variant("(ss)", (MPRIS, "Identity")), "(v)")
             (props,) = call(name, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "GetAll",
                             GLib.Variant("(s)", (PLAYER_IFACE,)), "(a{sv})")
+            try:  # Position isn't signalled, so ask for it explicitly every time
+                (pos,) = call(name, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "Get",
+                              GLib.Variant("(ss)", (PLAYER_IFACE, "Position")), "(v)")
+                props["Position"] = pos
+            except Exception:
+                props.pop("Position", None)
             out.append((name, parse_player(name, str(identity), props)))
         except Exception:
             continue
     return out
 
 
-COMMANDS = {"play_pause": "PlayPause", "next": "Next", "previous": "Previous"}
+COMMANDS = {"play_pause": "PlayPause", "next": "Next", "previous": "Previous", "seek": "Seek", "set_position": "SetPosition"}
 
 
-def control(cmd):
-    """Send play_pause / next / previous to the MPRIS player current() would pick."""
+def control(cmd, value=None):
+    """Send a command to the MPRIS player current() would pick.
+    seek: value = relative seconds; set_position: value = absolute seconds."""
     method = COMMANDS.get(cmd)
     if not method:
         raise ValueError("Unknown media command")
+    if cmd in ("seek", "set_position") and (isinstance(value, bool) or not isinstance(value, (int, float))):
+        raise ValueError("Seconds required")
     try:
         named = [(n, st) for n, st in _mpris_named() if st]
     except Exception as exc:
@@ -108,8 +147,16 @@ def control(cmd):
     named.sort(key=lambda item: item[1]["status"] != "Playing")
     if not named:
         raise RuntimeError("YouTube isn't publishing media controls")
+    name, state = named[0]
     Gio, GLib, bus = _bus()
-    bus.call_sync(named[0][0], "/org/mpris/MediaPlayer2", PLAYER_IFACE, method, None, None,
+    args = None
+    if cmd == "seek":
+        args = GLib.Variant("(x)", (seek_micros(value),))
+    elif cmd == "set_position":
+        if not state.get("track_id"):
+            raise RuntimeError("This player can't jump to a position")
+        args = GLib.Variant("(ox)", (state["track_id"], position_micros(value, state.get("length"))))
+    bus.call_sync(name, "/org/mpris/MediaPlayer2", PLAYER_IFACE, method, args, None,
                   Gio.DBusCallFlags.NONE, 1500, None)
     return True
 

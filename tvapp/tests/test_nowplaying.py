@@ -90,3 +90,39 @@ class ControlTests(unittest.TestCase):
     def test_can_flags_only_when_published(self):
         st = nowplaying.parse_player("org.mpris.MediaPlayer2.vacuumtube", "V", dict(props(), CanGoNext=False, CanPause=True))
         self.assertEqual((st["can_next"], st["can_pause"], "can_prev" in st), (False, True, False))
+
+
+class SeekTests(unittest.TestCase):
+    def test_parse_position_length_track(self):
+        st = nowplaying.parse_player("org.mpris.MediaPlayer2.vacuumtube", "V", dict(
+            props(**{"mpris:length": 200_000_000, "mpris:trackid": "/org/mpris/track/1"}), Position=65_500_000, CanSeek=True))
+        self.assertEqual((st["position"], st["length"], st["track_id"], st["can_seek"]), (65.5, 200.0, "/org/mpris/track/1", True))
+
+    def test_position_clamped_to_length_and_missing_omitted(self):
+        st = nowplaying.parse_player("org.mpris.MediaPlayer2.vacuumtube", "V", dict(props(**{"mpris:length": 10_000_000}), Position=99_000_000))
+        self.assertEqual(st["position"], 10.0)
+        bare = nowplaying.parse_player("org.mpris.MediaPlayer2.vacuumtube", "V", props())
+        self.assertFalse({"position", "length", "track_id"} & set(bare))
+
+    def test_microsecond_conversion_and_clamping(self):
+        self.assertEqual(nowplaying.seek_micros(-10), -10_000_000)
+        self.assertEqual(nowplaying.seek_micros(10 ** 6), 3600 * 10 ** 6)
+        self.assertEqual(nowplaying.position_micros(30, 100), 30_000_000)
+        self.assertEqual(nowplaying.position_micros(500, 100), 100_000_000)
+        self.assertEqual(nowplaying.position_micros(-3, 100), 0)
+
+    def test_seek_and_set_position_calls(self):
+        bus, gio = mock.Mock(), mock.Mock()
+        player = ("org.mpris.MediaPlayer2.b", {"status": "Playing", "track_id": "/t/1", "length": 100.0})
+        with mock.patch.object(nowplaying, "_mpris_named", return_value=[player]), \
+                mock.patch.object(nowplaying, "_bus", return_value=(gio, mock.Mock(), bus)):
+            nowplaying.control("seek", 10)
+            self.assertEqual(bus.call_sync.call_args.args[3], "Seek")
+            nowplaying.control("set_position", 250)
+            self.assertEqual(bus.call_sync.call_args.args[3], "SetPosition")
+        with mock.patch.object(nowplaying, "_mpris_named", return_value=[("n", {"status": "Playing"})]), \
+                mock.patch.object(nowplaying, "_bus", return_value=(gio, mock.Mock(), bus)):
+            with self.assertRaisesRegex(RuntimeError, "position"):
+                nowplaying.control("set_position", 5)
+        with self.assertRaises(ValueError):
+            nowplaying.control("seek", None)

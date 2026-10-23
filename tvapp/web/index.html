@@ -4,12 +4,13 @@
 <title>iMac TV Remote</title><link rel="stylesheet" href="/app.css" defer><script src="/app.js" defer></script></head>
 <body>
 <div id="message" class="toast" role="alert" hidden></div>
+<div id="connection" class="connection" role="status" aria-label="Connecting" title="Connecting…"></div>
 <main id="remote" class="shell" hidden>
-  <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
-  <div id="nowcard" class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
+  <div id="notice" class="notice" role="status" hidden></div>
   <div id="yt" class="yt" hidden>
     <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
-    <div class="yt-ctl"><button id="yt-prev" type="button" data-yt="previous" aria-label="Previous">⏮</button><button id="yt-play" type="button" data-yt="play_pause" aria-label="Play or pause">⏯</button><button id="yt-next" type="button" data-yt="next" aria-label="Next">⏭</button></div>
+    <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>
+    <div class="yt-ctl"><button id="yt-prev" type="button" data-yt="previous" aria-label="Previous">⏮</button><button id="yt-back" type="button" class="sk" aria-label="Back 10 seconds">−10</button><button id="yt-play" type="button" data-yt="play_pause" aria-label="Play or pause">⏯</button><button id="yt-fwd" type="button" class="sk" aria-label="Forward 10 seconds">+10</button><button id="yt-next" type="button" data-yt="next" aria-label="Next">⏭</button></div>
     <button id="yt-show" type="button" class="yt-show" hidden>Open</button>
   </div>
   <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
@@ -38,6 +39,9 @@
     </div>
     <div id="nowplaying" class="card np" hidden>
       <div class="np-head"><img id="np-poster" alt="" hidden><div class="np-titles"><h2 id="np-title">Video</h2><p id="np-sub" class="muted" hidden></p></div></div>
+      <button id="np-skip" class="skipbtn" type="button" hidden>Skip intro</button>
+      <div id="np-upnext" class="prompt" hidden><div class="ptext"><small>UP NEXT · <span id="un-sec">10</span> s</small><b id="un-title">Next episode</b></div><div class="prow"><button id="un-play" type="button" class="go">Play now</button><button id="un-cancel" type="button">Cancel</button></div></div>
+      <div id="np-still" class="prompt" hidden><div class="ptext"><small>NO INPUT FOR A WHILE · <span id="st-sec">60</span> s</small><b>Are you still watching?</b></div><div class="prow"><button id="st-continue" type="button" class="go">Continue</button><button id="st-stop" type="button">Stop</button></div></div>
       <div class="timeline"><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">-0:00</span></div>
       <div class="skip">
         <button data-skip="-60" class="sm" aria-label="Back 60 seconds">−60</button><button data-skip="-10" aria-label="Back 10 seconds">−10</button>

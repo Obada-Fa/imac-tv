@@ -481,7 +481,21 @@ class LifecycleTests(unittest.TestCase):
                 mock.patch.object(server.time, "sleep"):
             c._yt_cache = (server.time.monotonic(), None)
             self.assertEqual(c.action("youtube_media", {"cmd": "play_pause"}), {"youtube_now": state})
-        ctl.assert_called_once_with("play_pause")
+        ctl.assert_called_once_with("play_pause", None)
+
+    def test_youtube_media_seek_and_set_position_validate_and_clamp(self):
+        c = self.controller()
+        with mock.patch.object(server.nowplaying, "control") as ctl, mock.patch.object(server.nowplaying, "current", return_value=None), \
+                mock.patch.object(server.time, "sleep"):
+            c.action("youtube_media", {"cmd": "seek", "offset": -10})
+            c.action("youtube_media", {"cmd": "seek", "offset": 99999})
+            c.action("youtube_media", {"cmd": "set_position", "position": -5})
+            for bad in ({"cmd": "seek"}, {"cmd": "seek", "offset": "10"}, {"cmd": "set_position", "position": True},
+                        {"cmd": "seek", "offset": float("nan")}):
+                with self.assertRaises(ValueError):
+                    c.action("youtube_media", bad)
+        self.assertEqual([call.args for call in ctl.call_args_list],
+                         [("seek", -10), ("seek", 3600), ("set_position", 0)])
 
     def test_youtube_now_is_cached_and_survives_errors(self):
         c = self.controller()
@@ -613,6 +627,171 @@ class LifecycleTests(unittest.TestCase):
         c.media["next"] = None
         with self.assertRaisesRegex(RuntimeError, "No next episode"):
             c.action("next_episode", {})
+
+
+
+class PlaybackPromptTests(unittest.TestCase):
+    """Skip intro, up next and "still watching" as the controller drives them (fake mpv, no waiting)."""
+    controller = LifecycleTests.controller
+    ui = LifecycleTests.ui
+    SEGS = [{"kind": "intro", "start": 10, "end": 40, "source": "chapters"},
+            {"kind": "credits", "start": 900, "end": 1000, "source": "chapters"}]
+    NEXT = {"season": 1, "episode": 3, "name": "Third"}
+
+    def prepared(self, pos=20.0):
+        c = self.controller()
+        with c.lock:
+            c.flow.begin(self.NEXT, self.SEGS, {})
+        self.pos = pos
+        return c
+
+    def fake(self, log=None):
+        def run(*args):
+            if log is not None:
+                log.append(args)
+            return {"time-pos": self.pos, "duration": 1000.0, "pause": False}.get(args[-1]) if args[0] == "get_property" else None
+        return run
+
+    def test_ok_inside_intro_skips_otherwise_shows_progress(self):
+        c = self.prepared(20.0)
+        log = []
+        with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv", side_effect=self.fake(log)):
+            self.assertEqual(c.action("ok", {})["handled"], "skip")
+            self.assertIn(("seek", 40, "absolute"), log)
+            self.pos = 100.0
+            log.clear()
+            self.assertEqual(c.action("ok", {}), {"ok": True})
+            self.assertIn(("show-progress",), log)
+
+    def test_status_exposes_segment_upnext_and_still(self):
+        c = self.prepared(20.0)
+        self.assertEqual(c._flow_view({"active": True, "position": 20})["segment"], {"kind": "intro", "end": 40})
+        self.assertEqual(c._flow_view({"active": False}), {"segment": None, "upnext": None, "still_watching": None})
+        with c.lock:
+            c.flow.tick(950, 1000)
+        view = c._flow_view({"active": True, "position": 950})
+        self.assertEqual(view["upnext"]["episode"], 3)
+        self.assertIsNone(view["still_watching"])
+
+    def test_back_cancels_countdown_then_stops_normally(self):
+        c = self.prepared(950.0)
+        with c.lock:
+            c.flow.tick(950, 1000)
+        with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv", side_effect=self.fake()), \
+                mock.patch.object(server.threading, "Thread"):
+            self.assertEqual(c.action("back", {})["handled"], "cancel")
+            self.assertEqual(c.app, "player")
+            c.action("back", {})
+        self.assertEqual(c.app, "home")
+
+    def test_ok_during_countdown_starts_next_episode_with_prefetched_source(self):
+        c = self.prepared(950.0)
+        chosen = {"info_hash": "b" * 40, "file_idx": 1, "label": "x", "sources": []}
+        c.prefetch = {"video_id": "tt9:1:3", "chosen": chosen}
+        with c.lock:
+            c.flow.tick(950, 1000)
+        with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv", side_effect=self.fake()), \
+                mock.patch.object(server.threading, "Thread") as thread:
+            self.assertEqual(c.action("ok", {})["handled"], "play_next")
+        self.assertEqual(c.media["episode"], 3)
+        self.assertEqual(thread.call_args.kwargs["args"][3], chosen)
+        self.assertEqual(c.flow.count, 1)
+
+    def test_manual_play_resets_autoplay_count_but_autoplay_does_not(self):
+        c = self.prepared()
+        c.flow.count = 2
+        with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv", side_effect=OSError), \
+                mock.patch.object(server.threading, "Thread"):
+            c.action("play_media", {"type": "series", "id": "tt9", "season": 1, "episode": 4})
+        self.assertEqual(c.flow.count, 0)
+
+    def test_still_watching_answers(self):
+        for choice, expect_app in (("stop", "home"), ("continue", "player")):
+            c = self.prepared(950.0)
+            c.flow.count = 3
+            with c.lock:
+                c.flow.begin(self.NEXT, self.SEGS, {})
+                c.flow.tick(950, 1000)
+            self.assertIsNotNone(c.flow.view(950)["still_watching"])
+            with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv", side_effect=self.fake()), \
+                    mock.patch.object(server.threading, "Thread"):
+                c.action("still_watching", {"choice": choice})
+            self.assertEqual(c.app, expect_app)
+            self.assertEqual(c.media["episode"], 3 if choice == "continue" else 2)
+
+    def test_prompt_actions_validate(self):
+        c = self.prepared()
+        for action, choice in (("upnext", "maybe"), ("still_watching", "play")):
+            with self.assertRaises(ValueError):
+                c.action(action, {"choice": choice})
+
+    def test_skip_segment_action(self):
+        c = self.prepared(20.0)
+        log = []
+        with mock.patch.object(server, "mpv", side_effect=self.fake(log)):
+            c.action("skip_segment", {})
+            self.pos = 100.0
+            with self.assertRaises(RuntimeError):
+                c.action("skip_segment", {})
+        self.assertIn(("seek", 40, "absolute"), log)
+
+    def test_any_action_is_input(self):
+        c = self.prepared()
+        c.flow.count = 2
+        with mock.patch.object(server, "mpv", return_value=None), mock.patch.object(server, "playback", return_value={"active": False}):
+            c.action("timer", {"minutes": None})
+        self.assertEqual(c.flow.count, 0)
+
+    def test_flow_loop_runs_events_and_osd(self):
+        c = self.prepared(950.0)
+        log = []
+        with c.lock:
+            c.flow.tick(950, 1000)
+            c.flow.deadline = 0     # countdown already over
+        gen = c.generation
+        with mock.patch.object(server, "mpv", side_effect=self.fake(log)), mock.patch.object(server.time, "sleep"), \
+                mock.patch.object(server.threading, "Thread"):
+            c._flow_loop(gen)
+        self.assertEqual(c.media["episode"], 3)
+        self.pos = 20.0
+
+    def test_intro_announce_and_keybind(self):
+        c = self.prepared(20.0)
+        log = []
+        calls = {"n": 0}
+
+        def stop_after(*_):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                c.generation += 1
+        with mock.patch.object(server, "mpv", side_effect=self.fake(log)), mock.patch.object(server.time, "sleep", side_effect=stop_after), \
+                mock.patch.object(server.threading, "Thread"):
+            c._flow_loop(c.generation)
+        self.assertIn(("show-text", "Press OK to skip intro", 5000), log)
+        self.assertIn(("keybind", "ENTER", "seek 40 absolute"), log)
+
+    def test_exit_near_end_rolls_into_next_episode(self):
+        c = self.prepared(990.0)
+        c.proc.poll.return_value = 0
+        c.session["pos"], c.session["dur"] = 990.0, 1000.0
+        with c.lock:
+            c.flow.begin(self.NEXT, [], {})
+        with mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(server.time, "sleep"), \
+                mock.patch.object(server.threading, "Thread"):
+            c._playback_loop(5)
+        self.assertEqual((c.app, c.media["episode"]), ("player", 3))
+        self.assertTrue(server.history.load()["tt9:1:2"]["finished"])
+
+    def test_load_segments_merges_chapters_and_db(self):
+        c = self.prepared()
+        answers = {"chapter-list": [{"title": "Intro", "time": 5.0}, {"title": "Scene", "time": 60.0}], "duration": 1000.0}
+        db = [{"kind": "credits", "start": 900, "end": 1000.0, "source": "theintrodb"}]
+        with mock.patch.object(server, "mpv", side_effect=lambda *a: answers[a[-1]]), \
+                mock.patch.object(server.media_segments, "lookup", return_value=db) as look:
+            c._load_segments(c.generation, "series", "tt9", 1, 2, {"tvdb_id": 81189, "moviedb_id": 1396})
+        self.assertEqual([s["kind"] for s in c.flow.segments], ["intro", "credits"])
+        self.assertEqual(look.call_args.kwargs["tvdb_id"], 81189)
+        self.assertEqual(look.call_args.kwargs["duration"], 1000.0)
 
 
 if __name__ == "__main__":

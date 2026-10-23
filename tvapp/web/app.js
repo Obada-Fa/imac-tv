@@ -29,13 +29,13 @@
 
   function connected(value, label) {
     online = value;
-    $('connection').textContent = label;
+    $('connection').title = label; $('connection').setAttribute('aria-label', label);
     $('connection').classList.toggle('off', !value);
     document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => b.disabled = !value);
   }
 
   function showPair() {
-    pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
+    $('connection').hidden = true; pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
     connected(false, 'Pair this phone');
     updateTabbar();
   }
@@ -48,20 +48,14 @@
 
   function render(s) {
     state = s;
-    pair.hidden = true;
+    pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
     applyTab();
-    const appNames = {home: 'TV Home', youtube: 'YouTube', player: 'Player'};
     const pb = s.playback || {}, name = (s.media && s.media.name) || pb.title;
-    $('app-name').textContent = (pb.active || s.phase === 'buffering') && name ? name : (appNames[s.app] || s.app);
-    $('phase').textContent = s.phase === 'opening' ? 'Opening…' : s.phase === 'buffering' ? 'Buffering…' :
-      pb.active ? (pb.paused ? 'Paused' : 'Playing') : s.gui ? 'Ready' : 'Waiting for TV screen';
+    const notice = s.thermal_warning ? '⚠ TV is running hot' : s.phase === 'opening' ? 'Opening…' : !s.gui ? 'Waiting for TV screen' : '';
+    $('notice').textContent = notice; $('notice').hidden = !notice;
+    $('notice').classList.toggle('warn', Boolean(s.thermal_warning));
     renderView(s, pb, name);
-    const heat = [];
-    if (s.temperature != null) heat.push(`${Math.round(s.temperature)}° CPU`);
-    if (s.gpu_temperature != null) heat.push(`${Math.round(s.gpu_temperature)}° GPU`);
-    $('temperature').textContent = (s.thermal_warning ? '⚠ Hot · ' : '') + heat.join(' · ');
-    $('temperature').classList.toggle('warn', Boolean(s.thermal_warning));
     document.querySelectorAll('.apps button').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
     const vol = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
     $('volume-label').textContent = vol; $('np-volume-label').textContent = vol;
@@ -133,13 +127,27 @@
     return tracks.map(t => { const n = langName(t); seen[n] = (seen[n] || 0) + 1; return [t, seen[n] > 1 ? `${n} ${seen[n]}` : n]; });
   }
 
-  // Mini bar for YouTube running behind TV Home. Hidden while our own mpv card is showing.
-  let ytPending = 0;
+  // Mini player for YouTube running behind TV Home. Hidden while our own mpv card is showing.
+  let ytPending = 0, ytState = null, ytAt = 0, ytDragging = false;
+  const clock = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), r = sec % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(r).padStart(2, '0'); };
+  function ytPosition() {
+    if (!ytState || ytState.position == null) return 0;
+    const live = ytState.status === 'Playing' ? (Date.now() - ytAt) / 1000 : 0;
+    return Math.min(ytState.length || Infinity, ytState.position + live);
+  }
+  function ytTick() {
+    if (!ytState || ytDragging || $('yt').hidden) return;
+    const pos = ytPosition(), len = ytState.length || 0;
+    $('yt-range').value = pos; $('yt-pos').textContent = clock(pos); $('yt-dur').textContent = '-' + clock(len - pos);
+  }
+  setInterval(ytTick, 250);
   function renderYoutube(yt, view) {
     const bar = $('yt');
     bar.hidden = !yt || view === 'playing';
+    ytState = bar.hidden ? null : yt; ytAt = Date.now();
     if (bar.hidden) return;
     const open = yt.status === 'Open';
+    bar.classList.toggle('open', open);
     $('yt-title').textContent = open ? 'YouTube is open' : (yt.title || 'YouTube');
     $('yt-artist').textContent = open ? '' : (yt.artist || '');
     $('yt-artist').hidden = open || !yt.artist;
@@ -148,20 +156,44 @@
     else { art.hidden = true; art.removeAttribute('src'); }
     document.querySelector('#yt .yt-ctl').hidden = open;
     $('yt-show').hidden = !open;
+    const seekable = !open && yt.can_seek !== false && yt.length > 0 && yt.position != null;
+    $('yt-seekrow').hidden = !seekable;
+    $('yt-back').hidden = $('yt-fwd').hidden = !seekable;
+    if (seekable) { $('yt-range').max = yt.length; ytTick(); }
     $('yt-prev').hidden = yt.can_prev === false;
     $('yt-next').hidden = yt.can_next === false;
     $('yt-play').hidden = yt.can_pause === false;
     if (Date.now() > ytPending) { $('yt-play').textContent = yt.status === 'Playing' ? '⏸' : '▶'; }
   }
+  async function ytSend(params, onFail) {
+    try { const r = await send('youtube_media', params); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
+    catch (e) { if (onFail) onFail(); }
+  }
   document.querySelectorAll('#yt [data-yt]').forEach(b => b.onclick = async () => {
     buzz(8);
     const play = $('yt-play'), before = play.textContent;
     if (b === play) { play.textContent = before === '⏸' ? '▶' : '⏸'; ytPending = Date.now() + 2500; }
-    try { await send('youtube_media', {cmd: b.dataset.yt}); }
-    catch (e) { if (b === play) play.textContent = before; }
+    await ytSend({cmd: b.dataset.yt}, () => { if (b === play) play.textContent = before; });
     ytPending = 0;
   });
+  [[$('yt-back'), -10], [$('yt-fwd'), 10]].forEach(([b, offset]) => b.onclick = () => {
+    buzz(8);
+    if (ytState && ytState.position != null) { ytState.position = Math.max(0, ytPosition() + offset); ytAt = Date.now(); ytTick(); }
+    ytSend({cmd: 'seek', offset});
+  });
+  const yr = $('yt-range');
+  yr.addEventListener('input', () => { ytDragging = true; $('yt-pos').textContent = clock(+yr.value); $('yt-dur').textContent = '-' + clock((ytState && ytState.length || 0) - yr.value); });
+  yr.addEventListener('change', () => {
+    const position = +yr.value;
+    if (ytState) { ytState.position = position; ytAt = Date.now(); }
+    ytSend({cmd: 'set_position', position}).then(() => { ytDragging = false; });
+  });
   [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { buzz(8); send('select', {app: 'youtube'}).catch(() => {}); });
+
+  // Playback prompts: each button is one server action; the TV answers the same prompts with OK / Back.
+  [['np-skip', 'skip_segment', {}], ['un-play', 'upnext', {choice: 'play'}], ['un-cancel', 'upnext', {choice: 'cancel'}],
+   ['st-continue', 'still_watching', {choice: 'continue'}], ['st-stop', 'still_watching', {choice: 'stop'}]]
+    .forEach(([id, action, params]) => $(id).onclick = () => { buzz(8); send(action, params).then(() => refresh()).catch(() => {}); });
 
   function renderView(s, pb, name) {
     const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
@@ -172,7 +204,6 @@
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
     renderYoutube(s.youtube_now, view);
-    $('nowcard').hidden = view === 'playing';
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
     $('buffer').hidden = view !== 'buffering';
@@ -185,6 +216,16 @@
       $('buf-stats').textContent = b.source ? `${b.peers || 0} peers · ${((b.speed || 0) / 1048576).toFixed(1)} MB/s` : '';
     } else if (view === 'playing') {
       const m = s.media || {};
+      const seg = s.segment, un = s.upnext, sw = s.still_watching;
+      $('np-skip').hidden = !seg || Boolean(un || sw);
+      if (seg) $('np-skip').textContent = seg.kind === 'recap' ? 'Skip recap' : 'Skip intro';
+      $('np-upnext').hidden = !un;
+      if (un) {
+        $('un-sec').textContent = un.seconds_left;
+        $('un-title').textContent = `S${String(un.season).padStart(2, '0')}E${String(un.episode).padStart(2, '0')} · ${un.name}`;
+      }
+      $('np-still').hidden = !sw;
+      if (sw) $('st-sec').textContent = sw.seconds_left;
       $('np-title').textContent = name || 'Video';
       const ep = m.season != null && m.episode != null ? `S${String(m.season).padStart(2, '0')} · E${String(m.episode).padStart(2, '0')}` : '';
       const sub = [ep, m.episode_name || m.episode_title].filter(Boolean).join(' · ');
@@ -321,7 +362,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       buzz(8);
-      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);

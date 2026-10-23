@@ -17,6 +17,10 @@ DEFAULTS = {
     "max_size_gb": 25,
     "quality_order": ["1080p", "720p", "2160p", "480p"],
     "codec_order": ["H264", "", "HEVC", "AV1"],  # "" = codec not named in the release title
+    "autoplay_next": True,          # roll into the next episode when credits start / the file ends
+    "auto_skip_intro": False,       # skip intros and recaps without asking
+    "still_watching_episodes": 3,   # autoplayed episodes in a row before "Are you still watching?"
+    "still_watching_hours": 2.5,    # ...or this long without any remote input
     "torbox_key": "",  # legacy place for the TorBox key; $DATA/torbox.key wins when present
 }
 

@@ -85,10 +85,25 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .tracklist{display:flex;flex-direction:column;gap:7px}.tracklist button{width:100%;text-align:left;border-radius:14px;justify-content:flex-start;padding:0 16px;font-size:16px}.tracklist h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#9dacbd;margin:12px 0 2px}
 .sheet .delay{margin-top:16px}
 
-/* ---- YouTube mini bar ---- */
-.yt{display:flex;align-items:center;gap:6px;background:#1b2430;border:1px solid #303d4f;border-radius:14px;padding:3px 5px 3px 6px;min-height:52px}
+/* ---- Remote tab: connection dot, notice, YouTube mini player ---- */
+.connection{position:fixed;top:calc(env(safe-area-inset-top) + 4px);right:5px;z-index:15;width:9px;height:9px;padding:0;border-radius:50%;background:#58d68d;box-shadow:0 0 0 3px #11151c;font-size:0}.connection.off{background:#ef6b64}.connection[hidden]{display:none}
+.notice{font-size:13px;color:#9dacbd;padding:2px 28px 0 4px}.notice.warn{color:#ffae78;font-weight:700}.notice[hidden]{display:none}
+.yt{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;background:#1b2430;border:1px solid #303d4f;border-radius:16px;padding:6px 8px 6px 8px}
 .yt[hidden],.yt [hidden]{display:none!important}
-.yt-main{flex:1;min-width:0;display:flex;align-items:center;gap:9px;background:none;border:0;padding:0;text-align:left;color:inherit;min-height:44px}
-.yt-main img{width:34px;height:34px;object-fit:cover;border-radius:8px;background:#222c39;flex:none}
+.yt-main{flex:1 1 100%;min-width:0;display:flex;align-items:center;gap:10px;background:none;border:0;padding:0 24px 0 0;text-align:left;color:inherit;min-height:44px}
+.yt-main img{width:40px;height:40px;object-fit:cover;border-radius:9px;background:#222c39;flex:none}
 .yt-text{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.yt-text b{font-weight:700}.yt-text small{font-size:12px;color:#9dacbd;letter-spacing:normal;margin-left:6px}
-.yt-ctl{display:flex;gap:3px}.yt-ctl button,.yt-show{min-height:44px;min-width:40px;font-size:16px;padding:0 4px;background:#1f2a37;border-radius:12px}.yt-show{padding:0 14px;font-size:14px;font-weight:700}
+.yt-seek{flex:1 1 100%;display:flex;align-items:center;gap:8px;font-size:12px;font-variant-numeric:tabular-nums;color:#9dacbd}.yt-seek span{min-width:38px}.yt-seek #yt-dur{text-align:right}
+.yt-seek input{flex:1;min-width:0;-webkit-appearance:none;appearance:none;background:transparent;height:28px;margin:0;touch-action:none}
+.yt-seek input::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:#34485e}.yt-seek input::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#add4ff;margin-top:-6.5px;border:2px solid #1b2430}
+.yt-seek input::-moz-range-track{height:5px;border-radius:3px;background:#34485e}.yt-seek input::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#add4ff;border:2px solid #1b2430}
+.yt-ctl{flex:1 1 100%;display:flex;gap:6px;justify-content:space-between}.yt-ctl button{flex:1;min-height:44px;min-width:0;font-size:17px;padding:0;background:#1f2a37;border-radius:12px}.yt-ctl .sk{font-size:14px;font-weight:700}.yt-ctl #yt-play{flex:1.4;background:#2f5a96;border-color:#a8cfff}
+.yt-show{margin-left:auto;min-height:44px;padding:0 16px;font-size:14px;font-weight:700;background:#1f2a37;border-radius:12px}
+.yt.open .yt-main{flex:1 1 0}
+
+/* ---- Playback prompts: skip intro, up next, still watching ---- */
+.skipbtn{min-height:54px;font-size:17px;font-weight:800;background:#e9f1fb;color:#10233a;border-color:#fff;border-radius:16px}.skipbtn:active{background:#c9dcf3}
+.prompt{display:flex;flex-direction:column;gap:10px;background:#16263a;border:1px solid #4f78a8;border-radius:16px;padding:12px 14px}
+.prompt[hidden],.skipbtn[hidden]{display:none!important}
+.ptext{display:flex;flex-direction:column;gap:3px;min-width:0}.ptext small{letter-spacing:.1em;color:#9dacbd;font-size:11px}.ptext b{font-size:16px;line-height:1.25;overflow-wrap:anywhere}
+.prow{display:grid;grid-template-columns:1.4fr 1fr;gap:8px}.prow button{min-height:48px;font-size:15px;font-weight:700;background:#1f2a37}.prow .go{background:#2f5a96;border-color:#a8cfff}

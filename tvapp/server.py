@@ -26,6 +26,7 @@ BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 import nowplaying
+from media import segments as media_segments, upnext
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -142,8 +143,11 @@ def screen_blanked():
     return "Monitor is Off" in command(["xset", "q"], timeout=2, check=False)
 
 
+MPV_SOCK = os.environ.get("IMACTV_MPV_SOCK", "/tmp/mpv.sock")
+
+
 def mpv(*args):
-    path = "/tmp/mpv.sock"
+    path = MPV_SOCK
     with socket.socket(socket.AF_UNIX) as sock:
         sock.settimeout(0.8)
         sock.connect(path)
@@ -370,6 +374,8 @@ class Controller:
         self.buffering = None
         self.proc = None
         self.session = None
+        self.flow = upnext.Flow()
+        self.prefetch = None
         self.cache_ready = False
         self.ui_path = DATA / "ui_request.json"
         self.media_path = DATA / "last_media.json"
@@ -654,7 +660,7 @@ class Controller:
         self._return_home(screen)
         return {"ok": True}
 
-    def play_media(self, params):
+    def play_media(self, params, prefetched=None, auto=False):
         kind, item, season, episode, video_id = media_target(params)
         stream = self._resolve_stream(params.get("stream"))
         start = params.get("start")
@@ -673,7 +679,11 @@ class Controller:
                           "episode": episode, "name": item}
             self._save_json(self.media_path, self.media)
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "home"})
-        threading.Thread(target=self._play_worker, args=(generation, stream, float(start)), daemon=True).start()
+            self.prefetch = None
+        if not auto:
+            with self.lock:
+                self.flow.user_started()
+        threading.Thread(target=self._play_worker, args=(generation, stream, float(start), prefetched), daemon=True).start()
         return {"ok": True, "source": "Selected source" if stream else ""}
 
     def _resolve_stream(self, value):
@@ -755,16 +765,181 @@ class Controller:
             except (OSError, RuntimeError, ValueError, TimeoutError):
                 misses += 1
             if (proc is not None and proc.poll() is not None) or misses >= 3:
-                if self._current(generation) and self._end_playback():
-                    self._return_home("details")
+                if self._current(generation):
+                    with self.lock:
+                        session = self.session
+                        event = self.flow.on_exit(session["pos"], session["dur"]) if session else None
+                        if event and session:
+                            session["pos"] = max(session["pos"], session["dur"])  # watched to the end
+                    if self._end_playback():
+                        if event and event[0] == "play_next" and self._autoplay_next(generation):
+                            return
+                        self._return_home("details")
                 return
+
+    def _load_segments(self, generation, kind, item, season, episode, meta):
+        """Chapters + TheIntroDB for this episode; runs off the playback path and never raises."""
+        try:
+            try:
+                chapters, duration = mpv("get_property", "chapter-list"), mpv("get_property", "duration")
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                chapters, duration = [], 0
+            own = media_segments.from_chapters(chapters, duration)
+            found = media_segments.lookup(item, season, episode, tvdb_id=(meta or {}).get("tvdb_id") if kind == "series" else None,
+                                          tmdb_id=(meta or {}).get("moviedb_id"), duration=duration)
+            with self.lock:
+                if generation == self.generation:
+                    self.flow.set_segments(media_segments.merge(own, found))
+        except Exception:
+            LOG.exception("Could not load intro/credits segments")
+
+    def _osd(self, text, ms=1500):
+        try:
+            mpv("show-text", text, ms)
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass
+
+    def _flow_loop(self, generation, cfg=None, interval=1.0):
+        """Once a second: auto-skip, announce segments, drive the up-next / still-watching countdowns."""
+        bound = announced = None
+        while self._current(generation):
+            time.sleep(interval)
+            if not self._current(generation):
+                return
+            try:
+                pos, dur, paused = mpv("get_property", "time-pos"), mpv("get_property", "duration"), mpv("get_property", "pause")
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                continue
+            if not isinstance(pos, (int, float)):
+                continue
+            dur = dur if isinstance(dur, (int, float)) else 0
+            with self.lock:
+                if generation != self.generation:
+                    return
+                event = self.flow.tick(float(pos), float(dur), bool(paused))
+                view = self.flow.view(float(pos))
+                nxt = self.flow.next_ep
+            seg = view["segment"]
+            if seg and announced != (seg["kind"], seg["end"]):
+                announced = (seg["kind"], seg["end"])
+                self._osd(f"Press OK to skip {seg['kind']}", 5000)
+                for key in ("ENTER", "KP_ENTER"):  # a physical Enter key on the TV skips too
+                    try:
+                        mpv("keybind", key, f"seek {seg['end']} absolute")
+                        bound = True
+                    except (OSError, RuntimeError, ValueError, TimeoutError):
+                        pass
+            elif not seg and bound:
+                bound, announced = None, None
+                for key in ("ENTER", "KP_ENTER"):
+                    try:
+                        mpv("keybind", key, "ignore")
+                    except (OSError, RuntimeError, ValueError, TimeoutError):
+                        pass
+            if view["upnext"]:
+                self._osd(f"Next episode in {view['upnext']['seconds_left']} s · OK to play now · Back to cancel")
+            elif view["still_watching"]:
+                self._osd(f"Are you still watching? · OK to continue · Back to stop ({view['still_watching']['seconds_left']} s)", 1500)
+            if nxt and dur and dur - pos <= 180 and self.prefetch is None and self.media:
+                self._start_prefetch(generation, nxt)
+            if event:
+                self._run_event(event, generation)
+                if event[0] != "skip":
+                    return
+
+    def _start_prefetch(self, generation, nxt):
+        """Pick (don't start) the next episode's source while this one finishes."""
+        with self.lock:
+            if self.prefetch is not None or not self.media:
+                return
+            kind, item = self.media["type"], self.media["id"]
+            video_id = f"{item}:{nxt['season']}:{nxt['episode']}"
+            self.prefetch = {"video_id": video_id, "chosen": None}
+
+        def work():
+            try:
+                found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
+                chosen = media_streams.best(found, media_config.load())
+            except Exception:
+                chosen = None
+            with self.lock:
+                if self.prefetch and self.prefetch["video_id"] == video_id and generation == self.generation:
+                    self.prefetch["chosen"] = chosen
+        threading.Thread(target=work, daemon=True).start()
+
+    def _run_event(self, event, generation):
+        kind = event[0]
+        if kind == "skip":
+            try:
+                mpv("seek", event[1], "absolute")
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                pass
+        elif kind == "play_next":
+            if not self._autoplay_next(generation):
+                self.stop_playback("details")
+        elif kind == "stop":
+            with self.action_lock:
+                if self._current(generation):
+                    self.stop_playback("details")
+
+    def _autoplay_next(self, generation):
+        """Start the episode after the current one through the normal play path. False when there isn't one."""
+        with self.action_lock:
+            with self.lock:
+                if generation != self.generation or not self.media:
+                    return False
+                nxt, media, pre = self.flow.next_ep, dict(self.media), self.prefetch
+                if not nxt or media.get("type") != "series":
+                    return False
+                if self.session:
+                    self.session["pos"] = max(self.session["pos"], self.session["dur"])  # counts as watched
+                self.flow.autoplay_started()
+            target = {"type": "series", "id": media["id"], "season": nxt["season"], "episode": nxt["episode"], "start": 0}
+            chosen = pre["chosen"] if pre and pre["video_id"] == f"{media['id']}:{nxt['season']}:{nxt['episode']}" else None
+            try:
+                self.play_media(target, prefetched=chosen, auto=True)
+            except (ValueError, RuntimeError):
+                LOG.exception("Could not start the next episode")
+                return False
+            return True
+
+    def _prompt_key(self, action):
+        """OK / Back while one of the playback prompts is up. Returns a result, or None for normal handling."""
+        try:
+            pos = mpv("get_property", "time-pos") or 0
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            return None
+        with self.lock:
+            generation, state = self.generation, self.flow.state
+            seg = self.flow.segment(pos)
+            if action == "ok":
+                event = self.flow.answer_still(True) if state == "still" else self.flow.play_now() if state == "upnext" else None
+            elif state == "upnext":
+                self.flow.cancel()
+                event = ("cancelled",)
+            elif state == "still":
+                event = self.flow.answer_still(False)
+            else:
+                event = None
+        if event and event[0] == "cancelled":
+            self._osd("Staying on this episode", 1500)
+            return {"ok": True, "handled": "cancel"}
+        if event:
+            self._run_event(event, generation)
+            return {"ok": True, "handled": event[0]}
+        if state == "still" and action == "ok":
+            return {"ok": True, "handled": "continue"}
+        if action == "ok" and seg:
+            self._run_event(("skip", seg["end"]), generation)
+            return {"ok": True, "handled": "skip"}
+        return None
 
     def _set_stage(self, generation, stage, **extra):
         with self.lock:
             if generation == self.generation and self.buffering is not None:
                 self.buffering.update(stage=stage, **extra)
 
-    def _play_worker(self, generation, stream, start):
+    def _play_worker(self, generation, stream, start, prefetched=None):
         try:
             with self.lock:
                 kind, item, video_id = self.media["type"], self.media["id"], self.media["video_id"]
@@ -773,7 +948,7 @@ class Controller:
             # Title, sources and subtitles are independent: fetch them while the engine is checked.
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
             meta_job = pool.submit(addons.meta, kind, item)
-            streams_job = None if stream else pool.submit(addons.streams, kind, video_id)
+            streams_job = None if (stream or prefetched) else pool.submit(addons.streams, kind, video_id)
             subs_job = pool.submit(addons.subtitles, kind, video_id)
             pool.shutdown(wait=False)
             torrents = None
@@ -800,14 +975,17 @@ class Controller:
                     # status() is polled every 2 s, so the next episode is worked out here, once.
                     self.media["next"] = (history.next_video(meta.get("videos"), season, episode)
                                           if kind == "series" else None)
+                    self.flow.begin(self.media["next"], [], cfg)
             direct = None
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
                 direct = stream.get("url")
                 sources = []
             else:
-                found = [media_streams.parse(s) for s in streams_job.result()]
-                chosen = media_streams.best(found, cfg)
+                chosen = prefetched
+                if not chosen:
+                    found = [media_streams.parse(s) for s in streams_job.result()]
+                    chosen = media_streams.best(found, cfg)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
@@ -837,7 +1015,7 @@ class Controller:
                                 "entry": {"type": kind, "id": item, "video_id": video_id, "season": season,
                                           "episode": episode, "name": base_name, "poster": meta.get("poster")}}
             try:
-                os.unlink("/tmp/mpv.sock")
+                os.unlink(MPV_SOCK)
             except OSError:
                 pass
             slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
@@ -847,7 +1025,7 @@ class Controller:
             os.close(os.open(log_path, os.O_WRONLY | os.O_CREAT, 0o600))
             os.chmod(log_path, 0o600)
             argv = player.mpv_argv(direct or torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
-                                  log_file=str(log_path))
+                                  log_file=str(log_path), ipc=MPV_SOCK)
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
             with self.lock:
@@ -886,6 +1064,8 @@ class Controller:
             else:
                 raise RuntimeError("Timed out waiting for the stream to start")
             self._attach_subs(tracks, cfg)
+            threading.Thread(target=self._load_segments, args=(generation, kind, item, season, episode, meta), daemon=True).start()
+            threading.Thread(target=self._flow_loop, args=(generation, cfg), daemon=True).start()
             self._playback_loop(generation)
         except Exception as exc:
             self._play_fail(generation, exc)
@@ -950,6 +1130,12 @@ class Controller:
             LOG.exception("Power off failed")
             with self.lock:
                 self.error = "Could not turn off: " + str(exc)
+
+    def _flow_view(self, player):
+        if not player.get("active"):
+            return {"segment": None, "upnext": None, "still_watching": None}
+        with self.lock:
+            return self.flow.view(player.get("position") or 0)
 
     def youtube_now(self):
         """Background YouTube state for the phone, cached ~2 s so polling doesn't hammer D-Bus."""
@@ -1016,7 +1202,7 @@ class Controller:
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
                 "torbox": {"configured": bool(media_config.read_key())},
-                "playback": player, "youtube_now": self.youtube_now(), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
+                "playback": player, "youtube_now": self.youtube_now(), **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
                 "brightness": brightness(), "screen_off": screen_blanked(),
                 "fullscreen": bool(win) and fullscreen_state(win["id"]),
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
@@ -1026,6 +1212,8 @@ class Controller:
 
     def action(self, action, params):
         with self.action_lock:
+            with self.lock:
+                self.flow.note_input()
             if action == "select":
                 return self.select(params.get("app"))
             if action == "timer":
@@ -1144,8 +1332,15 @@ class Controller:
             if action == "youtube_media":
                 cmd = params.get("cmd")
                 if cmd not in nowplaying.COMMANDS:
-                    raise ValueError("Command must be play_pause, next or previous")
-                nowplaying.control(cmd)
+                    raise ValueError("Unknown media command")
+                value = None
+                if cmd in ("seek", "set_position"):
+                    key = "offset" if cmd == "seek" else "position"
+                    value = params.get(key)
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                        raise ValueError(f"{key} must be a number of seconds")
+                    value = nowplaying.clamp(value, -3600, 3600) if cmd == "seek" else nowplaying.clamp(value, 0, 86400)
+                nowplaying.control(cmd, value)
                 self._yt_cache = None
                 time.sleep(0.25)  # let the player publish its new state
                 return {"youtube_now": self.youtube_now()}
@@ -1236,7 +1431,28 @@ class Controller:
                         raise ValueError("Invalid subtitle delay")
                     mpv("add", "sub-delay", delta)
                 return {"ok": True}
+            if action == "skip_segment":
+                pos = mpv("get_property", "time-pos") or 0
+                with self.lock:
+                    seg = self.flow.segment(pos)
+                if not seg:
+                    raise RuntimeError("Nothing to skip right now")
+                mpv("seek", seg["end"], "absolute")
+                return {"ok": True}
+            if action in ("upnext", "still_watching"):
+                choice = params.get("choice")
+                options = ("play", "cancel") if action == "upnext" else ("continue", "stop")
+                if choice not in options:
+                    raise ValueError("Choice must be " + " or ".join(options))
+                with self.lock:
+                    asked = self.flow.state == ("upnext" if action == "upnext" else "still")
+                result = self._prompt_key("ok" if choice in ("play", "continue") else "back") if asked else None
+                return result or {"ok": True, "ignored": True}
             player = playback()["active"]
+            if player and action in ("ok", "back"):
+                handled = self._prompt_key(action)
+                if handled is not None:
+                    return handled
             if action == "back" and (self.app == "player" or player):
                 return self.stop_playback("details")
             if action == "play" and self.app == "home" and not player:
