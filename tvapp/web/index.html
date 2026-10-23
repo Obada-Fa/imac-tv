@@ -6,7 +6,7 @@
 <main id="remote" class="shell" hidden>
   <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
   <div class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
-  <nav class="apps" aria-label="TV apps"><button data-app="home">Home</button><button data-app="stremio">◆ Stremio</button><button data-app="youtube">▶ YouTube</button><button data-app="vlc">VLC</button></nav>
+  <nav class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
   <div class="topbar">
     <div class="brightness">
       <button id="screen-off" type="button" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
@@ -22,21 +22,44 @@
     </div>
     <button id="fullscreen" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen">⛶<span>Full</span></button>
   </div>
-  <div id="message" role="alert" hidden></div>
-  <section id="controls" class="controls" aria-label="Remote controls">
-    <div id="dpad" class="dpad">
-      <button data-action="up" class="up" aria-label="Up">▲</button>
-      <button data-action="left" class="left" aria-label="Left">◀</button>
-      <button data-action="ok" class="ok" aria-label="Select">OK</button>
-      <button data-action="right" class="right" aria-label="Right">▶</button>
-      <button data-action="down" class="down" aria-label="Down">▼</button>
+  <div id="message" class="toast" role="alert" hidden></div>
+  <section id="controls" class="controls" aria-label="Remote controls" data-view="browse">
+    <div id="buffer" class="card buffer" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <h2 id="buf-name">Starting…</h2>
+      <p id="buf-source"></p>
+      <p id="buf-stats" class="muted"></p>
+      <button id="buf-cancel" data-action="back" class="wide">Cancel</button>
     </div>
-    <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click</small></div>
-    <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button data-action="play" aria-label="Play or pause">⏯<span>Play / Pause</span></button></div>
-    <div id="timeline" class="timeline" hidden><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">0:00</span></div>
+    <div id="nowplaying" class="card np" hidden>
+      <small>NOW PLAYING</small>
+      <h2 id="np-title">Video</h2>
+      <div class="timeline"><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">-0:00</span></div>
+      <div class="skip">
+        <button data-skip="-60">−60</button><button data-skip="-10">−10</button>
+        <button id="np-play" data-action="play" class="big" aria-label="Play or pause">⏯</button>
+        <button data-skip="10">+10</button><button data-skip="60">+60</button>
+      </div>
+      <label class="lbl">Subtitles</label><div id="np-subs" class="chips"></div>
+      <div class="delay"><button data-subdelay="-0.1" aria-label="Subtitles earlier">−</button><span id="np-delay">Delay 0.0s</span><button data-subdelay="0.1" aria-label="Subtitles later">＋</button></div>
+      <div id="np-audio-wrap"><label class="lbl">Audio</label><div id="np-audio" class="chips"></div></div>
+      <button data-action="back" class="wide">■ Stop · back to details</button>
+    </div>
+    <div id="browse" class="browse">
+      <div id="dpad" class="dpad">
+        <button data-action="up" class="up" aria-label="Up">▲</button>
+        <button data-action="left" class="left" aria-label="Left">◀</button>
+        <button data-action="ok" class="ok" aria-label="Select">OK</button>
+        <button data-action="right" class="right" aria-label="Right">▶</button>
+        <button data-action="down" class="down" aria-label="Down">▼</button>
+      </div>
+      <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click</small></div>
+      <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button id="search-open" class="accent" aria-label="Search">⌕<span>Search</span></button></div>
+      <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" aria-label="Backspace">⌫</button></form>
+    </div>
     <div class="volume"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
   </section>
-  <footer><button id="mode" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open">Type</button><button id="more-open">More</button></footer>
+  <footer id="foot"><button id="mode" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open">Type</button><button id="more-open">More</button></footer>
 </main>
 
 <section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown along the bottom of TV Home.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>

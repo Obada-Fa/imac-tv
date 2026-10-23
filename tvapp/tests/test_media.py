@@ -46,7 +46,7 @@ class StreamTests(unittest.TestCase):
     def test_hdr_and_4k_and_multi_audio(self):
         src = streams.parse({"name": "Torrentio\n4k HDR", "infoHash": "b" * 40,
                              "title": "X 2160p HDR10 HEVC\n👤 4 💾 15.77 GB ⚙️ 1337x\nMulti Audio"})
-        self.assertEqual((src["quality"], src["hdr"], src["codec"], src["file_idx"]), ("2160p", True, "HEVC", 0))
+        self.assertEqual((src["quality"], src["hdr"], src["codec"], src["file_idx"]), ("2160p", True, "HEVC", None))
         self.assertIn("multi", src["languages"])
 
     def test_real_fixtures_parse_and_rank(self):

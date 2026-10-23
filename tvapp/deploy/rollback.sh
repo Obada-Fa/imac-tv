@@ -3,7 +3,6 @@ set -euo pipefail
 backup_dir="${1:-$(find "$HOME/.local/share/imactv/backups" -mindepth 1 -maxdepth 1 -type d | sort | tail -1)}"
 test -f "$backup_dir/tvremote.service"
 cp -a "$backup_dir/tvremote.service" "$HOME/.config/systemd/user/tvremote.service"
-cp -a "$backup_dir/stremio-tv.desktop" "$HOME/.config/autostart/stremio-tv.desktop"
 if test -f "$backup_dir/imactv-home.desktop"; then
   cp -a "$backup_dir/imactv-home.desktop" "$HOME/.config/autostart/imactv-home.desktop"
 else

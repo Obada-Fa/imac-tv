@@ -18,10 +18,14 @@
     return result;
   }
 
+  let toastTimer = null, lastError = '';
   function message(text) {
     $('message').hidden = !text;
     $('message').textContent = text || '';
+    clearTimeout(toastTimer);
+    if (text) toastTimer = setTimeout(() => { if ($('message').textContent === text) message(''); }, 6000);
   }
+  const buzz = ms => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} };
 
   function connected(value, label) {
     online = value;
@@ -45,9 +49,12 @@
     state = s;
     pair.hidden = true; remote.hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
-    const appNames = {home: 'TV Home', stremio: 'Stremio', youtube: 'YouTube', vlc: 'VLC'};
-    $('app-name').textContent = s.playback.active ? s.playback.title : (appNames[s.app] || s.app);
-    $('phase').textContent = s.phase === 'opening' ? 'Opening…' : s.gui ? 'Ready' : 'Waiting for TV screen';
+    const appNames = {home: 'TV Home', youtube: 'YouTube', player: 'Player'};
+    const pb = s.playback || {}, name = (s.media && s.media.name) || pb.title;
+    $('app-name').textContent = (pb.active || s.phase === 'buffering') && name ? name : (appNames[s.app] || s.app);
+    $('phase').textContent = s.phase === 'opening' ? 'Opening…' : s.phase === 'buffering' ? 'Buffering…' :
+      pb.active ? (pb.paused ? 'Paused' : 'Playing') : s.gui ? 'Ready' : 'Waiting for TV screen';
+    renderView(s, pb, name);
     const heat = [];
     if (s.temperature != null) heat.push(`${Math.round(s.temperature)}° CPU`);
     if (s.gpu_temperature != null) heat.push(`${Math.round(s.gpu_temperature)}° GPU`);
@@ -55,14 +62,6 @@
     $('temperature').classList.toggle('warn', Boolean(s.thermal_warning));
     document.querySelectorAll('.apps button').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
     $('volume-label').textContent = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
-    $('timeline').hidden = !s.capabilities.timeline;
-    document.querySelector('[data-action="play"]').disabled = !s.gui || s.app === 'home';
-    if (s.playback.active && !draggingSeek) {
-      $('seek').max = Math.max(1, s.playback.duration || 1);
-      $('seek').value = s.playback.position || 0;
-      $('position').textContent = fmt(s.playback.position);
-      $('duration').textContent = fmt(s.playback.duration);
-    }
     const light = s.brightness;
     const off = Boolean(s.screen_off);
     const reason = light === undefined ? 'Restart the TV controller to update' :
@@ -91,13 +90,117 @@
     }
     $('fullscreen').classList.toggle('active', Boolean(s.fullscreen));
     $('fullscreen').setAttribute('aria-pressed', String(Boolean(s.fullscreen)));
-    if (s.error) message(s.error);
-    else if ($('message').textContent === 'Reconnecting to the TV…') message('');
-    const preferred = s.app === 'stremio' ? 'pointer' : 'dpad';
+    if (s.error) { if (s.error !== lastError) { lastError = s.error; buzz([30, 40, 30]); message(s.error); } }
+    else {
+      lastError = '';
+      if ($('message').textContent === 'Reconnecting to the TV…') message('');
+    }
+    const preferred = 'dpad';
     const remembered = sessionStorage.getItem('mode-' + s.app);
-    if (mode !== (remembered || preferred) && !sheetName) setMode(remembered || preferred);
+    if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
   }
+
+  const LANG = {ara: 'Arabic', ar: 'Arabic', dut: 'Nederlands', nld: 'Nederlands', nl: 'Nederlands', eng: 'English', en: 'English'};
+  const langName = t => LANG[String(t.lang || '').toLowerCase()] || t.title || t.lang || `Track ${t.id}`;
+  let sigs = {}, subDelay = 0, searching = false, sent = '', typeTimer = null;
+
+  function chips(el, key, items, make) {
+    const sig = JSON.stringify(items.map(t => [t.id, t.selected]));
+    if (sigs[key] === sig) return;
+    sigs[key] = sig; el.replaceChildren(...make());
+  }
+  function chip(label, on, fn) {
+    const b = document.createElement('button');
+    b.textContent = label; b.classList.toggle('on', on); b.onclick = () => { buzz(8); fn(); };
+    return b;
+  }
+  function labelled(tracks) {
+    const seen = {};
+    return tracks.map(t => { const n = langName(t); seen[n] = (seen[n] || 0) + 1; return [t, seen[n] > 1 ? `${n} ${seen[n]}` : n]; });
+  }
+
+  function renderView(s, pb, name) {
+    const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
+    const c = $('controls');
+    if (c.dataset.view !== view) {
+      c.dataset.view = view;
+      if (view !== 'browse') closeSearch();
+      if (view !== 'playing') { subDelay = 0; sigs = {}; }
+    }
+    $('browse').hidden = view !== 'browse';
+    $('buffer').hidden = view !== 'buffering';
+    $('nowplaying').hidden = view !== 'playing';
+    $('mode').hidden = view !== 'browse';
+    if (view === 'buffering') {
+      const b = s.buffering || {};
+      $('buf-name').textContent = name || 'Starting…';
+      $('buf-source').textContent = b.source || 'Finding the best source…';
+      $('buf-stats').textContent = b.peers != null ? `${b.peers} peers · ${((b.speed || 0) / 1048576).toFixed(1)} MB/s` : '';
+    } else if (view === 'playing') {
+      $('np-title').textContent = name || 'Video';
+      $('np-play').textContent = pb.paused ? '▶' : '⏸';
+      if (!draggingSeek) {
+        $('seek').max = Math.max(1, pb.duration || 1);
+        $('seek').value = pb.position || 0;
+        $('position').textContent = fmt(pb.position);
+        $('duration').textContent = '-' + fmt((pb.duration || 0) - (pb.position || 0));
+      }
+      const subs = pb.subtitles || [], audio = pb.audio || [];
+      chips($('np-subs'), 'sub', subs, () => {
+        const out = labelled(subs).map(([t, l]) => chip(l, t.selected, () => fire('subtitle', {id: t.id})));
+        out.push(chip('Off', !subs.some(t => t.selected), () => fire('subtitle', {id: 'no'})));
+        return out;
+      });
+      $('np-audio-wrap').hidden = audio.length < 2;
+      chips($('np-audio'), 'aud', audio, () => labelled(audio).map(([t, l]) => chip(l, t.selected, () => fire('audio', {id: t.id}))));
+      $('np-delay').textContent = `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
+    }
+    $('search-open').classList.toggle('on', searching);
+  }
+
+  function closeSearch() {
+    searching = false; sent = ''; clearTimeout(typeTimer);
+    $('search-box').hidden = true; $('search-input').value = '';
+  }
+  // Send only what changed: appended text is typed, removed text becomes backspaces.
+  async function flushTyping() {
+    clearTimeout(typeTimer);
+    const value = $('search-input').value;
+    let common = 0;
+    while (common < sent.length && common < value.length && sent[common] === value[common]) common++;
+    const del = sent.length - common, add = value.slice(common);
+    sent = value;
+    try {
+      for (let i = 0; i < del; i++) await send('delete');
+      if (add) await send('type', {text: add});
+    } catch (e) { /* toast already shown */ }
+  }
+  async function openSearch() {
+    buzz(10);
+    searching = true;
+    $('search-box').hidden = false; $('search-input').value = ''; sent = '';
+    $('search-input').focus();  // inside the tap so the native keyboard opens
+    try { await send('open_search'); } catch (e) { return; }
+    $('search-input').focus();
+  }
+  $('search-open').onclick = openSearch;
+  $('search-input').addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = setTimeout(flushTyping, 400); });
+  $('search-box').onsubmit = async e => { e.preventDefault(); await flushTyping(); fire('enter'); };
+  $('search-del').onclick = async () => {
+    const i = $('search-input');
+    if (i.value) { i.value = i.value.slice(0, -1); await flushTyping(); } else fire('delete');
+    i.focus();
+  };
+  document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => {
+    const p = state && state.playback; if (!p || !p.active) return;
+    fire('seek', {seconds: Math.max(0, Math.min(p.duration || 86400, (p.position || 0) + Number(b.dataset.skip)))});
+  });
+  document.querySelectorAll('[data-subdelay]').forEach(b => b.onclick = () => {
+    const d = Number(b.dataset.subdelay);
+    subDelay = Math.round((subDelay + d) * 10) / 10; $('np-delay').textContent = `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
+    fire('subdelay', {delta: d});
+  });
 
   async function refresh() {
     try {
@@ -116,8 +219,8 @@
     try {
       const result = await api('/api/commands', {action, params});
       message('');
-      if (navigator.vibrate) navigator.vibrate(8);
-      if (['select', 'home', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      buzz(8);
+      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
@@ -190,7 +293,7 @@
     const row = document.createElement('div'); row.className = 'sheet-row';
     for (const track of state.playback.subtitles) {
       const b = document.createElement('button');
-      b.textContent = `${track.selected ? '✓ ' : ''}${track.title}`;
+      b.textContent = `${track.selected ? '✓ ' : ''}${langName(track)}`;
       b.onclick = () => fire('subtitle', {id: track.id}); row.append(b);
     }
     const off = document.createElement('button'); off.textContent = 'Off';
@@ -222,6 +325,10 @@
   // the screen even if this phone is looking at a poll that is a second old.
   $('screen-off').onclick = () => fire('screen');
   $('seek').addEventListener('pointerdown', () => draggingSeek = true);
+  $('seek').addEventListener('input', () => {
+    const v = Number($('seek').value), max = Number($('seek').max);
+    $('position').textContent = fmt(v); $('duration').textContent = '-' + fmt(max - v);
+  });
   $('seek').addEventListener('change', () => {
     fire('seek', {seconds: Number($('seek').value)}); draggingSeek = false;
   });
@@ -232,7 +339,7 @@
   document.addEventListener('pointerdown', e => {
     const b = e.target.closest('[data-action]');
     if (!b || b.disabled) return;
-    e.preventDefault();
+    e.preventDefault(); buzz(8);
     const action = b.dataset.action;
     const params = action === 'volume' ? {direction: Number(b.dataset.direction)} : {};
     fire(action, params);

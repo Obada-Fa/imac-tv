@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
-from media import addons, config as media_config, engine as media_engine, player, streams as media_streams, subs as media_subs
+from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
 WEB = BASE / "web"
@@ -31,14 +31,6 @@ BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
 DISPLAY_ENV = dict(os.environ, DISPLAY=":0", XAUTHORITY=str(Path.home() / ".Xauthority"),
                    DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus")
 def resolve_app_command(app):
-    if app == "stremio":
-        handoff = Path.home() / ".local/bin/stremio-handoff"
-        if handoff.is_file() and os.access(handoff, os.X_OK):
-            return [str(handoff)]
-        bin_path = shutil.which("stremio")
-        if bin_path:
-            return [bin_path]
-        return ["flatpak", "run", "com.stremio.Stremio"]
     if app == "youtube":
         bin_path = shutil.which("vacuumtube") or shutil.which("VacuumTube")
         if bin_path:
@@ -47,18 +39,11 @@ def resolve_app_command(app):
         if opt_bin.is_file() and os.access(opt_bin, os.X_OK):
             return [str(opt_bin)]
         return ["flatpak", "run", "rocks.shy.VacuumTube"]
-    if app == "vlc":
-        bin_path = shutil.which("vlc")
-        if bin_path:
-            return [bin_path]
-        return ["flatpak", "run", "org.videolan.VLC"]
     return APPS.get(app, (app, [app]))[1]
 
 
 APPS = {
-    "stremio": ("Stremio", resolve_app_command("stremio")),
     "youtube": ("VacuumTube", resolve_app_command("youtube")),
-    "vlc": ("vlc", resolve_app_command("vlc")),
 }
 # The backlight node is root-only, so writes go through a fixed root helper that
 # setup-privileges.sh installs alongside the sudo rule.
@@ -92,14 +77,9 @@ def window_for(app):
         return next((w for w in windows() if w["title"] == "iMac TV"), None)
     if app == "youtube":
         return next((w for w in windows() if any(k in w["class"] or k in w["title"].lower() for k in ("vacuumtube", "rocks.shy.vacuumtube", "youtube"))), None)
-    if app == "stremio":
-        return next((w for w in windows() if "stremio" in w["class"] or "stremio" in w["title"].lower()), None)
     if app == "player":
         return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
-    if app == "vlc":
-        return next((w for w in windows() if "vlc" in w["class"] or "vlc" in w["title"].lower()), None)
-    match = APPS[app][0].lower()
-    return next((w for w in windows() if match in w["class"] or match in w["title"].lower()), None)
+    return None
 
 
 def activate(win):
@@ -217,8 +197,8 @@ def media_stream(value):
         return None
     if not isinstance(value, dict) or not isinstance(value.get("info_hash"), str) or not HASH.match(value["info_hash"]):
         raise ValueError("Invalid stream")
-    idx = value.get("file_idx", 0)
-    return {"info_hash": value["info_hash"].lower(), "file_idx": _count(idx, "file index", 0)}
+    idx = value.get("file_idx")
+    return {"info_hash": value["info_hash"].lower(), "file_idx": None if idx is None else _count(idx, "file index", 0)}
 
 
 class Controller:
@@ -229,13 +209,16 @@ class Controller:
         self.selection_path = DATA / "selection.json"
         selection = self._read_json(self.selection_path, {})
         self.app = selection.get("app", "home") if selection.get("boot_id") == BOOT_ID else "home"
-        if self.app not in (*APPS, "home"):
+        if self.app not in (*APPS, "home"):  # also maps retired "stremio"/"vlc" selections
             self.app = "home"
         self.phase = "ready"
         self.error = ""
         self.generation = 0
         self.buffering = None
         self.proc = None
+        self.session = None
+        self.cache_ready = False
+        self.ui_path = DATA / "ui_request.json"
         self.media_path = DATA / "last_media.json"
         self.media = self._read_json(self.media_path, None)
         self.pair_code = ""
@@ -414,6 +397,7 @@ class Controller:
     def select(self, app):
         if app != "home" and app not in APPS:
             raise ValueError("Unknown app")
+        self._end_playback()
         with self.lock:
             self.generation += 1
             generation = self.generation
@@ -422,12 +406,8 @@ class Controller:
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
         self._stop_proc()
         if app == "home":
-            if playback()["active"]:
-                mpv("quit")
             self._show_home()
         else:
-            if playback()["active"]:
-                mpv("quit")
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
 
@@ -440,17 +420,86 @@ class Controller:
         with self.lock:
             return generation == self.generation
 
+    def _ui_request(self, screen, media=None):
+        request = {"screen": screen, "ts": time.time()}
+        if media:
+            request["media"] = media
+        self._save_json(self.ui_path, request)
+
+    def _snapshot(self):
+        """Current media identity plus the latest known position, as a history entry."""
+        with self.lock:
+            session = self.session
+            if not session:
+                return None
+            entry = dict(session["entry"])
+            entry["position"], entry["duration"] = session["pos"], session["dur"]
+            return entry
+
+    def _record(self):
+        entry = self._snapshot()
+        if entry and (entry["position"] > 0 or entry["duration"] > 0):
+            try:
+                history.record(entry)
+            except (OSError, ValueError):
+                LOG.exception("Could not save watch history")
+
+    def _end_playback(self):
+        """Idempotent teardown: final history record, quit mpv, drop the torrent. True if a session was ended."""
+        if not self.session and not self._mpv_active():
+            return False
+        try:
+            if self.session:
+                pos, dur = mpv("get_property", "time-pos"), mpv("get_property", "duration")
+                with self.lock:
+                    if self.session:
+                        if isinstance(pos, (int, float)):
+                            self.session["pos"] = float(pos)
+                        if isinstance(dur, (int, float)) and dur > 0:
+                            self.session["dur"] = float(dur)
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass
+        self._record()
+        try:
+            mpv("quit")
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass
+        with self.lock:
+            session, self.session = self.session, None
+        self._stop_proc()
+        if session:
+            session["engine"].remove(session["info_hash"])
+        return bool(session)
+
+    def _mpv_active(self):
+        return playback()["active"]
+
+    def _return_home(self, screen="details"):
+        with self.lock:
+            self.generation += 1
+            self.app, self.phase, self.buffering = "home", "ready", None
+            media = self.media
+            self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "home"})
+        if screen == "details" and media:
+            self._ui_request("details", {key: media.get(key) for key in ("type", "id", "season", "episode")})
+        else:
+            self._ui_request("home")
+        threading.Thread(target=self._show_home, daemon=True).start()
+
+    def stop_playback(self, screen):
+        self._end_playback()
+        self._return_home(screen)
+        return {"ok": True}
+
     def play_media(self, params):
         kind, item, season, episode, video_id = media_target(params)
         stream = media_stream(params.get("stream"))
-        start = params.get("start", 0)
-        if isinstance(start, bool) or not isinstance(start, (int, float)) or not 0 <= start <= 1000000:
+        start = params.get("start")
+        if start is None:
+            start = history.resume_position(video_id)
+        elif isinstance(start, bool) or not isinstance(start, (int, float)) or not 0 <= start <= 1000000:
             raise ValueError("Invalid start position")
-        if playback()["active"]:
-            try:
-                mpv("quit")
-            except (OSError, RuntimeError):
-                pass
+        self._end_playback()
         self._stop_proc()
         with self.lock:
             self.generation += 1
@@ -470,23 +519,85 @@ class Controller:
             if generation != self.generation:
                 return
             self.app, self.phase, self.error, self.buffering = "home", "ready", str(exc)[:300], None
+            session, self.session = self.session, None
         self._stop_proc()
+        if session:
+            session["engine"].remove(session["info_hash"])
         self._show_home()
+
+    def _attach_subs(self, tracks, cfg):
+        """Load every picked external sub with a proper label/lang, then select the default language."""
+        order = list(cfg["sub_langs"])
+        default = media_subs.normalize(cfg.get("sub_default", "eng"))
+        if default in order:
+            order.remove(default)
+            order.insert(0, default)
+        try:
+            embedded = [t for t in (mpv("get_property", "track-list") or []) if t.get("type") == "sub"]
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            embedded = []
+        emb = {}
+        for track in embedded:
+            emb.setdefault(media_subs.normalize(track.get("lang")), track.get("id"))
+        target = next((lang for lang in order if lang in emb or any(t["lang"] == lang for t in tracks)), None)
+        selected = target in emb or target is None
+        for sub in tracks:
+            flag = "auto"
+            if not selected and sub["lang"] == target:
+                flag, selected = "select", True
+            try:
+                mpv("sub-add", sub["url"], flag, sub["label"], sub["lang"])
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                continue
+        if target in emb:
+            try:
+                mpv("set_property", "sid", emb[target])
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                pass
+
+    def _playback_loop(self, generation, interval=5.0):
+        """Poll position every few seconds for history; finish cleanly when mpv goes away."""
+        misses = 0
+        while self._current(generation):
+            time.sleep(interval)
+            if not self._current(generation):
+                return
+            proc = self.proc
+            try:
+                pos, dur = mpv("get_property", "time-pos"), mpv("get_property", "duration")
+                misses = 0
+                with self.lock:
+                    if generation == self.generation and self.session:
+                        if isinstance(pos, (int, float)):
+                            self.session["pos"] = float(pos)
+                        if isinstance(dur, (int, float)) and dur > 0:
+                            self.session["dur"] = float(dur)
+                self._record()
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                misses += 1
+            if (proc is not None and proc.poll() is not None) or misses >= 3:
+                if self._current(generation) and self._end_playback():
+                    self._return_home("details")
+                return
 
     def _play_worker(self, generation, stream, start):
         try:
             with self.lock:
                 kind, item, video_id = self.media["type"], self.media["id"], self.media["video_id"]
+                season, episode = self.media.get("season"), self.media.get("episode")
             cfg = media_config.load()
             torrents = media_engine.Engine(cfg["engine"])
             if not torrents.healthy():
                 raise RuntimeError("The torrent engine is not running")
+            if not self.cache_ready:
+                torrents.configure_cache(cfg["cache_bytes"])
+                self.cache_ready = True
             try:
-                name = addons.meta(kind, item).get("name") or item
+                meta = addons.meta(kind, item) or {}
             except addons.AddonError:
-                name = item
-            if self.media.get("season"):
-                name += f" S{self.media['season']:02d}E{self.media['episode']:02d}"
+                meta = {}
+            base_name = meta.get("name") or item
+            name = base_name + (f" S{season:02d}E{episode:02d}" if season else "")
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
             else:
@@ -505,11 +616,15 @@ class Controller:
                 self.media["name"] = name
                 self._save_json(self.media_path, self.media)
                 self.buffering["source"] = label
+                self.session = {"engine": torrents, "info_hash": info_hash, "pos": 0.0, "dur": 0.0,
+                                "entry": {"type": kind, "id": item, "video_id": video_id, "season": season,
+                                          "episode": episode, "name": base_name, "poster": meta.get("poster")}}
             try:
                 os.unlink("/tmp/mpv.sock")
             except OSError:
                 pass
-            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=tracks, start=start)
+            slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
+            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang)
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
             with self.lock:
@@ -532,11 +647,14 @@ class Controller:
                         with self.lock:
                             if generation == self.generation:
                                 self.phase, self.buffering = "playing", None
-                        return
+                        break
                 except (OSError, RuntimeError, ValueError, TimeoutError):
                     pass
                 time.sleep(0.75)
-            raise RuntimeError("Timed out waiting for the stream to start")
+            else:
+                raise RuntimeError("Timed out waiting for the stream to start")
+            self._attach_subs(tracks, cfg)
+            self._playback_loop(generation)
         except Exception as exc:
             self._play_fail(generation, exc)
 
@@ -717,6 +835,11 @@ class Controller:
                 return self.toggle_fullscreen()
             if action == "play_media":
                 return self.play_media(params)
+            if action == "open_search":
+                if self.app != "home":
+                    self.select("home")
+                self._ui_request("search")
+                return {"ok": True}
             if action == "sources":
                 kind, _, _, _, video_id = media_target(params)
                 try:
@@ -744,21 +867,23 @@ class Controller:
                     mpv("add", "sub-delay", delta)
                 return {"ok": True}
             player = playback()["active"]
+            if action == "back" and (self.app == "player" or player):
+                return self.stop_playback("details")
             if action == "play" and self.app == "home" and not player:
                 raise RuntimeError("Open an app to play video")
-            if action in ("play", "back", "left", "right", "up", "down", "ok") and player:
-                mapping = {"play": ("cycle", "pause"), "back": ("quit",),
+            if action in ("play", "left", "right", "up", "down", "ok") and player:
+                mapping = {"play": ("cycle", "pause"),
                            "left": ("seek", -10), "right": ("seek", 10),
                            "up": ("seek", 60), "down": ("seek", -60),
                            "ok": ("show-progress",)}
                 mpv(*mapping[action])
-                if action == "back":
-                    self.select("stremio")
                 return {"ok": True}
             if action == "home":
+                if self.app == "player" or player:
+                    return self.stop_playback("home")
                 return self.select("home")
             if action == "back":
-                action = "BackSpace" if self.app == "stremio" else "Escape"
+                action = "Escape"
             keymap = {"left": "Left", "right": "Right", "up": "Up", "down": "Down",
                       "ok": "Return", "play": "space", "enter": "Return", "delete": "BackSpace",
                       "escape": "Escape"}

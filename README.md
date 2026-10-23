@@ -1,6 +1,6 @@
 # iMac TV / Zorin TV 📺📱
 
-> Transform your iMac or PC running **Zorin OS** (or Ubuntu/Debian) into a smart TV experience, complete with an artwork-rich TV Home interface, a responsive mobile web remote, and built-in **VacuumTube (YouTube Leanback)** and **Stremio**.
+> Transform your iMac or PC running **Zorin OS** (or Ubuntu/Debian) into a smart TV experience, complete with an artwork-rich TV Home interface, a responsive mobile web remote, a built-in movie & series catalog played with **mpv**, and **VacuumTube (YouTube Leanback)**.
 
 ![TV Home Interface](tvapp/previews/imac-tv-final-live.png)
 
@@ -10,24 +10,26 @@
 
 - 🛋️ **TV Home Interface (`home.py`)**:
   - Fullscreen 10-foot user interface built with GTK3 and CSS styling.
-  - Quick-launch app shelf for **Stremio**, **YouTube (VacuumTube)**, and **VLC**.
-  - Recommendation rails (**Continue Watching**, **Recently Watched**, **Watch Again**) automatically synced from Stremio.
-  - Hero banner with backdrop artwork and details when highlighting any title.
+  - Our own catalog UI: browse, search, details, episodes and a source picker for movies and series (Stremio add-on protocol: Cinemeta metadata, Torrentio streams, OpenSubtitles v3).
+  - **Continue Watching** rail from local playback history; hero banner with backdrop artwork.
+  - Quick-launch for **YouTube (VacuumTube)**.
   - On-screen clock, Wi-Fi status, IP address, and dynamic pairing code / QR code.
 
 - 📱 **Mobile Web Remote Control (`web/` & `server.py`)**:
   - Zero app install needed on your phone — runs directly in any mobile web browser.
   - **D-Pad & Navigation**: Smooth remote navigation (Up, Down, Left, Right, OK, Back, Home).
   - **Touchpad & Mouse Mode**: Fluid pointer trackpad with click, right-click, and two-finger scroll.
-  - **Media Controls**: Play/Pause, Rewind (-10s, -60s), Fast-Forward (+10s, +60s), Subtitle selection, and Subtitle sync delay.
-  - **Keyboard Input**: Type text or search terms from your phone keyboard onto the TV screen.
+  - **State-aware**: the remote switches between browsing (D-pad, Search), buffering (source, peers, speed, Cancel) and a **Now Playing** card (scrub bar, play/pause, ±10/±60 s, subtitle and audio pickers, subtitle delay, Stop).
+  - **Search & typing**: tap Search, then use your phone's native keyboard; text is sent to the TV as you type.
   - **System Controls**: Hardware volume, mute, display brightness, screen blanking, sleep timer, and clean power-off.
   - **Security & Pairing**: Pair once using the on-screen 6-digit code or QR code; secure device cookie migration.
 
-- 🍿 **Built-in Apps**:
-  - **VacuumTube**: The official YouTube Leanback (Smart TV console) UI wrapped in Electron, featuring built-in ad-blocking and native gamepad/remote arrow navigation.
-  - **Stremio**: Media streaming platform with automated library cache sync into TV Home.
-  - **VLC**: Local and network media player with D-Bus MPRIS / MPV IPC integration.
+- 🍿 **Playback**:
+  - **mpv** plays everything; the headless **stremio-service** engine (`imactv-engine.service`, `127.0.0.1:11470`) streams torrents over HTTP.
+  - **Subtitles**: Arabic, Nederlands and English are fetched automatically and always selectable.
+  - **No video stays on disk**: the engine cache is capped (3 GB by default) and the torrent is removed when playback stops.
+  - **Add-ons** are configurable in `~/.local/share/imactv/media.json` (`addons`, `sub_langs`, `cache_bytes`, `max_size_gb`, `quality_order`).
+  - **VacuumTube**: the YouTube Leanback TV UI with ad-blocking and remote navigation.
 
 ---
 
@@ -49,11 +51,12 @@ Run the automated installer script:
 ```
 
 This single command will:
-1. Install all necessary system APT packages (`python3-gi`, `gir1.2-gtk-3.0`, `wmctrl`, `xdotool`, `libxtst6`, etc.).
-2. Set up **VacuumTube** and **Stremio** via Flathub / Flatpak (standard on Zorin OS).
-3. Configure `tvremote.service` as a systemd user service (auto-starts on boot).
-4. Configure desktop autostart so **TV Home** launches automatically on login.
-5. Set up passwordless permissions for power off and desktop restart.
+1. Install all necessary system APT packages (`python3-gi`, `gir1.2-gtk-3.0`, `wmctrl`, `xdotool`, `mpv`, Noto and Inter fonts, etc.; Inter is downloaded if the distro lacks it).
+2. Set up **VacuumTube** via Flathub / Flatpak.
+3. Install **stremio-service** (official `.deb` from GitHub releases, Flatpak `com.stremio.Service` as fallback) and enable `imactv-engine.service`, which runs the bundled `server.js` headless. Use `--skip-engine` to skip.
+4. Configure `tvremote.service` as a systemd user service (auto-starts on boot).
+5. Configure desktop autostart so **TV Home** launches automatically on login.
+6. Set up passwordless permissions for power off and desktop restart.
 
 ---
 
@@ -65,7 +68,7 @@ The installer defaults to Flatpak, which is the official and most reliable distr
 ```bash
 ./install.sh --flatpak-apps
 ```
-Installs `rocks.shy.VacuumTube` and `com.stremio.Stremio` from Flathub.
+Installs `rocks.shy.VacuumTube` from Flathub.
 
 ### Option B: Native `.deb` Packages
 ```bash
@@ -75,7 +78,7 @@ Or directly run:
 ```bash
 bash scripts/install-deb-apps.sh
 ```
-Downloads the official `.deb` releases from GitHub and dl.strem.io and installs them with `apt`.
+Downloads the official VacuumTube `.deb` from GitHub and installs it with `apt`.
 
 ### Option C: Build VacuumTube from Source
 ```bash
@@ -107,9 +110,9 @@ Clones `https://github.com/shy1132/VacuumTube.git`, installs Node.js/npm depende
                        ▼
 ┌──────────────────────────────────────────────┐
 │  PHONE REMOTE INTERFACE                      │
-│  [ Home ] [ Stremio ] [ YouTube ] [ VLC ]    │
+│  [ Home ] [ YouTube ]   [ Search ]           │
 │  [ ▲ ] [ ◀ ] [ OK ] [ ▶ ] [ ▼ ]              │
-│  [ Touchpad ] [ Vol + / - ] [ Power Off ]    │
+│  Now Playing · scrub · subtitles · audio     │
 └──────────────────────────────────────────────┘
 ```
 
@@ -121,13 +124,15 @@ Clones `https://github.com/shy1132/VacuumTube.git`, installs Node.js/npm depende
 ├── install.sh                  # Complete automated installer
 ├── uninstall.sh                # Clean uninstallation script
 ├── scripts/
-│   ├── install-apps.sh         # Installs VacuumTube & Stremio via Flatpak
+│   ├── install-apps.sh         # Installs VacuumTube via Flatpak
+│   ├── install-engine.sh       # stremio-service + imactv-engine.service
 │   ├── install-deb-apps.sh     # Downloads & installs native .deb packages
 │   └── build-vacuumtube.sh     # Builds VacuumTube from source (electron-builder)
 ├── tvapp/
 │   ├── server.py               # TV Controller HTTP server & X11 input injector
 │   ├── home.py                 # Fullscreen GTK3 TV Home interface
-│   ├── feed_sync.py            # Stremio cache & recommendations syncer
+│   ├── media/                  # Add-on client, source ranking, subtitles, engine, mpv launcher
+│   ├── feed_sync.py            # Legacy recommendations syncer
 │   ├── web/                    # Mobile web remote UI (HTML, CSS, JS)
 │   ├── assets/                 # App icons and preview artwork
 │   ├── deploy/                 # Systemd service, sudoers, and smoke test scripts
@@ -154,9 +159,9 @@ All controller, network parsing, and pairing security tests should pass.
 
 ## Uninstallation
 
-To remove the TV controller service, autostart entries, and sudoers rules:
+To remove the TV controller and engine services, autostart entries, and sudoers rules:
 
 ```bash
 ./uninstall.sh
 ```
-*(Your installed apps like VacuumTube and Stremio will be retained).*
+*(VacuumTube, mpv and stremio-service packages are kept).*

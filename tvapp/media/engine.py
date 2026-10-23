@@ -22,11 +22,11 @@ class Engine:
             return False
 
     def url(self, info_hash, file_idx):
-        return f"{self.base}/{info_hash}/{int(file_idx)}"
+        return f"{self.base}/{info_hash}/{-1 if file_idx is None else int(file_idx)}"
 
     def stats(self, info_hash, file_idx):
         try:
-            data = json.loads(self._get(f"/{info_hash}/{int(file_idx)}/stats.json"))
+            data = json.loads(self._get(f"/{info_hash}/{-1 if file_idx is None else int(file_idx)}/stats.json"))
         except (urllib.error.URLError, OSError, ValueError):
             return None
         if not isinstance(data, dict):

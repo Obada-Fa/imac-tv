@@ -24,6 +24,12 @@ if systemctl --user is-enabled tvremote.service &>/dev/null; then
   systemctl --user disable tvremote.service || true
 fi
 
+if [ -f "$HOME/.config/systemd/user/imactv-engine.service" ]; then
+  printf "Removing imactv-engine.service...\n"
+  systemctl --user disable --now imactv-engine.service || true
+  rm -f "$HOME/.config/systemd/user/imactv-engine.service"
+fi
+
 rm -f "$HOME/.config/systemd/user/tvremote.service"
 systemctl --user daemon-reload || true
 
@@ -48,4 +54,4 @@ if [ -L "$HOME/tvremote/tvapp" ]; then
 fi
 
 printf "\n${GREEN}${BOLD}✓ iMac TV has been uninstalled successfully.${NC}\n"
-printf "Note: App installations (VacuumTube, Stremio, VLC) were kept intact.\n"
+printf "Note: App installations (VacuumTube, mpv, stremio-service) were kept intact.\n"

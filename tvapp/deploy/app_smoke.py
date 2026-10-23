@@ -24,7 +24,7 @@ def command(app):
         return json.load(response)
 
 
-for app, expected in (("youtube", "VacuumTube"), ("stremio", "Stremio")):
+for app, expected in (("youtube", "VacuumTube"),):
     print("Opening", app, flush=True)
     command(app)
     for attempt in range(50):

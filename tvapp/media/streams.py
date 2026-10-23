@@ -36,7 +36,7 @@ def parse(stream):
     codec = next((label for label, pattern in CODECS if re.search(pattern, text, re.I)), "")
     idx = stream.get("fileIdx")
     out = {"info_hash": str(stream.get("infoHash") or "").lower(),
-           "file_idx": idx if isinstance(idx, int) and idx >= 0 else 0,
+           "file_idx": idx if isinstance(idx, int) and not isinstance(idx, bool) and idx >= 0 else None,
            "title": head.strip(),
            "quality": _quality(name, title),
            "hdr": bool(re.search(r"\bhdr(10)?\b", text, re.I)),

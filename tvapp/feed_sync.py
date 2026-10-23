@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build TV home rails from the signed-in Stremio cache."""
+"""One-time import of the Stremio library into the TV watch history, plus artwork helper."""
 import hashlib
 import json
 import os
@@ -7,7 +7,13 @@ from pathlib import Path
 import sqlite3
 import urllib.error
 import urllib.request
-from datetime import date
+from datetime import datetime
+import sys
+
+BASE = Path(__file__).resolve().parent
+if str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
+from media import history  # noqa: E402
 
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 STREMIO_DBS = [
@@ -75,118 +81,50 @@ def artwork(item, art_dir):
     return poster if poster.startswith("https://") else ""
 
 
-def build_feed():
-    art_dir = DATA / "artwork"
-    candidates = []
-    recent = []
-    completed_movies = []
-    for item in stremio_items():
+def import_history(items=None):
+    """One-time import of Stremio's library_recent into history.json; no-op when history exists."""
+    if (DATA / "history.json").exists():
+        return 0
+    imported = 0
+    for item in (stremio_items() if items is None else items):
         state = item.get("state") or {}
-        last_watched = str(state.get("lastWatched") or "")
-        if last_watched and item.get("name"):
-            try:
-                watched_date = date.fromisoformat(last_watched[:10])
-                recent_subtitle = f"{item.get('type', 'Video').capitalize()} · Watched {watched_date:%b %-d}"
-            except ValueError:
-                recent_subtitle = "Recently watched on Stremio"
-            recent.append((last_watched, item, recent_subtitle))
-            duration = int(state.get("duration") or 0)
-            watched = int(state.get("timeWatched") or 0)
-            offset = int(state.get("timeOffset") or 0)
-            if item.get("type") == "movie" and duration >= 1_800_000 and (
-                    max(watched, offset) / duration >= 0.9 or
-                    int(state.get("flaggedWatched") or 0) > 0):
-                completed_movies.append((last_watched, item))
-        duration = int(state.get("duration") or 0)
-        times_watched = int(state.get("timesWatched") or 0)
-        offset = int(state.get("timeOffset") or 0)
-        watched = int(state.get("timeWatched") or 0)
-        if duration <= 0 or times_watched <= 0 or not last_watched:
+        item_id = str(item.get("_id") or "")
+        kind = item.get("type")
+        if not item_id.startswith("tt") or kind not in ("movie", "series") or not item.get("name"):
             continue
-        progress = max(0.0, min(1.0, offset / duration))
-        media_type = item.get("type", "video")
-        if media_type == "movie" and (progress >= 0.97 or
-                                      (offset < 15_000 and watched / duration >= 0.95)):
-            continue
-        video_id = str(state.get("video_id") or "")
+        video_id = str(state.get("video_id") or item_id)
         parts = video_id.split(":")
-        subtitle = media_type.capitalize()
-        if media_type == "series" and len(parts) >= 3:
+        season = episode = None
+        if kind == "series":
             try:
-                subtitle = f"Season {int(parts[-2])} · Episode {int(parts[-1])}"
-            except ValueError:
-                subtitle = "Series"
-        if media_type == "series" and (offset < 15_000 or progress >= 0.97):
-            subtitle += " · Up next"
-            progress = None
+                season, episode = int(parts[-2]), int(parts[-1])
+            except (ValueError, IndexError):
+                continue
+            video_id = f"{item_id}:{season}:{episode}"
         else:
-            if media_type == "movie" and offset < 15_000:
-                progress = max(0.0, min(1.0, watched / duration))
-            remaining_ms = max(0, duration * (1 - progress))
-            subtitle += f" · {max(1, round(remaining_ms / 60_000))} min left"
-        candidates.append((last_watched, item, subtitle, progress))
-    candidates.sort(key=lambda entry: entry[0], reverse=True)
-    recent.sort(key=lambda entry: entry[0], reverse=True)
-    completed_movies.sort(key=lambda entry: entry[0], reverse=True)
-    continue_watching = []
-    for _, source, subtitle, progress in candidates[:6]:
-        card = {
-            "title": source.get("name") or "Continue watching",
-            "subtitle": subtitle,
-            "app": "stremio",
-            "source": "STREMIO",
-            "category": "continue_watching",
-            "image": artwork(source, art_dir),
-        }
-        if progress is not None:
-            card["progress"] = progress
-        continue_watching.append(card)
-    continue_titles = {item["title"] for item in continue_watching}
-    recent_watched = []
-    for _, source, subtitle in recent:
-        title = source.get("name") or "Recently watched"
-        if title in continue_titles:
-            continue
-        recent_watched.append({
-            "title": title,
-            "subtitle": subtitle,
-            "app": "stremio",
-            "source": "STREMIO",
-            "category": "recently_watched",
-            "image": artwork(source, art_dir),
-        })
-        if len(recent_watched) == 6:
-            break
-    used_titles = continue_titles | {item["title"] for item in recent_watched}
-    watch_again = []
-    for _, source in completed_movies:
-        title = source.get("name") or ""
-        if not title or title in used_titles:
-            continue
-        watch_again.append({
-            "title": title,
-            "subtitle": "Movie · From your Stremio history",
-            "app": "stremio",
-            "source": "STREMIO",
-            "category": "watch_again",
-            "image": artwork(source, art_dir),
-        })
-        if len(watch_again) == 6:
-            break
-    return {"continue_watching": continue_watching,
-            "recently_watched": recent_watched[:6],
-            "watch_again": watch_again, "stremio": [], "youtube": []}
+            video_id = item_id
+        history.record({"type": kind, "id": item_id, "video_id": video_id, "season": season, "episode": episode,
+                        "name": item.get("name"), "poster": item.get("poster") or None,
+                        "position": int(state.get("timeOffset") or 0) / 1000,
+                        "duration": int(state.get("duration") or 0) / 1000,
+                        "updated": _timestamp(state.get("lastWatched"))})
+        imported += 1
+    return imported
+
+
+def _timestamp(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def main():
     DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
-    payload = json.dumps(build_feed(), ensure_ascii=False, indent=2)
-    target = DATA / "recommendations.json"
-    if target.is_file() and target.read_text() == payload:
-        return
-    temporary = target.with_suffix(".json.tmp")
-    temporary.write_text(payload)
-    temporary.replace(target)
+    try:
+        import_history()
+    except (OSError, ValueError, sqlite3.Error):
+        pass
 
 
 if __name__ == "__main__":

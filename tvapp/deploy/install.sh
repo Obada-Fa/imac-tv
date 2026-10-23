@@ -25,9 +25,6 @@ chmod 700 "$backup_dir"
 if test -f "$HOME/.config/systemd/user/tvremote.service"; then
   cp -a "$HOME/.config/systemd/user/tvremote.service" "$backup_dir/tvremote.service"
 fi
-if test -f "$HOME/.config/autostart/stremio-tv.desktop"; then
-  cp -a "$HOME/.config/autostart/stremio-tv.desktop" "$backup_dir/stremio-tv.desktop"
-fi
 if test -f "$HOME/.config/autostart/imactv-home.desktop"; then
   cp -a "$HOME/.config/autostart/imactv-home.desktop" "$backup_dir/imactv-home.desktop"
 fi
@@ -51,14 +48,8 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=default.target
 EOF
 
-cat > "$HOME/.config/autostart/stremio-tv.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Stremio TV (managed by iMac TV)
-Exec=/bin/true
-Hidden=true
-X-Mint-autostart-enabled=false
-EOF
+# Stremio desktop is no longer used; drop any leftover autostart override.
+rm -f "$HOME/.config/autostart/stremio-tv.desktop"
 
 cat > "$HOME/.config/autostart/imactv-home.desktop" <<EOF
 [Desktop Entry]
@@ -91,9 +82,6 @@ done
 printf 'Controller did not start; restoring the old service.\n' >&2
 if test -f "$backup_dir/tvremote.service"; then
   cp -a "$backup_dir/tvremote.service" "$HOME/.config/systemd/user/tvremote.service"
-fi
-if test -f "$backup_dir/stremio-tv.desktop"; then
-  cp -a "$backup_dir/stremio-tv.desktop" "$HOME/.config/autostart/stremio-tv.desktop"
 fi
 systemctl --user daemon-reload
 exit 1

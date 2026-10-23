@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # iMac TV / Zorin TV - Native .deb App Installer
-# Downloads & installs official Debian/Ubuntu packages for VacuumTube & Stremio
+# Downloads & installs official Debian/Ubuntu packages for VacuumTube
 # ==============================================================================
 set -euo pipefail
 
@@ -42,30 +42,5 @@ else
   $SUDO apt-get install -y "$VT_DEB"
   printf "${GREEN}✓ VacuumTube installed successfully.${NC}\n"
 fi
-
-# 2. Stremio (.deb from dl.strem.io)
-printf "\n${BLUE}--> Downloading & installing Stremio (.deb)...${NC}\n"
-STREMIO_DEB="$TMP_DIR/stremio_amd64.deb"
-STREMIO_URL="https://dl.strem.io/shell-linux/v4.4.168/stremio_4.4.168-1_amd64.deb"
-
-if command -v stremio &>/dev/null; then
-  printf "${GREEN}✓ Stremio binary is already installed: $(which stremio)${NC}\n"
-else
-  printf "Downloading %s...\n" "$STREMIO_URL"
-  curl -fsSL "$STREMIO_URL" -o "$STREMIO_DEB"
-  printf "Installing Stremio...\n"
-  $SUDO apt-get install -y "$STREMIO_DEB" || {
-    printf "${YELLOW}Resolving missing dependencies for Stremio...${NC}\n"
-    $SUDO apt-get install -f -y
-  }
-  printf "${GREEN}✓ Stremio installed successfully.${NC}\n"
-fi
-
-# 3. VLC
-printf "\n${BLUE}--> Checking VLC...${NC}\n"
-if ! command -v vlc &>/dev/null; then
-  $SUDO apt-get install -y vlc
-fi
-printf "${GREEN}✓ VLC is installed.${NC}\n"
 
 printf "\n${GREEN}${BOLD}=== Native TV Apps installed successfully! ===${NC}\n"

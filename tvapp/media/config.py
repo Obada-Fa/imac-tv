@@ -10,6 +10,7 @@ DEFAULTS = {
         "subtitles": "https://opensubtitles-v3.strem.io",
     },
     "sub_langs": ["ara", "dut", "eng"],
+    "sub_default": "eng",
     "engine": "http://127.0.0.1:11470",
     "cache_bytes": 3221225472,
     "max_size_gb": 25,

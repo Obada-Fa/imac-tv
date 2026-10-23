@@ -14,9 +14,20 @@ spec.loader.exec_module(server)
 
 class ControllerTests(unittest.TestCase):
     def test_window_uses_class_and_title_columns(self):
-        row = "0x04600004  0 1376  0 0 2560 1440 com.stremio.Stremio obada-iMac Stremio"
+        row = "0x04600004  0 1376  0 0 2560 1440 mpv.mpv obada-iMac Movie"
         with mock.patch.object(server, "command", return_value=row):
-            self.assertEqual(server.window_for("stremio")["id"], "0x04600004")
+            self.assertEqual(server.window_for("player")["id"], "0x04600004")
+            self.assertIsNone(server.window_for("stremio"))
+        self.assertEqual(set(server.APPS), {"youtube"})
+
+    def test_old_stremio_selection_maps_to_home(self):
+        for old in ("stremio", "vlc"):
+            server.Controller._save_json(server.DATA / "selection.json", {"boot_id": server.BOOT_ID, "app": old})
+            with mock.patch.object(server.threading, "Thread"):
+                self.assertEqual(server.Controller().app, "home")
+        with self.assertRaises(ValueError):
+            with mock.patch.object(server.threading, "Thread"):
+                server.Controller().select("stremio")
 
     def test_pairing_revokes_code_and_limits_guesses(self):
         with mock.patch.object(server.threading, "Thread"):
@@ -43,7 +54,7 @@ class ControllerTests(unittest.TestCase):
     def test_unicode_text_is_sent_as_one_string(self):
         with mock.patch.object(server.threading, "Thread"):
             c = server.Controller()
-        c.app, c.phase = "stremio", "ready"
+        c.app, c.phase = "youtube", "ready"
         with mock.patch.object(c, "_focus_target"), mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "command") as run:
             c.action("type", {"text": "a.b+é@example.com"})
         self.assertEqual(run.call_args.args[0][-1], "a.b+é@example.com")
@@ -123,7 +134,7 @@ class PlayMediaTests(unittest.TestCase):
         self.assertEqual(c.media["video_id"], "tt0903747:1:2")
         self.assertEqual(server.Controller._read_json(server.DATA / "last_media.json", {})["video_id"], "tt0903747:1:2")
 
-    def worker(self, c, stream=None, mpv_results=(None, 5.0), healthy=True, found=None):
+    def worker(self, c, stream=None, mpv_results=None, healthy=True, found=None, tracks=(), loop=False):
         c.action_lock = server.threading.RLock()
         with mock.patch.object(server.threading, "Thread"), mock.patch.object(server, "playback", return_value={"active": False}):
             c.action("play_media", {"type": "movie", "id": "tt0063350"})
@@ -131,17 +142,30 @@ class PlayMediaTests(unittest.TestCase):
         src = found if found is not None else [{"name": "Torrentio\n1080p", "title": "Movie 1080p WEB-DL x264\n\U0001f464 50 \U0001f4be 2 GB", "infoHash": "d" * 40, "fileIdx": 1}]
         proc = mock.Mock()
         proc.poll.return_value = None
+        calls = []
+
+        def fake_mpv(*args):
+            calls.append(args)
+            if args[:2] == ("get_property", "time-pos"):
+                return 5.0
+            if args[:2] == ("get_property", "track-list"):
+                return list(tracks)
+            return None
+        self.calls, self.eng_holder = calls, {}
         with mock.patch.object(server.media_engine, "Engine") as eng, \
                 mock.patch.object(server.addons, "meta", return_value={"name": "Night"}), \
                 mock.patch.object(server.addons, "streams", return_value=src), \
                 mock.patch.object(server.addons, "subtitles", return_value=[{"url": "https://s/a.srt", "lang": "ara"}]), \
                 mock.patch.object(server.subprocess, "Popen", return_value=proc) as popen, \
-                mock.patch.object(server, "mpv", side_effect=list(mpv_results)), \
-                mock.patch.object(server.time, "sleep"), mock.patch.object(c, "_show_home"):
+                mock.patch.object(server, "mpv", side_effect=fake_mpv) as mpv_mock, \
+                mock.patch.object(server.time, "sleep"), mock.patch.object(c, "_show_home"), \
+                mock.patch.object(c, "_playback_loop") as watcher:
             eng.return_value.healthy.return_value = healthy
             eng.return_value.url.side_effect = lambda h, i: f"http://e/{h}/{i}"
             eng.return_value.stats.return_value = {"peers": 4, "speed": 1000.0, "downloaded": 1}
+            self.eng_holder["eng"] = eng.return_value
             c._play_worker(gen, stream, 12.0)
+        self.watcher = watcher
         return popen, proc
 
     def test_worker_launches_best_source_and_reaches_playing(self):
@@ -150,10 +174,29 @@ class PlayMediaTests(unittest.TestCase):
         argv = popen.call_args.args[0]
         self.assertEqual(argv[0], "mpv")
         self.assertEqual(argv[-1], "http://e/" + "d" * 40 + "/1")
-        self.assertIn("--sub-file=https://s/a.srt", argv)
+        self.assertFalse(any(a.startswith("--sub-file") for a in argv))
+        self.assertIn("--slang=en,eng,ar,ara,nl,dut,nld", argv)
         self.assertIn("--start=12", argv)
+        self.assertIn(("sub-add", "https://s/a.srt", "select", "Arabic", "ara"), self.calls)
+        self.eng_holder["eng"].configure_cache.assert_called_once_with(3221225472)
+        self.watcher.assert_called_once()
+        self.assertEqual(c.session["entry"]["name"], "Night")
         self.assertEqual((c.app, c.phase, c.buffering), ("player", "playing", None))
         self.assertEqual(c.media["name"], "Night")
+
+    def test_subs_select_default_language_and_prefer_embedded(self):
+        c = self.controller()
+        self.worker(c, found=None, tracks=[])
+        picked = [{"url": "https://s/%s.srt" % l, "lang": l, "label": l.title()} for l in ("ara", "dut", "eng")]
+        with mock.patch.object(server, "mpv", return_value=[]) as m:
+            c._attach_subs(picked, {"sub_langs": ["ara", "dut", "eng"], "sub_default": "dut"})
+        flags = {call.args[4]: call.args[2] for call in m.call_args_list if call.args[0] == "sub-add"}
+        self.assertEqual(flags, {"ara": "auto", "dut": "select", "eng": "auto"})
+        embedded = [{"type": "sub", "id": 7, "lang": "eng"}]
+        with mock.patch.object(server, "mpv", return_value=embedded) as m:
+            c._attach_subs(picked, {"sub_langs": ["ara", "dut", "eng"], "sub_default": "eng"})
+        self.assertNotIn("select", [call.args[2] for call in m.call_args_list if call.args[0] == "sub-add"])
+        m.assert_called_with("set_property", "sid", 7)
 
     def test_worker_uses_explicit_stream_and_skips_sources(self):
         c = self.controller()
@@ -197,6 +240,95 @@ class PlayMediaTests(unittest.TestCase):
             out = server.playback()
         self.assertEqual(out["subtitles"][0]["lang"], "ara")
         self.assertEqual(out["audio"], [{"id": 1, "title": "Stereo", "lang": "eng", "selected": False}])
+
+
+class LifecycleTests(unittest.TestCase):
+    def controller(self, phase="playing"):
+        with mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+        eng = mock.Mock()
+        c.app, c.phase, c.generation = "player", phase, 5
+        c.media = {"type": "series", "id": "tt9", "video_id": "tt9:1:2", "season": 1, "episode": 2, "name": "Show S01E02"}
+        c.session = {"engine": eng, "info_hash": "a" * 40, "pos": 100.0, "dur": 1000.0,
+                     "entry": {"type": "series", "id": "tt9", "video_id": "tt9:1:2", "season": 1, "episode": 2,
+                               "name": "Show", "poster": "http://p"}}
+        c.proc = mock.Mock(**{"poll.return_value": None})
+        self.eng = eng
+        return c
+
+    def ui(self):
+        return server.Controller._read_json(server.DATA / "ui_request.json", {})
+
+    def test_back_during_buffering_cancels_and_requests_details(self):
+        c = self.controller("buffering")
+        proc = c.proc
+        with mock.patch.object(server, "playback", return_value={"active": False}), \
+                mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(c, "_show_home"), \
+                mock.patch.object(server.threading, "Thread"):
+            self.assertEqual(c.action("back", {}), {"ok": True})
+        proc.terminate.assert_called_once()
+        self.eng.remove.assert_called_once_with("a" * 40)
+        self.assertEqual((c.app, c.phase, c.session), ("home", "ready", None))
+        self.assertGreater(c.generation, 5)
+        ui = self.ui()
+        self.assertEqual((ui["screen"], ui["media"]), ("details", {"type": "series", "id": "tt9", "season": 1, "episode": 2}))
+
+    def test_back_while_playing_records_final_position(self):
+        c = self.controller()
+        answers = {"time-pos": 500.0, "duration": 1000.0}
+        quit_calls = []
+
+        def fake(*args):
+            if args[0] == "quit":
+                quit_calls.append(1)
+            return answers.get(args[-1])
+        with mock.patch.object(server, "playback", return_value={"active": True}), \
+                mock.patch.object(server, "mpv", side_effect=fake), mock.patch.object(server.threading, "Thread"):
+            c.action("back", {})
+        self.assertEqual(quit_calls, [1])
+        self.assertEqual(server.history.load()["tt9:1:2"]["position"], 500.0)
+        self.assertEqual(server.history.load()["tt9:1:2"]["poster"], "http://p")
+        self.eng.remove.assert_called_once()
+
+    def test_home_action_while_playing_requests_home(self):
+        c = self.controller()
+        with mock.patch.object(server, "playback", return_value={"active": True}), \
+                mock.patch.object(server, "mpv", return_value=None), mock.patch.object(server.threading, "Thread"):
+            c.action("home", {})
+        self.assertEqual(self.ui()["screen"], "home")
+        self.assertEqual(c.app, "home")
+
+    def test_mpv_exit_cleans_up_once(self):
+        c = self.controller()
+        c.proc.poll.return_value = 0
+        c.session["pos"] = 950.0
+        with mock.patch.object(server, "mpv", return_value=None) as m, mock.patch.object(server.time, "sleep"), \
+                mock.patch.object(server.threading, "Thread"):
+            m.side_effect = OSError
+            c._playback_loop(5)
+        self.eng.remove.assert_called_once_with("a" * 40)
+        self.assertEqual((c.app, c.phase), ("home", "ready"))
+        entry = server.history.load()["tt9:1:2"]
+        self.assertTrue(entry["finished"] or entry["position"] == 950.0)
+        self.assertEqual(self.ui()["screen"], "details")
+
+    def test_play_media_uses_resume_position_unless_explicit(self):
+        server.history.record({"type": "movie", "id": "tt77", "video_id": "tt77", "name": "M", "position": 300, "duration": 6000})
+        c = self.controller()
+        c.session = None
+        with mock.patch.object(server.threading, "Thread") as thread, mock.patch.object(server, "playback", return_value={"active": False}):
+            c.action("play_media", {"type": "movie", "id": "tt77"})
+            self.assertEqual(thread.call_args.kwargs["args"][2], 300.0)
+            c.action("play_media", {"type": "movie", "id": "tt77", "start": 0})
+            self.assertEqual(thread.call_args.kwargs["args"][2], 0.0)
+
+    def test_open_search_switches_home_and_writes_request(self):
+        c = self.controller()
+        with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv", side_effect=OSError), \
+                mock.patch.object(server.threading, "Thread"):
+            self.assertEqual(c.action("open_search", {}), {"ok": True})
+        self.assertEqual((c.app, self.ui()["screen"]), ("home", "search"))
+        self.assertIn("ts", self.ui())
 
 
 if __name__ == "__main__":

@@ -1,13 +1,13 @@
 # iMac TV
 
-The controller is `server.py`, TV Home is `home.py`, and the Android remote is in `web/`.
+The controller is `server.py`, TV Home is `home.py`, media logic is in `media/`, and the phone remote is in `web/`.
 No cloud account is needed for the remote. The iMac must be powered on and on the same LAN.
 
 ## Install
 
 Copy this directory to `~/tvremote/tvapp` on the iMac, then run
 `bash ~/tvremote/tvapp/deploy/install.sh` there. The installer backs up the
-existing service and Stremio autostart settings. Use
+existing service and autostart settings. Use
 `bash ~/tvremote/tvapp/deploy/rollback.sh` to restore the latest backup.
 Run `sudo bash ~/tvremote/tvapp/deploy/setup-privileges.sh` once to allow
 password-free full shutdown and desktop recovery. Its sudo rule permits only
@@ -29,17 +29,21 @@ can revoke other paired phones or disable the old `?k=` link after migration.
 Power Off is full shutdown;
 the physical power button is required to start the iMac again.
 
-## Home feeds
+## Media
 
-`home.py` runs `feed_sync.py` at startup and every ten minutes. The adapter
-reads Stremio's local `library_recent` cache read-only and builds Continue
-Watching, Recently Watched, and Watch Again rails in
-`~/.local/share/imactv/recommendations.json`; downloaded artwork is cached in
-the same data directory. No account password or session token is copied into
-the feed file. Arrow keys move between the app shelf and content rails; focusing
-a card previews that title in the hero banner. Selecting a card opens its app.
-VacuumTube's local profile must have a signed-in YouTube session and a separate
-feed adapter before personalized YouTube rows can be shown.
+TV Home is our own catalog UI: it browses Cinemeta, lists Torrentio sources and
+plays the best one in `mpv` through the `stremio-service` engine
+(`imactv-engine.service`, `127.0.0.1:11470`, installed by `scripts/install-engine.sh`).
+Add-ons, subtitle languages (Arabic, Dutch, English by default), cache cap and
+quality order live in `~/.local/share/imactv/media.json`; see `media/CONTRACT.md`.
+Nothing is kept on disk: the engine cache is capped (`cache_bytes`, 3 GB) and the
+torrent is removed when playback ends. Continue Watching comes from
+`~/.local/share/imactv/history.json`.
+
+The phone remote follows the TV state: D-pad and Search while browsing, a
+buffering card (source, peers, speed, Cancel), and a Now Playing card with scrub
+bar, skip, subtitle/audio pickers and subtitle delay. Stop returns to the
+title's details. VacuumTube provides YouTube.
 
 ## Testing
 
