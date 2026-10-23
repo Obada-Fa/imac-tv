@@ -43,18 +43,24 @@ little and the visualizer runs as a background, not a centrepiece. The sky-line 
 track (and every minute or so) the dots flow into a randomly chosen style, weighted: edge flow 6 (dots,
 triangles, hexagons and line fragments enter from outside the screen, cross it on gentle curves with links
 forming between them and leave again; the music sets their speed, how many are alive and their brightness),
-ridge 2, a re-linking full-screen constellation 2, a wide low-poly terrain 2, aurora 2 (four pleated
-light curtains with traveling beat crests), and prism 2 (a rotating crystal ribbon that opens on bass
-hits). Both new modes use the same 64 dots, fixed linear-size link graphs, depth shading, and batched
-dirty-region renderer; mids drive their folds/rotation and treble adds shared sparkles. Bass
-breathes, beats send light along the links, treble twinkles; colours come from the photo. When the music
+ridge 2, a re-linking full-screen constellation 2, a wide low-poly terrain 2, and prism 2
+(a rotating crystal ribbon that opens on bass hits). Circuit 6 joins the rotation when the current
+image has usable outlines: eight light runners follow its straight lines, bends, and curves, accelerating
+on bass hits and sparkling on treble. The worker traces the displayed crop once and caches its paths;
+the animation still uses 64 dots, fixed links, and the batched dirty-region renderer. Aurora has been
+removed from automatic rotation. Bass breathes, beats send light along the links, treble twinkles;
+colours come from the photo. When the music
 stops the particle field fades back in within about a second (no waiting for the next photo). The caption
 shows the song and artist while playback metadata is available. The first remote or keyboard input wakes
 Home and is swallowed.
 
-Render a repeatable synthetic-music preview with `python3 scripts/viz-preview.py`
-(`tvapp/previews/viz-aurora-prism.gif`). Run `scripts/viz-bench.sh tvapp 30 aurora prism`
-for isolated 1080p measurements; it waits for the requested mode before sampling.
+Render a repeatable preview over an image with
+`python3 scripts/circuit-preview.py /path/to/image.jpg tvapp/previews/circuit-demo`.
+For isolated 1080p measurements on the same background, run
+`BENCH_IMAGE=/path/to/image.jpg scripts/viz-bench.sh tvapp 30 circuit prism`.
+The benchmark waits for the requested mode before sampling. The background-provider API,
+limitations, and prompt for implementing Retro settings are in
+[the Circuit handoff](../docs/retro-circuit-handoff.md).
 
 ## Media
 

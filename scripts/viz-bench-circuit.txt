@@ -1,0 +1,24 @@
+# 2026-10-24: main checkout, isolated Xvfb 1920x1080x24, synthetic audio.
+# BENCH_IMAGE='<user-supplied perspective stripes JPEG>' scripts/viz-bench.sh tvapp 30 circuit prism
+# Same local background in both runs; no network refresh. 30 s/mode, 5 s warm-up.
+# CPU percentages represent ONE core, not total machine usage. Local measurements,
+# not a guarantee for the target TV. Extraction is outside the animation window.
+mode           | python % | Xvfb %  | total % | draw ms | area % | fps
+---------------|----------|---------|---------|---------|--------|------
+circuit        |      2.8 |     1.5 |     4.2 |    1.19 |    9.5 |  15.2
+prism          |      8.4 |     2.7 |    11.1 |    4.19 |   37.7 |  15.5
+
+Circuit: 64 points, 56 short links, eight cached glow stamps, at most 24 cached
+polylines with 96 vertices each. Constant bounded history; arc-length interpolation
+uses binary search. No pixel access, edge detection, or pairwise neighbour search
+in animation. Reuses the existing framebuffer, batched strokes and dirty cells.
+
+Image detection runs once per uncached displayed crop on the photo worker.
+The three reference images took about 0.5 seconds each at 384x216 in the initial
+extraction experiment. Cached reloads do not decode the image for path detection.
+Original background resolution is preserved by the existing canvas; the small
+analysis copy and reduced-size GIF previews never replace the displayed image.
+
+Synthetic tests cover colour-only boundaries, wall/floor bends, curved contours,
+noise rejection, precise path attachment through kicks and reflections, photo
+changes, cache invalidation, invalid data, and bounded frame cost.

@@ -21,7 +21,7 @@ import random
 import screens
 from screens import Screen, text_label, cover_pixbuf
 import widgets
-from widgets import network, shapes
+from widgets import network, shapes, contours
 import perflog
 
 PERF = perflog.from_env()       # IMACTV_PERF_LOG=path: per-frame timings (None, and free, when unset)
@@ -204,6 +204,44 @@ def traced(path, w, h):
     except Exception as exc:
         print("home trace:", exc)
         return None
+
+
+def paths_from_pixbuf(pb):
+    """Worker-only analysis of exactly the crop used by the photo canvas."""
+    w = contours.TRACE_WIDTH
+    h = max(16, round(w * pb.get_height() / pb.get_width()))
+    sm = pb.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
+    data, stride, channels = sm.get_pixels(), sm.get_rowstride(), sm.get_n_channels()
+    rgb = [[tuple(data[y * stride + x * channels:y * stride + x * channels + 3])
+            for x in range(w)] for y in range(h)]
+    return contours.trace(rgb)
+
+
+def traced_paths(path, w, h):
+    """Cached image contours; call in the photo worker, never from animation.
+
+    Full path, nanosecond mtime, size AND crop dimensions prevent stale alignment
+    when a background is replaced or the display's aspect ratio changes.
+    """
+    try:
+        st = os.stat(path)
+        source = f"circuit-v1:{os.path.realpath(path)}:{st.st_size}:{st.st_mtime_ns}:{w}:{h}"
+        key = hashlib.sha256(source.encode()).hexdigest()[:24]
+        cache = screens.DATA / "pathcache"
+        target = cache / (key + ".json")
+        try:
+            return contours.valid_paths(json.loads(target.read_text()))
+        except (OSError, ValueError, TypeError):
+            pass
+        paths = paths_from_pixbuf(cover_pixbuf(path, w, h))
+        cache.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(paths))
+        for old in sorted(cache.glob("*.json"), key=lambda p: p.stat().st_mtime)[:-80]:
+            old.unlink(missing_ok=True)
+        return paths
+    except Exception as exc:
+        print("home contours:", exc)
+        return []
 
 
 def surface_palette(small):
@@ -478,6 +516,7 @@ class AmbientHomeScreen(Screen):
         self.viz_on = self.cfg["visualizer"] and self.style == "network"
         self.morph = shapes.Morph()
         self.trace = None              # the current photo's sky-line (normalised), or None
+        self.reactive_paths = []       # normalised paths on the displayed crop
         self.palette = None            # the current photo's accent colours for the visualizer
         self.doodles = shapes.load_doodles(screens.ASSETS / "shapes.json") if self.style == "network" else []
         self.viz = None                # shapes.Viz while the music visualizer runs
@@ -657,7 +696,11 @@ class AmbientHomeScreen(Screen):
                 if item:
                     surf = load_surface(item["path"], self.shell.sw, self.shell.sh)   # (photo, blurred copy)
                     trace = traced(item["path"], self.shell.sw, self.shell.sh) if self.style == "network" else None
-                    item = dict(item, trace=trace, palette=surface_palette(surf[1]))
+                    paths = []
+                    if self.style == "network" and self.viz_on:
+                        paths = (contours.valid_paths(item["reactive_paths"]) if "reactive_paths" in item else
+                                 traced_paths(item["path"], self.shell.sw, self.shell.sh))
+                    item = dict(item, trace=trace, reactive_paths=paths, palette=surface_palette(surf[1]))
             except Exception as exc:
                 print("home photo:", exc)
                 surf = None
@@ -686,10 +729,14 @@ class AmbientHomeScreen(Screen):
         self.current_item = item
         self.trace = item.get("trace") if item else None
         self.palette = item.get("palette") if item else None
+        self.reactive_paths = item.get("reactive_paths", []) if item else []
         self.update_bottom_label()
         self.canvas.show_surface(surf, blur, animate=self.canvas.cur is not None)
         self.photo_due = time.monotonic() + self.interval
         if self.viz:
+            self.viz.set_paths(self.reactive_paths)
+            if self.palette:
+                self.viz.palette = list(self.palette)
             base = self.base_shape()
             if base:
                 self.viz.set_base(base)
@@ -1076,7 +1123,8 @@ class AmbientHomeScreen(Screen):
         start = self.still if self.morph.target is not None else None     # flow out of what is showing
         t0 = PERF.now() if PERF else 0.0
         self.viz = shapes.Viz(base, self.shell.sw, self.shell.sh, self.rng, doodles=self.doodles,
-                              palette=self.palette, modes=self.viz_modes, every=self.viz_every, start=start)
+                              palette=self.palette, modes=self.viz_modes, every=self.viz_every, start=start,
+                              paths=getattr(self, "reactive_paths", []))
         if PERF:
             PERF.mark("viz_new", ms=round(PERF.ms(t0), 3))
             self.perf_wrap_viz(self.viz)
@@ -1435,6 +1483,9 @@ class AmbientHomeScreen(Screen):
             tw = shapes.twinkle(i, t, lv["treble"]) if lv["treble"] > 0.02 else 0.0
             if i % 5 == 0 and dd > 0.45 and (beat > 0.05 or tw > 0.3):
                 cr.set_source_rgba(*halo, min(0.5, (0.35 * beat + 0.25 * tw) * a * dd))
+                cr.mask_surface(sprite, x - r, y - r)
+            if fr.get("heads") and fr["heads"][i] > 0.01:
+                cr.set_source_rgba(*spark, (0.22 + 0.35 * beat) * a * fr["heads"][i])
                 cr.mask_surface(sprite, x - r, y - r)
             d = (2.0 + 2.2 * dd) * s * (1 + 0.18 * bass + 0.5 * tw)
             gl = glyph[i] if glyph else (4 if i % 5 == 0 else 0)

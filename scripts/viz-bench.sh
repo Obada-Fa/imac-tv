@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Benchmark the ambient-Home music visualizer under a private Xvfb (Xvfb CPU ~ Xorg CPU on the TV).
-# usage: scripts/viz-bench.sh [tvapp_dir=tvapp] [secs_per_mode=30] [mode ...=edgeflow ridge constellation terrain aurora prism]
+# usage: scripts/viz-bench.sh [tvapp_dir=tvapp] [secs_per_mode=30] [mode ...=edgeflow ridge constellation terrain prism]
 # env:   SHOT_DIR=<dir> keeps one screenshot per mode (default: discarded with the scratch dir)
+# env:   BENCH_IMAGE=<local image> fixes the background (required for circuit); no network image refresh.
 # Never touches DISPLAY :0 or ~/.local/share/imactv. Kills only the PIDs it started.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -9,10 +10,21 @@ TVAPP=$(cd "${1:-$HERE/../tvapp}" && pwd) || exit 1
 SECS=${2:-30}
 shift 2 2>/dev/null || shift $# 2>/dev/null
 MODES=("$@")
-[ ${#MODES[@]} -gt 0 ] || MODES=(edgeflow ridge constellation terrain aurora prism)
+[ ${#MODES[@]} -gt 0 ] || MODES=(edgeflow ridge constellation terrain prism)
 HELPER="$HERE/viz_bench.py"
 ROOT=$(mktemp -d /tmp/viz-bench.XXXXXX)
 PIDS=()
+STATUS=0
+if [ -n "${BENCH_IMAGE:-}" ] && [ ! -f "$BENCH_IMAGE" ]; then
+  echo "BENCH_IMAGE does not exist: $BENCH_IMAGE" >&2
+  rm -rf "$ROOT"
+  exit 1
+fi
+if [[ " ${MODES[*]} " == *" circuit "* ]] && [ -z "${BENCH_IMAGE:-}" ]; then
+  echo "circuit requires BENCH_IMAGE pointing to a local image with visible contours" >&2
+  rm -rf "$ROOT"
+  exit 1
+fi
 
 cleanup() {
   local p
@@ -40,6 +52,18 @@ ROWS=""
 for mode in "${MODES[@]}"; do
   D=$ROOT/$mode; mkdir -p "$D/data"
   printf '{"ambient": {"idle": 10, "idle_music": 10, "interval": 3600}}\n' >"$D/data/home.json"
+  if [ -n "${BENCH_IMAGE:-}" ]; then
+    python3 - "$D/data" "$BENCH_IMAGE" <<'PYSEED'
+import json, pathlib, shutil, sys, time
+root = pathlib.Path(sys.argv[1]) / "ambient"
+root.mkdir(parents=True, exist_ok=True)
+source = pathlib.Path(sys.argv[2])
+name = "benchmark" + source.suffix
+shutil.copyfile(source, root / name)
+(root / "index.json").write_text(json.dumps({"checked": time.time(), "images": [
+    {"id": "benchmark", "file": name, "caption": "Visualizer benchmark", "source": "local"}]}))
+PYSEED
+  fi
   N=$(free_display)
   Xvfb ":$N" -screen 0 1920x1080x24 -nolisten tcp >"$D/xvfb.log" 2>&1 &
   XPID=$!; PIDS+=("$XPID")
@@ -60,7 +84,7 @@ for mode in "${MODES[@]}"; do
     fi
     sleep 0.5
   done
-  if [ $ok = 0 ]; then echo "$mode: visualizer never reached (see below)"; tail -5 "$D/home.log"; cleanup_one=1
+  if [ $ok = 0 ]; then echo "$mode: visualizer never reached (see below)"; tail -5 "$D/home.log"; STATUS=1
     for p in "$PPID_" "$XPID"; do kill -TERM "$p" 2>/dev/null; done; continue; fi
   sleep 5   # warm up
   T0=$(python3 "$HELPER" now "$D/perf.jsonl"); C0=$(python3 "$HELPER" cpu "$PPID_" "$XPID"); W0=$(date +%s.%N)
@@ -75,3 +99,5 @@ for mode in "${MODES[@]}"; do
   for p in "$PPID_" "$XPID"; do kill -TERM "$p" 2>/dev/null; done
   sleep 1
 done
+
+exit "$STATUS"

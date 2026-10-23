@@ -46,6 +46,32 @@ def rdp(pts, eps):
     return rdp(pts[: idx + 1], eps)[:-1] + rdp(pts[idx:], eps)
 
 
+def valid_paths(value):
+    """Validate optional provider-supplied paths; [] explicitly disables tracing.
+
+    Providers must use normalised coordinates for the final cover crop. Invalid
+    data fails closed, rather than animating outside the picture or allocating
+    arbitrary amounts of geometry.
+    """
+    if not isinstance(value, list) or len(value) > 24:
+        return []
+    result = []
+    for path in value:
+        if not isinstance(path, (list, tuple)) or not 2 <= len(path) <= 96:
+            return []
+        row = []
+        for p in path:
+            if (not isinstance(p, (list, tuple)) or len(p) != 2 or
+                    not all(isinstance(v, (float, int)) and 0 <= v <= 1 and math.isfinite(v) for v in p)):
+                return []
+            q = tuple(p)
+            if not row or q != row[-1]:
+                row.append(q)
+        if len(row) >= 2:
+            result.append(row)
+    return result
+
+
 def trace_horizon(gray, blue=None, min_valid=0.6):
     """Trace the SKY boundary of a photo: per column, the top-most edge where the region above is sky-like
     (smooth, and brighter or bluer than what is below) and the region below is textured land.
@@ -438,8 +464,9 @@ def twinkle(i, t, treble):
 # flows across instead of scrambling. All positions are screen pixels; nothing here touches cairo.
 
 VIZ_N = 64
-VIZ_MODES = ("edgeflow", "ridge", "constellation", "terrain", "aurora", "prism")
-MODE_WEIGHTS = {"edgeflow": 6, "ridge": 2, "constellation": 2, "terrain": 2, "aurora": 2, "prism": 2}   # random rotation
+VIZ_MODES = ("edgeflow", "ridge", "constellation", "terrain", "prism")
+PHOTO_VIZ_MODES = ("circuit",)   # offered only when the displayed image has usable paths
+MODE_WEIGHTS = {"edgeflow": 6, "ridge": 2, "constellation": 2, "terrain": 2, "circuit": 6, "prism": 2}   # random rotation
 MODE_MORPH = 2.8                 # seconds for one mode to flow into the next
 MODE_EVERY = (45.0, 100.0)       # seconds between random mode changes within a track
 FIRST_CHANGE = (10.0, 18.0)      # the photo's ridge plays first, then the first random mode
@@ -766,6 +793,73 @@ class TerrainMode(_Mode):
         return out
 
 
+class CircuitMode(_Mode):
+    """Light runners locked to the picture's contours, including bends and arcs.
+
+    Eight short trains share the existing 64 slots. Travel is measured in screen
+    pixels, so differently sized paths have the same musical pace. Reflection at
+    endpoints is continuous; neither beats nor silence push dots off the image.
+    """
+    name = "circuit"
+
+    def __init__(self, n, sw, sh, rng, paths):
+        from bisect import bisect_right
+        super().__init__(n, sw, sh, rng)
+        self.bisect = bisect_right
+        self.routes = []
+        for path in paths[:24]:
+            pts, lengths = [], [0.0]
+            for x, y in path:
+                p = (x * sw, y * sh)
+                if pts:
+                    d = math.dist(pts[-1], p)
+                    if d == 0.0:
+                        continue
+                    lengths.append(lengths[-1] + d)
+                pts.append(p)
+            if len(pts) > 1:
+                self.routes.append((pts, lengths))
+        self.train_size = 8
+        self.trains = max(1, n // self.train_size)
+        self.route = [k * len(self.routes) // self.trains for k in range(self.trains)]
+        self.travel = [rng.random() * self.routes[k][1][-1] * 2 for k in self.route]
+        self.edges = [(k * 8 + j, k * 8 + j + 1) for k in range(self.trains) for j in range(7)]
+        self.heads = [1.0 if k % 8 == 0 and k < self.trains * 8 else 0.0 for k in range(n)]
+        self.glyph, self.ang = [0] * n, [0.0] * n
+        self.alpha = [1.0 if k % 8 == 0 else 0.8 * (1 - (k % 8) / 8) for k in range(n)]
+        self.depth = [1.0 if k % 8 == 0 else 0.65 for k in range(n)]
+        for k in range(self.trains * 8, n):
+            self.alpha[k] = 0.0
+
+    def step(self, dt, lv):
+        super().step(dt, lv)
+        # A kick changes speed, not position: remain attached even on hard cuts.
+        speed = self.sh * (0.018 + 0.075 * lv.get("mid", 0.0) + 0.06 * lv.get("bass", 0.0)
+                           + 0.24 * self.kick + 0.12 * lv.get("bass_hit", 0.0))
+        for k, r in enumerate(self.route):
+            length = self.routes[r][1][-1]
+            self.travel[k] = (self.travel[k] + dt * speed) % (2 * length)
+
+    def sample(self, route, distance):
+        pts, lengths = self.routes[route]
+        length = lengths[-1]
+        distance %= 2 * length
+        if distance > length:
+            distance = 2 * length - distance
+        j = min(len(pts) - 1, max(1, self.bisect(lengths, distance)))
+        u = (distance - lengths[j - 1]) / (lengths[j] - lengths[j - 1])
+        x, y = pts[j - 1]
+        xx, yy = pts[j]
+        return x + (xx - x) * u, y + (yy - y) * u
+
+    def points(self, t, lv):
+        spacing = 0.010 * self.sh
+        out = [self.sample(r, self.travel[k] - j * spacing)
+               for k, r in enumerate(self.route) for j in range(8)]
+        out += [out[-1]] * (self.n - len(out))
+        return out
+
+
 class AuroraMode(_Mode):
     """Four pleated light curtains; a kick launches a crest across the whole fabric.
 
@@ -894,12 +988,14 @@ class DoodleMode(_Mode):
 class Viz:
     """The running visualizer: the current mode, the one it is flowing out of, beat pulses and colours."""
 
-    def __init__(self, base, sw, sh, rng, doodles=(), palette=None, modes=None, every=None, start=None):
+    def __init__(self, base, sw, sh, rng, doodles=(), palette=None, modes=None, every=None, start=None, paths=None):
         self.base = base
         self.n = max(VIZ_N, len(base["pts"]))
         self.sw, self.sh, self.rng = sw, sh, rng
         self.doodles = list(doodles)
-        self.names = [m for m in (modes or VIZ_MODES) if m in VIZ_MODES and (m != "doodle" or self.doodles)]
+        self.paths = valid_paths(paths or [])
+        self.requested_modes = list(modes) if modes else None
+        self.names = self.available_modes()
         self.ordered = bool(modes)       # an explicit list (screenshots) plays in order instead of at random
         self.every = every
         self.palette = list(palette or DEFAULT_PALETTE)
@@ -920,8 +1016,21 @@ class Viz:
             self.prev, self.prev_perm = StillMode(self.n, sw, sh, rng, start), list(range(self.n))
             self.blend = 0.0
 
+    def available_modes(self):
+        available = VIZ_MODES + (PHOTO_VIZ_MODES if self.paths else ())
+        return [m for m in (self.requested_modes or available) if m in available] or list(VIZ_MODES)
+
+    def set_paths(self, paths):
+        """A new displayed crop: discard old tracks and morph out of the old circuit."""
+        self.paths = valid_paths(paths or [])
+        self.names = self.available_modes()
+        if self.cur.name == "circuit":
+            self.switch("circuit" if self.paths else "edgeflow")
+
     def build(self, name):
         n, sw, sh, rng = self.n, self.sw, self.sh, self.rng
+        if name == "circuit" and self.paths:
+            return CircuitMode(n, sw, sh, rng, self.paths)
         if name == "ridge":
             return RidgeMode(n, sw, sh, rng, self.base)
         if name == "doodle" and self.doodles:
@@ -1051,6 +1160,7 @@ class Viz:
         pts = self.slot(cur, self.perm, cur.points(t, lv))
         alpha = self.slot(cur, self.perm, cur.alpha)
         depth = self.slot(cur, self.perm, cur.depth) if cur.depth else None
+        heads = self.slot(cur, self.perm, cur.heads) if hasattr(cur, "heads") else [0.0] * self.n
         spark = None
         if self.spark:
             spark = [0.0] * self.n
@@ -1064,6 +1174,8 @@ class Viz:
             pp = self.slot(pv, self.prev_perm, pv.points(t, lv))
             pa = self.slot(pv, self.prev_perm, pv.alpha)
             pd = self.slot(pv, self.prev_perm, pv.depth) if pv.depth else [0.7] * self.n
+            ph = self.slot(pv, self.prev_perm, pv.heads) if hasattr(pv, "heads") else [0.0] * self.n
+            heads = [a + (b - a) * e for a, b in zip(ph, heads)]
             cd = depth or [0.7] * self.n
             pts = [(x0 + (x1 - x0) * e, y0 + (y1 - y0) * e) for (x0, y0), (x1, y1) in zip(pp, pts)]
             alpha = [a0 + (a1 - a0) * e for a0, a1 in zip(pa, alpha)]
@@ -1087,6 +1199,6 @@ class Viz:
         glyph = self.slot(cur, self.perm, cur.glyph) if getattr(cur, "glyph", None) else None
         ang = self.slot(cur, self.perm, cur.ang) if glyph else None
         return {"pts": pts, "alpha": alpha, "depth": depth, "trail": trail, "pulses": pulses,
-                "glyph": glyph, "ang": ang, "spark": spark,
+                "glyph": glyph, "ang": ang, "spark": spark, "heads": heads if any(heads) else None,
                 "links": [(i, j, a) for (i, j), a in links.items() if a > 0.01],
                 "colour": self.colour}
