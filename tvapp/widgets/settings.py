@@ -14,7 +14,9 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import backgrounds  # noqa: E402
 import display  # noqa: E402
+import widgets  # noqa: E402
 from screens import Screen, text_label  # noqa: E402
 
 PER_ROW = 5
@@ -103,6 +105,7 @@ class SettingsScreen(Screen):
         self.loading = False
         self.outputs = None
         self.busy = False
+        self.retro = backgrounds.Backgrounds(display.DATA)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
@@ -206,7 +209,9 @@ class SettingsScreen(Screen):
             self.content.remove(c)
             c.destroy()
         self.rows = []
+        self.render_background()
         sec = text_label("DISPLAY", "set-section")
+        sec.set_margin_top(px(30))
         self.content.pack_start(sec, False, False, 0)
         if self.outputs is None:
             self.content.pack_start(text_label("Looking for screens…", "set-note"), False, False, 0)
@@ -241,6 +246,45 @@ class SettingsScreen(Screen):
             foot.set_margin_top(px(26))
             self.content.pack_start(foot, False, False, 0)
         self.content.show_all()
+
+    def render_background(self):
+        px = self.shell.px
+        cfg = widgets.load_config(display.DATA)
+        lib = self.retro.list()
+        use_retro = cfg["background"] == "retro" and bool(lib)
+        self.content.pack_start(text_label("BACKGROUND", "set-section"), False, False, 0)
+        self.grid([self.button("Photos", "Bing and Wikimedia", not use_retro, ("bg", "photos"),
+                               lambda: self.choose_background("photos", "shuffle")),
+                   self.button("Retro", ("%d pictures" % len(lib)) if lib else "None added yet", use_retro,
+                               ("bg", "retro"), lambda: self.choose_background("retro", cfg["retro_pick"]))])
+        if lib:
+            pick = cfg["retro_pick"] if any(i["id"] == cfg["retro_pick"] for i in lib) else "shuffle"
+            hdr = text_label("RETRO PICTURES", "set-section")
+            hdr.set_margin_top(px(16))
+            self.content.pack_start(hdr, False, False, 0)
+            btns = [self.button("Shuffle all", "", pick == "shuffle", ("bg", "pick", "shuffle"),
+                                lambda: self.choose_background("retro", "shuffle"))]
+            for i in lib:
+                btns.append(self.button(i["name"][:18], "%d × %d" % (i["width"], i["height"]), pick == i["id"],
+                                        ("bg", "pick", i["id"]),
+                                        lambda b=i["id"]: self.choose_background("retro", b)))
+            self.grid(btns)
+        note = ("Add pictures from your phone (Settings, Background)." if not lib else
+                "Add or replace pictures from your phone. They stay at full size.")
+        self.content.pack_start(text_label(note, "set-note"), False, False, 0)
+
+    def choose_background(self, source, pick):
+        if source == "retro" and not self.retro.count():
+            self.shell.toast("Add a retro picture from your phone first", 4)
+            return
+        widgets.save_keys(display.DATA, {"background": source, "retro_pick": pick})
+        self.shell.toast("Background: " + ("Retro" if source == "retro" else "Photos"), 3)
+        self.render()
+        self.content.show_all()
+        key = ("bg", "retro" if source == "retro" else "photos")
+        self.last_focus = next((b for row in self.rows for b in row if b.sel_key == key), None)
+        if self.last_focus:
+            self.last_focus.grab_focus()
 
     # ---- actions
     def pick(self, output, mode, rate):

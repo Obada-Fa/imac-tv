@@ -119,3 +119,17 @@ This change intentionally does not implement Retro settings or install backgroun
 assets. The three `tvapp/previews/circuit-*.gif` files show the effect on the user's
 reference images. Unit tests generate their own images and do not depend on files
 in Downloads. Preserve the user's unrelated untracked `CLAUDE.md`.
+
+## Implemented (Retro background library)
+
+- `tvapp/backgrounds.py`: `Backgrounds(DATA)` keeps originals untouched in `DATA/retro/` (+ `index.json`, `thumbs/`),
+  adopts files dropped into the folder, rejects undecodable/animated/tiny/huge files with readable errors, replaces a
+  same-named picture in place when the new one has more pixels (or via explicit `replace=<id>`), and provides the
+  `next()` provider boundary. Items omit `reactive_paths`; `homescreen.preload` runs contour analysis for
+  `source == "retro"` only (photo providers get `[]`).
+- home.json keys `background` ("photos" | "retro") and `retro_pick` ("shuffle" | id), validated in `widgets.parse_config`,
+  written with `widgets.save_keys`. Home re-reads them (mtime check in `supervise`), drops stale preloads, and switches.
+  An empty Retro library falls back to photos.
+- Phone: Settings > Background (source, pick, thumbnails, add, remove); `POST /api/retro/upload?name=` takes raw bytes;
+  actions `background_set`, `retro_remove`. TV: Settings > Background.
+- Tests: `tvapp/tests/test_backgrounds.py`.

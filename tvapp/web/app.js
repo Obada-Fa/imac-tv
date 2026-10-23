@@ -820,9 +820,55 @@
       }
       box.append(card);
     }
+    renderBackground();
     const min = setState.youtube_close_after_paused_min || 0;
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
+  function renderBackground() {
+    const bg = setState.background || {source: 'photos', retro: [], pick: 'shuffle'};
+    document.querySelectorAll('#bg-source button').forEach(b => b.classList.toggle('on', b.dataset.src === bg.source));
+    const list = $('bg-list');
+    list.replaceChildren();
+    $('bg-retro').hidden = !bg.retro.length;
+    const mk = (id, label, sub, thumb) => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'bgitem';
+      b.classList.toggle('on', bg.pick === id);
+      if (thumb) { const i = document.createElement('img'); i.alt = ''; i.loading = 'lazy'; i.src = thumb; b.append(i); }
+      const n = document.createElement('span'); n.textContent = label; b.append(n);
+      if (sub) { const m = document.createElement('small'); m.textContent = sub; b.append(m); }
+      b.onclick = () => settingsCall('background_set', {source: 'retro', pick: id});
+      return b;
+    };
+    list.append(mk('shuffle', 'Shuffle all', bg.retro.length + ' pictures', null));
+    for (const r of bg.retro) {
+      const b = mk(r.id, r.name, r.width + ' × ' + r.height, '/api/retro/thumb/' + r.id);
+      const d = document.createElement('button'); d.type = 'button'; d.className = 'bgdel'; d.textContent = '✕';
+      d.setAttribute('aria-label', 'Remove ' + r.name);
+      d.onclick = ev => { ev.stopPropagation(); if (confirm('Remove "' + r.name + '"?')) settingsCall('retro_remove', {id: r.id}); };
+      b.append(d); list.append(b);
+    }
+    $('bg-note').textContent = bg.wanted === 'retro' && !bg.retro.length ? 'No retro pictures yet, so Photos are showing.' : '';
+  }
+  document.querySelectorAll('#bg-source button').forEach(b => b.onclick = () => {
+    const bg = (setState && setState.background) || {};
+    if (b.dataset.src === 'retro' && !(bg.retro || []).length) { $('bg-note').textContent = 'Add a picture first.'; return; }
+    settingsCall('background_set', {source: b.dataset.src, pick: bg.pick || 'shuffle'});
+  });
+  $('bg-file').onchange = async ev => {
+    const f = ev.target.files[0]; ev.target.value = '';
+    if (!f || setBusy) return;
+    setBusy = true; $('bg-note').textContent = 'Sending ' + f.name + '…';
+    try {
+      const r = await fetch('/api/retro/upload?name=' + encodeURIComponent(f.name), {method: 'POST', credentials: 'same-origin', body: f});
+      const res = await r.json();
+      if (!r.ok) throw new Error(res.error || 'The TV did not accept that picture');
+      const st = res.result.status;
+      $('bg-note').textContent = st === 'added' ? 'Added.' : st === 'replaced' ? 'Replaced with the larger picture.' : 'Already have this picture (or a larger one).';
+      $('set-error').textContent = '';
+    } catch (err) { $('set-error').textContent = err.message; $('bg-note').textContent = ''; }
+    setBusy = false;
+    await loadSettings();
+  };
   async function settingsCall(action, params) {
     if (setBusy) return;
     setBusy = true;

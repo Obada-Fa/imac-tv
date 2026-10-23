@@ -8,7 +8,10 @@ Optional hooks: `interval` (seconds, 0 = never) + `refresh()` called on the GTK 
 focusable widgets of a D-pad row), `keep_in_ambient` + `on_ambient(on)`, `activate()`.
 """
 import json
+import os
 from pathlib import Path
+import re
+import threading
 
 DEFAULT_CONFIG = {
     "widgets": ["clock", "weather", "pairing", "continue", "apps"],
@@ -20,11 +23,14 @@ DEFAULT_CONFIG = {
     "shapes": "photo",
     "visualizer": True,
     "qr_style": "glass",
+    "background": "photos",      # "photos" (Bing/Wikimedia) or "retro" (imported images, with Circuit)
+    "retro_pick": "shuffle",     # "shuffle" or one retro background id
 }
 STYLES = ("network", "bubbles")
 NODE_SHAPES = ("hexagon", "octagon")
 TILE_SHAPES = ("rounded", "chamfer")
 QR_STYLES = ("glass", "light")
+BACKGROUNDS = ("photos", "retro")
 SHAPE_MODES = ("photo", "photo+animals", "off")
 
 REGISTRY = {}
@@ -87,7 +93,8 @@ def parse_config(raw):
            "ambient": dict(DEFAULT_CONFIG["ambient"]), "style": DEFAULT_CONFIG["style"],
            "node_shape": DEFAULT_CONFIG["node_shape"], "tile_shape": DEFAULT_CONFIG["tile_shape"],
            "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
-           "qr_style": DEFAULT_CONFIG["qr_style"]}
+           "qr_style": DEFAULT_CONFIG["qr_style"], "background": DEFAULT_CONFIG["background"],
+           "retro_pick": DEFAULT_CONFIG["retro_pick"]}
     if not isinstance(raw, dict):
         return cfg
     if raw.get("style") in STYLES:
@@ -96,6 +103,11 @@ def parse_config(raw):
         cfg["node_shape"] = raw["node_shape"]
     if raw.get("qr_style") in QR_STYLES:
         cfg["qr_style"] = raw["qr_style"]
+    if raw.get("background") in BACKGROUNDS:
+        cfg["background"] = raw["background"]
+    pick = raw.get("retro_pick")
+    if isinstance(pick, str) and (pick == "shuffle" or re.fullmatch(r"[0-9a-f]{12}", pick)):
+        cfg["retro_pick"] = pick
     if raw.get("shapes") in SHAPE_MODES:
         cfg["shapes"] = raw["shapes"]
     if isinstance(raw.get("visualizer"), bool):
@@ -129,6 +141,27 @@ def parse_config(raw):
         cfg["ambient"]["idle"] = _int(a.get("idle"), 120, 10, 7200)
         cfg["ambient"]["idle_music"] = _int(a.get("idle_music"), 30, 10, 7200)
     return cfg
+
+
+_save_lock = threading.Lock()
+
+
+def save_keys(data_dir, updates):
+    """Merge `updates` into home.json (atomic replace), keeping every other key. Returns the parsed config."""
+    path = Path(data_dir) / "home.json"
+    with _save_lock:
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        raw.update(updates)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))
+        tmp.write_text(json.dumps(raw, indent=2) + "\n")
+        os.replace(tmp, path)
+    return parse_config(raw)
 
 
 def load_config(data_dir):

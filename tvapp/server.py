@@ -26,7 +26,9 @@ import urllib.request
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
+import backgrounds
 import nowplaying
+import widgets
 try:
     import display
 except Exception:  # pragma: no cover
@@ -374,6 +376,7 @@ class Controller:
         self.lock = threading.RLock()
         self.action_lock = threading.RLock()
         self.settings_lock = threading.Lock()
+        self.retro = backgrounds.Backgrounds(DATA)
         self.home_lock = threading.Lock()
         self.selection_path = DATA / "selection.json"
         selection = self._read_json(self.selection_path, {})
@@ -1478,11 +1481,20 @@ class Controller:
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
-    SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close")
+    SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
+                        "background_set", "retro_remove")
+
+    def background_state(self):
+        cfg = widgets.load_config(DATA)
+        lib = self.retro.list()
+        pick = cfg["retro_pick"] if any(i["id"] == cfg["retro_pick"] for i in lib) else "shuffle"
+        return {"source": "retro" if cfg["background"] == "retro" and lib else "photos",
+                "wanted": cfg["background"], "pick": pick, "retro": lib,
+                "formats": backgrounds.supported_formats()}
 
     def settings(self):
         """Phone Settings tab: outputs and trial (xrandr, ~1 s) plus the YouTube auto-close setting."""
-        out = {"outputs": [], "trial": {"active": False}, "display_error": "",
+        out = {"outputs": [], "trial": {"active": False}, "display_error": "", "background": self.background_state(),
                "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
         if display is None:
             out["display_error"] = "Display control is not available"
@@ -1515,6 +1527,25 @@ class Controller:
                     json.dump(user, f, indent=2)
                 os.replace(tmp, path)
             return {"youtube_close_after_paused_min": minutes}
+        if action == "background_set":
+            source, pick = params.get("source"), params.get("pick", "shuffle")
+            if source not in widgets.BACKGROUNDS:
+                raise ValueError("Choose Photos or Retro")
+            lib = self.retro.list()
+            if source == "retro" and not lib:
+                raise ValueError("Add a retro picture first")
+            if pick != "shuffle" and not any(i["id"] == pick for i in lib):
+                raise ValueError("That background no longer exists")
+            with self.settings_lock:
+                widgets.save_keys(DATA, {"background": source, "retro_pick": pick})
+            return {"background": self.background_state()}
+        if action == "retro_remove":
+            try:
+                with self.settings_lock:
+                    self.retro.remove(params.get("id"))
+            except backgrounds.BackgroundError as exc:
+                raise ValueError(str(exc))
+            return {"background": self.background_state()}
         if display is None:
             raise RuntimeError("Display control is not available")
         try:
@@ -1923,11 +1954,63 @@ class Handler(BaseHTTPRequestHandler):
             self._note_presence()
             self.respond(200, CONTROL.settings())
             return
+        if parsed.path.startswith("/api/retro/thumb/"):
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            self.retro_thumb(parsed.path.rsplit("/", 1)[1])
+            return
         if parsed.path == "/api/pair-status":
             CONTROL.renew_pairing()
             self.respond(200, {"paired": self.authorised(parsed.query), "code": CONTROL.pair_code})
             return
         self.respond(404, {"error": "Not found"})
+
+    def retro_upload(self, parsed):
+        """Raw image bytes in the body (?name=file.jpg, optional &replace=<id>): kept at full resolution."""
+        if not self.authorised(parsed.query):
+            self.respond(401, {"error": "Phone is not paired"})
+            return
+        self._note_presence()
+        size = int(self.headers.get("Content-Length", "0"))
+        if size <= 0 or size > backgrounds.MAX_BYTES:
+            raise ValueError("Picture must be under %d MB" % (backgrounds.MAX_BYTES // 2**20))
+        q = parse_qs(parsed.query)
+        name = (q.get("name") or ["background"])[0]
+        replace = (q.get("replace") or [None])[0]
+        tmp_dir = DATA / "retro-incoming"
+        tmp_dir.mkdir(mode=0o700, exist_ok=True)
+        tmp = tmp_dir / ("%d-%d.upload" % (os.getpid(), threading.get_ident()))
+        try:
+            left = size
+            with open(tmp, "wb") as fh:
+                while left > 0:
+                    block = self.rfile.read(min(1 << 20, left))
+                    if not block:
+                        raise ValueError("Upload was cut short")
+                    fh.write(block)
+                    left -= len(block)
+            try:
+                with CONTROL.settings_lock:
+                    res = CONTROL.retro.import_file(tmp, name, replace)
+            except backgrounds.BackgroundError as exc:
+                raise ValueError(str(exc))
+        finally:
+            tmp.unlink(missing_ok=True)
+        self.respond(200, {"ok": True, "result": dict(res, background=CONTROL.background_state())})
+
+    def retro_thumb(self, bid):
+        path = CONTROL.retro.thumb_path(bid)
+        if not path:
+            self.respond(404, {"error": "Not found"})
+            return
+        body = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         parsed = urlsplit(self.path)
@@ -1937,6 +2020,9 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(403, {"error": "Invalid origin"})
             return
         try:
+            if parsed.path == "/api/retro/upload":
+                self.retro_upload(parsed)
+                return
             if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
                 chunks = []
                 total = 0

@@ -109,6 +109,12 @@
     <p id="set-error" class="tb-error" role="alert"></p>
     <h3>Display</h3>
     <div id="set-display"></div>
+    <h3>Background</h3>
+    <div class="card setcard"><div class="lbl">Home background</div><div id="bg-source" class="chips"><button type="button" data-src="photos">Photos</button><button type="button" data-src="retro">Retro</button></div>
+      <div id="bg-retro" hidden><div class="lbl">Retro pictures</div><div id="bg-list" class="bglist"></div></div>
+      <p id="bg-note" class="muted"></p>
+      <label class="addbg"><input id="bg-file" type="file" accept="image/*" hidden><span class="addbtn">Add a picture</span></label>
+      <p class="muted small">Pictures are kept at full size. Sending one with the same name and more pixels replaces it.</p></div>
     <h3>YouTube</h3>
     <div class="card setcard"><div class="lbl">Close YouTube after it's been paused</div><div id="yt-close" class="chips"><button type="button" data-min="0">Off</button><button type="button" data-min="30">30 min</button><button type="button" data-min="60">60 min</button></div></div>
   </section>

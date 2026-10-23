@@ -20,6 +20,7 @@ import random
 
 import screens
 from screens import Screen, text_label, cover_pixbuf
+import backgrounds
 import widgets
 from widgets import network, shapes, contours
 import perflog
@@ -503,6 +504,11 @@ class AmbientHomeScreen(Screen):
         self.loading = False
         self.current_item = None
         self.library = ambient.Library(screens.DATA, shell.sw, shell.sh) if ambient else None
+        self.retro = backgrounds.Backgrounds(screens.DATA)
+        self.bg_source = self.cfg["background"]      # "photos" | "retro", re-read from home.json when it changes
+        self.bg_pick = self.cfg["retro_pick"]
+        self.bg_gen = 0                              # bumped on a source change: stale preloads are dropped
+        self.home_mtime = self.home_stamp()
         self.style = self.cfg["style"]
         self.auto_focus = True
         self.dust_amt = 1.0
@@ -684,30 +690,69 @@ class AmbientHomeScreen(Screen):
         self.start_anim()
 
     # ---- photos
+    def provider(self):
+        """(provider, only) for the chosen background; Retro with an empty library falls back to the photos."""
+        if self.bg_source == "retro" and self.retro.count():
+            only = self.bg_pick if self.bg_pick != "shuffle" else None
+            if only and not any(i["id"] == only for i in self.retro.list()):
+                only = None
+            return self.retro, only
+        return self.library, None
+
     def preload(self):
-        if self.loading or not self.library:
+        prov, only = self.provider()
+        if self.loading or not prov:
             return
         self.loading = True
+        gen = self.bg_gen
 
         def work():
             item, surf = None, None
             try:
-                item = self.library.next()
+                item = prov.next(only) if prov is self.retro else prov.next()
                 if item:
                     surf = load_surface(item["path"], self.shell.sw, self.shell.sh)   # (photo, blurred copy)
                     trace = traced(item["path"], self.shell.sw, self.shell.sh) if self.style == "network" else None
                     paths = []
-                    if self.style == "network" and self.viz_on:
+                    # Circuit runs on Retro only: photo providers return no tracks (an explicit [] disables it)
+                    if self.style == "network" and self.viz_on and item.get("source") == "retro":
                         paths = (contours.valid_paths(item["reactive_paths"]) if "reactive_paths" in item else
                                  traced_paths(item["path"], self.shell.sw, self.shell.sh))
                     item = dict(item, trace=trace, reactive_paths=paths, palette=surface_palette(surf[1]))
             except Exception as exc:
                 print("home photo:", exc)
                 surf = None
-            GLib.idle_add(self.preloaded, item, surf)
+            GLib.idle_add(self.preloaded, item, surf, gen)
         threading.Thread(target=work, daemon=True).start()
 
-    def preloaded(self, item, surf):
+    # ---- background source (photos / retro), changed from the phone or the TV Settings screen
+    def home_stamp(self):
+        try:
+            return (screens.DATA / "home.json").stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def sync_background(self):
+        stamp = self.home_stamp()
+        if stamp == self.home_mtime:
+            return
+        self.home_mtime = stamp
+        cfg = widgets.load_config(screens.DATA)
+        self.set_background(cfg["background"], cfg["retro_pick"])
+
+    def set_background(self, source, pick):
+        if (source, pick) == (self.bg_source, self.bg_pick):
+            return
+        self.bg_source, self.bg_pick = source, pick
+        self.bg_gen += 1
+        self.pending = None
+        self.loading = False
+        self.photo_due = 0.0
+        self.preload()
+
+    def preloaded(self, item, surf, gen=None):
+        if gen is not None and gen != self.bg_gen:
+            return False                # a source change started a newer load
         self.loading = False
         if surf is not None:
             self.pending = (item, surf)
@@ -808,6 +853,7 @@ class AmbientHomeScreen(Screen):
         if nowplaying and now >= self.now_due and not self.now_busy:
             self.now_due = now + NOW_EVERY
             self.poll_now()
+        self.sync_background()
         if self.library and now >= self.photo_due and self.pending:
             self.swap_photo()
         elif self.library and now >= self.photo_due and not self.loading and self.canvas.cur is None:

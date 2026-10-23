@@ -116,3 +116,8 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .setcard .chips button.on{background:#2f5a96;border-color:#a8cfff}
 .setcard+.setcard{margin-top:10px}
 .trial{position:sticky;top:6px;z-index:3}
+
+.bglist{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}.bgitem{position:relative;border:2px solid #2a3a4f;border-radius:12px;overflow:hidden;background:#0d141d;padding:0;text-align:left;color:#fff;min-height:0}
+.bgitem.on{border-color:#a8cfff}.bgitem img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#162231}.bgitem span{display:block;padding:5px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bgitem small{display:block;padding:0 8px 6px;font-size:11px;color:#9dacbd}.bgdel{position:absolute;top:4px;right:4px;width:30px;height:30px;min-height:0;padding:0;border-radius:15px;background:rgba(0,0,0,.6);font-size:14px}
+.addbtn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:22px;border:1px solid #3a5272;font-weight:650;font-size:14px;cursor:pointer}.small{font-size:12px}
