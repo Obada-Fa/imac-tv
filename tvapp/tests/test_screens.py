@@ -57,6 +57,12 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(screens.stream_ref({"info_hash": "h", "ref": True}), {"info_hash": "h"})
         self.assertNotIn("url", screens.stream_ref({"info_hash": "", "url": "https://tb/x.mkv", "ref": 0}))
 
+    def test_sources_from_unwraps_command_result(self):
+        self.assertEqual(screens.sources_from({"ok": True, "result": {"sources": [{"label": "a"}]}}), [{"label": "a"}])
+        self.assertEqual(screens.sources_from({"ok": True, "result": {"sources": []}}), [])
+        self.assertIsNone(screens.sources_from({"error": "No sources"}))
+        self.assertIsNone(screens.sources_from(None))
+
     def test_fmt_time(self):
         self.assertEqual(screens.fmt_time(754), "12:34")
         self.assertEqual(screens.fmt_time(3723), "1:02:03")

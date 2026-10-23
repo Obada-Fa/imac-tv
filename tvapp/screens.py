@@ -92,6 +92,15 @@ def fresh_request(req, handled_ts, now, max_age=30):
     return ts > handled_ts and now - ts <= max_age
 
 
+def sources_from(res):
+    """The source list from a /api/commands reply ({"ok": true, "result": {"sources": [...]}}), else None."""
+    if not isinstance(res, dict):
+        return None
+    result = res.get("result") if isinstance(res.get("result"), dict) else res
+    sources = result.get("sources")
+    return sources if isinstance(sources, list) else None
+
+
 def stream_ref(source):
     """Stream selector for play_media; file_idx only when it is a real int."""
     ref = source.get("ref")
@@ -1281,7 +1290,7 @@ class SourcesScreen(Screen):
             return False
         self.spinner.stop()
         self.spinner.hide()
-        sources = (res or {}).get("sources") if isinstance(res, dict) else None
+        sources = sources_from(res)
         for r in self.list.get_children():
             self.list.remove(r)
             r.destroy()
