@@ -9,7 +9,9 @@ from pathlib import Path
 import secrets
 import shutil
 import socket
+import re
 import subprocess
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -18,6 +20,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 BASE = Path(__file__).resolve().parent
+if str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
+from media import addons, config as media_config, engine as media_engine, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
 WEB = BASE / "web"
@@ -89,6 +94,8 @@ def window_for(app):
         return next((w for w in windows() if any(k in w["class"] or k in w["title"].lower() for k in ("vacuumtube", "rocks.shy.vacuumtube", "youtube"))), None)
     if app == "stremio":
         return next((w for w in windows() if "stremio" in w["class"] or "stremio" in w["title"].lower()), None)
+    if app == "player":
+        return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
     if app == "vlc":
         return next((w for w in windows() if "vlc" in w["class"] or "vlc" in w["title"].lower()), None)
     match = APPS[app][0].lower()
@@ -170,12 +177,48 @@ def playback():
         paused = bool(mpv("get_property", "pause"))
         title = mpv("get_property", "media-title") or "Video"
         tracks = mpv("get_property", "track-list") or []
+        def listing(kind):
+            return [{"id": t.get("id"), "title": t.get("title") or t.get("lang") or f"Track {t.get('id')}",
+                     "lang": t.get("lang"), "selected": bool(t.get("selected"))}
+                    for t in tracks if t.get("type") == kind]
         return {"active": True, "title": title, "position": pos, "duration": duration,
-                "paused": paused, "subtitles": [{"id": t.get("id"),
-                "title": t.get("title") or t.get("lang") or f"Track {t.get('id')}",
-                "selected": bool(t.get("selected"))} for t in tracks if t.get("type") == "sub"]}
+                "paused": paused, "subtitles": listing("sub"), "audio": listing("audio")}
     except (OSError, RuntimeError, ValueError, TimeoutError):
         return {"active": False}
+
+
+MEDIA_ID = re.compile(r"^tt\d+$")
+HASH = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+def _count(value, name, minimum):
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= 100000:
+        raise ValueError(f"Invalid {name}")
+    return value
+
+
+def media_target(params):
+    kind, item = params.get("type"), params.get("id")
+    if kind not in ("movie", "series"):
+        raise ValueError("Type must be movie or series")
+    if not isinstance(item, str) or not MEDIA_ID.match(item):
+        raise ValueError("Invalid title id")
+    season, episode = params.get("season"), params.get("episode")
+    if kind == "movie":
+        if season is not None or episode is not None:
+            raise ValueError("Movies have no season or episode")
+        return kind, item, None, None, item
+    season, episode = _count(season, "season", 1), _count(episode, "episode", 1)
+    return kind, item, season, episode, f"{item}:{season}:{episode}"
+
+
+def media_stream(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("info_hash"), str) or not HASH.match(value["info_hash"]):
+        raise ValueError("Invalid stream")
+    idx = value.get("file_idx", 0)
+    return {"info_hash": value["info_hash"].lower(), "file_idx": _count(idx, "file index", 0)}
 
 
 class Controller:
@@ -191,6 +234,10 @@ class Controller:
         self.phase = "ready"
         self.error = ""
         self.generation = 0
+        self.buffering = None
+        self.proc = None
+        self.media_path = DATA / "last_media.json"
+        self.media = self._read_json(self.media_path, None)
         self.pair_code = ""
         self.pair_expiry = 0
         self.pair_attempts = {}
@@ -371,7 +418,9 @@ class Controller:
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
+            self.buffering = None
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
+        self._stop_proc()
         if app == "home":
             if playback()["active"]:
                 mpv("quit")
@@ -381,6 +430,115 @@ class Controller:
                 mpv("quit")
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
+
+    def _stop_proc(self):
+        proc, self.proc = self.proc, None
+        if proc and proc.poll() is None:
+            proc.terminate()
+
+    def _current(self, generation):
+        with self.lock:
+            return generation == self.generation
+
+    def play_media(self, params):
+        kind, item, season, episode, video_id = media_target(params)
+        stream = media_stream(params.get("stream"))
+        start = params.get("start", 0)
+        if isinstance(start, bool) or not isinstance(start, (int, float)) or not 0 <= start <= 1000000:
+            raise ValueError("Invalid start position")
+        if playback()["active"]:
+            try:
+                mpv("quit")
+            except (OSError, RuntimeError):
+                pass
+        self._stop_proc()
+        with self.lock:
+            self.generation += 1
+            generation = self.generation
+            self.app, self.phase, self.error = "player", "buffering", ""
+            self.buffering = {"peers": 0, "speed": 0.0, "source": ""}
+            self.media = {"type": kind, "id": item, "video_id": video_id, "season": season,
+                          "episode": episode, "name": item}
+            self._save_json(self.media_path, self.media)
+            self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "home"})
+        threading.Thread(target=self._play_worker, args=(generation, stream, float(start)), daemon=True).start()
+        return {"ok": True, "source": "Selected source" if stream else ""}
+
+    def _play_fail(self, generation, exc):
+        LOG.warning("Playback failed: %s", exc)
+        with self.lock:
+            if generation != self.generation:
+                return
+            self.app, self.phase, self.error, self.buffering = "home", "ready", str(exc)[:300], None
+        self._stop_proc()
+        self._show_home()
+
+    def _play_worker(self, generation, stream, start):
+        try:
+            with self.lock:
+                kind, item, video_id = self.media["type"], self.media["id"], self.media["video_id"]
+            cfg = media_config.load()
+            torrents = media_engine.Engine(cfg["engine"])
+            if not torrents.healthy():
+                raise RuntimeError("The torrent engine is not running")
+            try:
+                name = addons.meta(kind, item).get("name") or item
+            except addons.AddonError:
+                name = item
+            if self.media.get("season"):
+                name += f" S{self.media['season']:02d}E{self.media['episode']:02d}"
+            if stream:
+                info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
+            else:
+                found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
+                chosen = media_streams.best(found, cfg)
+                if not chosen:
+                    raise RuntimeError("No playable sources found")
+                info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
+            try:
+                tracks = media_subs.pick(addons.subtitles(kind, video_id), cfg["sub_langs"])
+            except addons.AddonError:
+                tracks = []
+            if not self._current(generation):
+                return
+            with self.lock:
+                self.media["name"] = name
+                self._save_json(self.media_path, self.media)
+                self.buffering["source"] = label
+            try:
+                os.unlink("/tmp/mpv.sock")
+            except OSError:
+                pass
+            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=tracks, start=start)
+            proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, start_new_session=True)
+            with self.lock:
+                if generation != self.generation:
+                    proc.terminate()
+                    return
+                self.proc = proc
+            for _ in range(240):
+                if not self._current(generation):
+                    return
+                if proc.poll() is not None:
+                    raise RuntimeError("The player stopped before playback began")
+                stats = torrents.stats(info_hash, file_idx)
+                if stats:
+                    with self.lock:
+                        if generation == self.generation and self.buffering:
+                            self.buffering.update(peers=stats["peers"], speed=stats["speed"])
+                try:
+                    if mpv("get_property", "time-pos") is not None:
+                        with self.lock:
+                            if generation == self.generation:
+                                self.phase, self.buffering = "playing", None
+                        return
+                except (OSError, RuntimeError, ValueError, TimeoutError):
+                    pass
+                time.sleep(0.75)
+            raise RuntimeError("Timed out waiting for the stream to start")
+        except Exception as exc:
+            self._play_fail(generation, exc)
 
     def set_brightness(self, level):
         if isinstance(level, bool) or not isinstance(level, int) or not 5 <= level <= 100:
@@ -431,6 +589,8 @@ class Controller:
     def status(self):
         with self.lock:
             app, phase, error = self.app, self.phase, self.error
+            buffering = dict(self.buffering) if self.buffering and phase == "buffering" else None
+            current_media = dict(self.media) if self.media else None
             deadline = self.timer.get("deadline")
         try:
             volume = command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=1)
@@ -465,7 +625,7 @@ class Controller:
         cpu_temp = max(temps) if temps else None
         gpu_temp = max(gpu_temps) if gpu_temps else None
         win = window_for(app) if gui else None
-        return {"app": app, "phase": phase, "error": error,
+        return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
                 "playback": player, "temperature": cpu_temp, "gpu_temperature": gpu_temp,
@@ -474,7 +634,7 @@ class Controller:
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
                                    (gpu_temp is not None and gpu_temp >= 85),
                 "timer": {"active": bool(deadline), "deadline": deadline},
-                "capabilities": {"timeline": player["active"], "subtitles": player["active"]}}
+                "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     def action(self, action, params):
         with self.action_lock:
@@ -555,7 +715,16 @@ class Controller:
                 return self.set_screen(params.get("on"))
             if action == "fullscreen":
                 return self.toggle_fullscreen()
-            if action in ("seek", "subtitle", "subdelay"):
+            if action == "play_media":
+                return self.play_media(params)
+            if action == "sources":
+                kind, _, _, _, video_id = media_target(params)
+                try:
+                    found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
+                except addons.AddonError as exc:
+                    raise RuntimeError(str(exc)) from exc
+                return {"sources": media_streams.rank(found, media_config.load())}
+            if action in ("seek", "subtitle", "subdelay", "audio"):
                 if not playback()["active"]:
                     raise RuntimeError("This control is available only while MPV is playing")
                 if action == "seek":
@@ -563,11 +732,11 @@ class Controller:
                     if not 0 <= seconds <= 86400:
                         raise ValueError("Invalid position")
                     mpv("set_property", "time-pos", seconds)
-                elif action == "subtitle":
+                elif action in ("subtitle", "audio"):
                     value = params.get("id")
-                    if value != "no" and not isinstance(value, int):
-                        raise ValueError("Invalid subtitle track")
-                    mpv("set_property", "sid", value)
+                    if value != "no" and (isinstance(value, bool) or not isinstance(value, int)):
+                        raise ValueError("Invalid track")
+                    mpv("set_property", "sid" if action == "subtitle" else "aid", value)
                 else:
                     delta = float(params.get("delta", 0))
                     if abs(delta) > 5:
