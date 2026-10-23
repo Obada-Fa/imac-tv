@@ -22,6 +22,9 @@ import screens
 from screens import Screen, text_label, cover_pixbuf
 import widgets
 from widgets import network, shapes
+import perflog
+
+PERF = perflog.from_env()       # IMACTV_PERF_LOG=path: per-frame timings (None, and free, when unset)
 
 try:
     import cairo
@@ -49,6 +52,8 @@ SHAPE_MS = 66            # ~15 fps while a shape is morphing or the visualizer i
 FIELD_MS = 110           # ~9 fps: the quiet floating particles drift a few px/s
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
 MUSIC_DIM = 0.22         # how far the photo darkens behind the visualizer
+DIM_FADE = 1.6           # seconds for the photo to darken when the visualizer starts
+DIM_STEPS = 8            # ... in this many full-screen repaints (each step is ~3% darker: reads as a fade)
 BLUR_K = 16              # frosted glass samples a 1/16 copy of the photo
 
 
@@ -247,7 +252,8 @@ class PhotoCanvas(Gtk.DrawingArea):
         self.extra = None       # hook(cr): the network lines are drawn here, in the same pass as the photo
         self.ambient = False    # ambient mode shows the same sharp photo; dim darkens it while music plays
         self.fade = 1.0
-        self.dim = 0.0
+        self.dim = 0.0          # drawn darkness 0..1, in 1/DIM_STEPS steps (the screen eases it)
+        self.dark = None        # (photo, dim, the photo pre-darkened to that dim)
         self.set_has_window(False)
         self.connect("draw", self.on_draw)
 
@@ -279,6 +285,7 @@ class PhotoCanvas(Gtk.DrawingArea):
 
     def on_draw(self, _w, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height()
+        t0 = PERF.now() if PERF else 0.0
         if self.cur is None:
             g = cairo.LinearGradient(0, 0, w, h)
             g.add_color_stop_rgb(0, 0.05, 0.07, 0.12)
@@ -293,16 +300,70 @@ class PhotoCanvas(Gtk.DrawingArea):
             cr.set_source_surface(self.cur, 0, 0)
             cr.paint_with_alpha(e)
         else:
+            dark = dimmed(self)
             cr.set_operator(cairo.OPERATOR_SOURCE)
-            cr.set_source_surface(self.cur, 0, 0)
+            cr.set_source_surface(dark or self.cur, 0, 0)
             cr.paint()
             cr.set_operator(cairo.OPERATOR_OVER)
+            if dark is not None:
+                if PERF:
+                    PERF.layer("photo", PERF.ms(t0))
+                if self.extra:
+                    self.extra(cr)
+                return False
+        if PERF:
+            PERF.layer("photo", PERF.ms(t0))
+            t0 = PERF.now()
         if self.dim > 0.003:            # the visualizer's stage: the same sharp photo, a little darker
             cr.set_source_rgba(0.01, 0.015, 0.035, MUSIC_DIM * self.dim)
             cr.paint()
+        if PERF:
+            PERF.layer("dim", PERF.ms(t0))
         if self.extra:
             self.extra(cr)
         return False
+
+
+def dimmed(canvas):
+    """The still photo fully darkened, rendered once: while the visualizer runs, each partial repaint is one
+    blit instead of the photo plus a darkening pass. None while not fully dimmed (the fade steps paint the
+    overlay directly: each step is a full repaint anyway)."""
+    if canvas.dim < 1.0 or canvas.cur is None or cairo is None:
+        if getattr(canvas, "dark", None) is not None:
+            canvas.dark = None                  # free the copy (one screen of pixels) once the music stops
+        return None
+    d = getattr(canvas, "dark", None)
+    if d is not None and d[0] is canvas.cur and d[1] == canvas.dim:
+        return d[2]
+    src = canvas.cur
+    surf = cairo.ImageSurface(cairo.FORMAT_RGB24, src.get_width(), src.get_height())
+    c = cairo.Context(surf)
+    c.set_operator(cairo.OPERATOR_SOURCE)
+    c.set_source_surface(src, 0, 0)
+    c.paint()
+    c.set_operator(cairo.OPERATOR_OVER)
+    c.set_source_rgba(0.01, 0.015, 0.035, MUSIC_DIM * canvas.dim)
+    c.paint()
+    surf.flush()
+    canvas.dark = (src, canvas.dim, surf)
+    return surf
+
+
+def viz_base_alpha(lv):
+    """The visualizer's link opacity before per-link weights: a background, music modulates, never dominates."""
+    gain = 0.55 + 0.45 * min(1.0, lv["bass"] + lv["mid"])
+    return (0.11 + 0.06 * lv["mid"] + 0.10 * lv["beat"]) * gain
+
+
+def viz_link_alpha(base_a, la, alphas, depth, i, j):
+    dd = (depth[i] + depth[j]) / 2 if depth else 0.75
+    return base_a * la * min(alphas[i], alphas[j]) * (0.30 + 0.70 * dd)
+
+
+def dim_level(progress):
+    """Eased fade progress 0..1 -> the darkness actually drawn, in 1/DIM_STEPS steps."""
+    p = max(0.0, min(1.0, progress))
+    return round(p * p * (3 - 2 * p) * DIM_STEPS) / DIM_STEPS
 
 
 # ---------------------------------------------------------------- the screen
@@ -347,9 +408,12 @@ class AmbientHomeScreen(Screen):
         self.viz_stop = False          # music stopped: flowing back to the still sky-line
         self.viz_prev = None           # last frame's dot positions (motion streaks)
         self.beat_raw = 0.0
+        self.last_onset = None         # audio.levels()["onset"] at the last frame (a change = a beat)
+        self.dim_t = 0.0               # dim fade progress; the canvas draws it in DIM_STEPS steps
         self.viz_modes = [m for m in os.environ.get("IMACTV_VIZ_MODES", "").split(",") if m] or None  # screenshot hook
         self.viz_every = float(os.environ.get("IMACTV_VIZ_EVERY") or 0) or None                      # screenshot hook
         self.glow = None
+        self.perf_viz_ms = 0.0
         self.field = None              # shapes.Field: the quiet floating particles (no music)
         self.field_id = 0
         self.field_geom = None
@@ -368,11 +432,15 @@ class AmbientHomeScreen(Screen):
         self.audio = None
         self.audio_retry_due = 0.0
         self.fake_levels = bool(os.environ.get("IMACTV_FAKE_LEVELS"))   # test/screenshot hook only
+        self.fake_from = time.monotonic() + float(os.environ.get("IMACTV_FAKE_LEVELS_AFTER") or 0)  # perf runs
         self.rng = random.Random()
         self.extra_origin = []
 
         overlay = Gtk.Overlay()
         self.pack_start(overlay, True, True, 0)
+        if PERF:
+            overlay.connect("draw", self.perf_draw_begin)
+            overlay.connect_after("draw", self.perf_draw_end)
         self.canvas = PhotoCanvas()
         overlay.add(self.canvas)
         shell.photo_canvas = self.canvas
@@ -431,6 +499,13 @@ class AmbientHomeScreen(Screen):
             w.set_ellipsize(3)
             w.set_max_width_chars(34)
         self.credit.set_opacity(0.82)
+
+        if PERF:                            # the widgets drawn over the photo, timed apart from GTK's own work
+            for n, kid in enumerate(overlay.get_children()):
+                if kid is not self.canvas:
+                    kid.connect("draw", self.perf_kid_begin)
+                    kid.connect_after("draw", self.perf_kid_end, "%d_%s" % (n, ",".join(
+                        type(c).__name__ for c in getattr(kid, "get_children", lambda: [])()[:2])))
 
         GLib.timeout_add(1000, self.supervise)
         if self.library:
@@ -647,9 +722,65 @@ class AmbientHomeScreen(Screen):
 
     def draw_links(self, cr):
         owned = self.morph.target is not None        # the morph draws the dots while it owns them
+        if PERF:
+            t0 = PERF.now()
+            network.draw_network(cr, self.geom, self.chrome, 0.0 if owned else self.dust_amt)
+            PERF.layer("links", PERF.ms(t0))
+            t0 = PERF.now()
+            self.draw_field(cr)
+            PERF.layer("field", PERF.ms(t0))
+            t0 = PERF.now()
+            self.draw_shape(cr)
+            PERF.layer("shape", PERF.ms(t0))
+            return
         network.draw_network(cr, self.geom, self.chrome, 0.0 if owned else self.dust_amt)
         self.draw_field(cr)
         self.draw_shape(cr)
+
+    # ---- perf harness (IMACTV_PERF_LOG)
+    def perf_phase(self):
+        if not self.idle.ambient:
+            return "home"
+        if self.chrome > 0.0:
+            return "to_ambient"
+        v = self.viz
+        if v is None:
+            return "morph" if self.morph.moving else "still"
+        if self.viz_stop:
+            return "viz_stop"
+        if self.canvas.dim < 1.0:
+            return "viz_start"
+        return "viz" if v.settled else "switch"
+
+    def perf_timers(self):
+        return "+".join(n for n, i in (("anim", self.anim_id), ("shape", self.shape_id), ("field", self.field_id)) if i)
+
+    def perf_draw_begin(self, _w, cr):
+        PERF.draw_begin(perflog.clip_area(cr, self.shell.sw, self.shell.sh))
+        return False
+
+    def perf_draw_end(self, _w, _cr):
+        PERF.draw_end(self.perf_phase(), timers=self.perf_timers(), dim=round(self.canvas.dim, 3))
+        return False
+
+    def perf_kid_begin(self, _w, _cr):
+        self.perf_kid_t = PERF.now()
+        return False
+
+    def perf_kid_end(self, _w, _cr, name):
+        PERF.layer("kids", PERF.ms(self.perf_kid_t))
+        PERF.layer("k_" + name, PERF.ms(self.perf_kid_t))
+        return False
+
+    def perf_wrap_viz(self, viz):
+        """Time Viz.switch() (it builds the next mode) on the main thread: shapes.py's cost, logged here."""
+        inner = viz.switch
+
+        def switch(*a, **kw):
+            t0 = PERF.now()
+            inner(*a, **kw)
+            PERF.mark("viz_switch", ms=round(PERF.ms(t0), 3), mode=viz.mode)
+        viz.switch = switch
 
     # ---- quiet floating particles
     def field_target(self):
@@ -663,17 +794,33 @@ class AmbientHomeScreen(Screen):
         if self.field_target() > 0.0 or (self.field is not None and self.field.amt > 0.0):
             self.start_field_timer()
 
+    def widget_fading(self):
+        return any(getattr(w, "fade_id", 0) for w in getattr(self, "items", ()))
+
+    def shape_drives(self):
+        """The 15 fps shape timer is running: it also steps the particles and the photo crossfade, so the
+        screen gets one repaint per frame instead of one per timer."""
+        return bool(self.shape_id) and self.shape_period == SHAPE_MS
+
     def start_field_timer(self):
-        if self.field_id or not self.active():
+        if self.field_id or not self.active() or self.shape_drives():
             return
         self.last_field = time.monotonic()
         self.field_id = GLib.timeout_add(FIELD_MS, self.field_tick)
 
     def field_tick(self):
+        if PERF:
+            t0 = PERF.now()
+            ok = self._field_tick()
+            PERF.tick("field", t0, self.perf_phase())
+            return ok
+        return self._field_tick()
+
+    def _field_tick(self):
         now = time.monotonic()
         dt = min(0.5, now - self.last_field)
         self.last_field = now
-        if not self.active():
+        if not self.active() or self.shape_drives():     # the shape timer carries the particles from here
             self.field_id = 0
             return False
         self.step_field(dt, now)
@@ -742,7 +889,7 @@ class AmbientHomeScreen(Screen):
 
     def music_active(self):
         if self.fake_levels:
-            return True
+            return time.monotonic() >= self.fake_from
         st = self.now_state
         if st and st.get("status") == "Playing":
             return True
@@ -816,8 +963,12 @@ class AmbientHomeScreen(Screen):
         if not base or len(base["pts"]) > shapes.VIZ_N:
             return
         start = self.still if self.morph.target is not None else None     # flow out of what is showing
+        t0 = PERF.now() if PERF else 0.0
         self.viz = shapes.Viz(base, self.shell.sw, self.shell.sh, self.rng, doodles=self.doodles,
                               palette=self.palette, modes=self.viz_modes, every=self.viz_every, start=start)
+        if PERF:
+            PERF.mark("viz_new", ms=round(PERF.ms(t0), 3))
+            self.perf_wrap_viz(self.viz)
         self.viz_stop = False
         if self.morph.target is None:
             self.morph.start(base)
@@ -891,8 +1042,11 @@ class AmbientHomeScreen(Screen):
 
     def fake(self, t):
         beat = max(0.0, 1.0 - ((t * 1.8) % 1.0) * 2.5)
+        hit = max(0.0, 1.0 - ((t * 1.8) % 1.0) * 6.0)
         return {"bass": 0.5 + 0.5 * math.sin(t * 3.1), "mid": 0.5 + 0.4 * math.sin(t * 1.7),
-                "treble": 0.5 + 0.5 * math.sin(t * 5.3), "beat": beat, "active": True}
+                "treble": 0.5 + 0.5 * math.sin(t * 5.3), "beat": beat, "active": True,
+                "onset": int(t * 1.8), "bass_hit": hit, "mid_hit": hit * 0.6,
+                "treble_hit": hit if int(t * 1.8) % 2 else 0.0}
 
     def shape_needs_timer(self):
         lv = self.lv
@@ -909,6 +1063,15 @@ class AmbientHomeScreen(Screen):
             self.shape_id = GLib.timeout_add(SHAPE_MS, self.shape_tick)
 
     def shape_tick(self):
+        if PERF:
+            t0 = PERF.now()
+            self.perf_viz_ms = 0.0
+            ok = self._shape_tick()
+            PERF.tick("shape", t0, self.perf_phase(), viz=self.perf_viz_ms)
+            return ok
+        return self._shape_tick()
+
+    def _shape_tick(self):
         now = time.monotonic()
         dt = min(0.2, now - self.last_shape)
         self.last_shape = now
@@ -916,24 +1079,49 @@ class AmbientHomeScreen(Screen):
             self.shape_id = 0
             return False
         self.step_shape(dt, now)
+        if self.shape_period == SHAPE_MS:        # one master timer: the particles and the crossfade ride along
+            if not self.field_id and self.style == "network" and (
+                    self.field_target() > 0.0 or (self.field is not None and self.field.amt > 0.0)):
+                self.step_field(dt, now)
+            if self.idle.ambient and self.canvas.fading() and not self.anim_id:
+                self.canvas.step(dt)
         if not self.shape_needs_timer():
             self.shape_id = 0
+            self.shape_handoff()
             return False
-        lively = (self.morph.moving or self.fake_levels or self.viz is not None or self.canvas.dim > 0.0
-                  or max(self.lv.values()) > 0.01)
+        lively = (self.morph.moving or self.fake_levels and now >= self.fake_from or self.viz is not None
+                  or self.canvas.dim > 0.0 or max(self.lv.values()) > 0.01)
         period = SHAPE_MS if lively else 500          # audio is on but silent: just keep an eye on the levels
         if period != self.shape_period:
             self.shape_period = period
             self.shape_id = GLib.timeout_add(period, self.shape_tick)
+            self.shape_handoff()
             return False
         return True
+
+    def shape_handoff(self):
+        """The shape timer stopped or slowed down: the particles and a running crossfade get their own timers."""
+        self.sync_field()
+        self.start_anim()
+
+    def detect_beat(self, tgt):
+        """audiolevel counts detected beats ("onset"): a new count is a beat. Without it, a jump in "beat"."""
+        raw = float(tgt.get("beat", 0.0))
+        if "onset" in tgt:
+            onset = tgt["onset"]
+            beat = self.last_onset is not None and onset != self.last_onset
+            self.last_onset = onset
+        else:
+            beat = raw > 0.6 and raw > self.beat_raw + 0.3
+        self.beat_raw = raw
+        return beat
 
     def step_shape(self, dt, now):
         """Advance the morph and the visualizer, cache this frame's geometry, repaint only what moved."""
         m = self.morph
         m.step(dt)
         if self.fake_levels and self.idle.ambient:
-            tgt = self.fake(now)
+            tgt = self.fake(now) if now >= self.fake_from else {}
         elif self.audio:
             try:
                 tgt = self.audio.levels()
@@ -941,14 +1129,17 @@ class AmbientHomeScreen(Screen):
                 tgt = {}
         else:
             tgt = {}
-        raw = float(tgt.get("beat", 0.0))
-        beat = raw > 0.6 and raw > self.beat_raw + 0.3
-        self.beat_raw = raw
+        beat = self.detect_beat(tgt)
         self.lv = shapes.ease_levels(self.lv, tgt, dt)
         dim = 1.0 if (self.viz is not None and not self.viz_stop and self.idle.ambient) else 0.0
-        if self.canvas.dim != dim:
-            self.canvas.dim = fade_step(self.canvas.dim, dim, dt, 1.6)
-            self.canvas.queue_draw()           # the whole photo darkens: ~1.6 s of full repaints, once
+        if dim > self.dim_t == 0.0 and self.widget_fading():
+            dim = 0.0                          # let the weather line finish hiding first: one fade at a time
+        if self.dim_t != dim:
+            self.dim_t = fade_step(self.dim_t, dim, dt, DIM_FADE)
+            level = dim_level(self.dim_t)
+            if level != self.canvas.dim:       # the whole photo darkens: DIM_STEPS full repaints, not one a frame
+                self.canvas.dim = level
+                self.canvas.queue_draw()
         if m.target is None:
             self.viz = None
             self.viz_prev = None
@@ -959,8 +1150,11 @@ class AmbientHomeScreen(Screen):
             return
         fr = None
         if self.viz is not None:
+            t0 = PERF.now() if PERF else 0.0
             self.viz.step(dt, self.lv, beat=beat and not self.viz_stop, t=now, auto=not self.viz_stop)
             fr = self.viz.frame(now, self.lv)
+            if PERF:
+                self.perf_viz_ms = PERF.ms(t0)
             m.target = dict(self.still or m.target, pts=fr["pts"], links=[])
             if (self.viz_stop and self.viz.settled and self.viz.mode == "ridge" and self.idle.ambient
                     and max(self.lv.values()) < 0.02 and self.still and self.still.get("kind") == "photo"
@@ -975,7 +1169,7 @@ class AmbientHomeScreen(Screen):
                 self.shaped = False                    # no sky-line to rest on: back to drifting dust
                 m.release()
         elif (not m.moving and self.shape_geom is not None and max(self.lv.values()) < 0.01
-              and not self.fake_levels):
+              and not (self.fake_levels and now >= self.fake_from)):
             return                                  # holding still and silent: nothing to repaint
         s = self.shell.scale
         pts = m.positions(self.origin, now)
@@ -987,26 +1181,43 @@ class AmbientHomeScreen(Screen):
         else:
             alphas = [a * b for a, b in zip(alphas, fr["alpha"])]
             links = fr["links"]
-        geo = [(i, j, math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])) for i, j, _ in links]
         tails = None
         if fr is not None and fr["trail"] > 0.02 and self.viz_prev and len(self.viz_prev) == len(pts):
             tails = [(x - 4 * (x - px), y - 4 * (y - py)) for (x, y), (px, py) in zip(pts, self.viz_prev)]
-            n = len(pts)
-            geo_pts = pts + tails
-            geo += [(i, n + i, math.hypot(pts[i][0] - tails[i][0], pts[i][1] - tails[i][1]))
-                    for i in range(n) if alphas[i] > 0.02]
-        else:
-            geo_pts = pts
         self.viz_prev = pts if fr is not None else None
-        if fr is not None and fr["pulses"]:          # the pulse heads carry a glow: repaint around them too
-            geo_pts = list(geo_pts) + [(x1, y1) for _x0, _y0, x1, y1, _a in fr["pulses"]]
+        if fr is not None:
+            links, geom = self.viz_drawn(pts, alphas, links, fr, tails)
+        else:
+            geom = {"pts": pts, "n": 0, "links": [(i, j, math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]))
+                                                  for i, j, _ in links]}
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
                            "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
                            "tails": tails, "beat": beat}
-        cells = network.geometry_cells({"pts": geo_pts, "n": 0, "links": geo}, margin=round(22 * s))
+        cells = network.geometry_cells(geom, margin=round(22 * s))
         dirty = cells | self.shape_cells
         self.shape_cells = cells
         self.invalidate_cells(dirty)
+
+    def viz_drawn(self, pts, alphas, links, fr, tails):
+        """Only what draw_viz will actually paint (same alpha cut-offs): the links to stroke, and the geometry
+        whose cells are repainted. Faint links and hidden dots no longer widen the dirty region."""
+        base_a = viz_base_alpha(self.lv)
+        depth = fr["depth"]
+        links = [(i, j, la) for i, j, la in links if viz_link_alpha(base_a, la, alphas, depth, i, j) >= 0.01]
+        hyp = math.hypot
+        geo = [(i, j, hyp(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])) for i, j, _ in links]
+        geo += [(i, i, 0.0) for i in range(len(pts)) if alphas[i] >= 0.02]       # a dot: one cell block
+        geo_pts = pts
+        if tails:
+            n, tr = len(pts), fr["trail"]
+            geo_pts = pts + tails
+            geo += [(i, n + i, hyp(pts[i][0] - tails[i][0], pts[i][1] - tails[i][1]))
+                    for i in range(n) if alphas[i] * 0.15 * tr > 0.01]
+        if fr["pulses"]:                          # the pulse heads carry a glow: repaint around them too
+            k = len(geo_pts)
+            geo_pts = list(geo_pts) + [(x1, y1) for _x0, _y0, x1, y1, _a in fr["pulses"]]
+            geo += [(q, q, 0.0) for q in range(k, len(geo_pts))]
+        return links, {"pts": geo_pts, "n": len(geo_pts), "links": geo}
 
     def invalidate_cells(self, cells):
         if not cells:
@@ -1091,10 +1302,10 @@ class AmbientHomeScreen(Screen):
                     cr.line_to(tx, ty)
                     cr.stroke()
         gain = 0.55 + 0.45 * min(1.0, bass + mid)          # a background: music modulates, never dominates
-        base_a = (0.11 + 0.06 * mid + 0.10 * beat) * gain
+        base_a = viz_base_alpha(lv)
         for i, j, la in g["links"]:
             dd = (depth[i] + depth[j]) / 2 if depth else 0.75
-            a = base_a * la * min(alphas[i], alphas[j]) * (0.30 + 0.70 * dd)
+            a = viz_link_alpha(base_a, la, alphas, depth, i, j)
             if a < 0.01:
                 continue
             cr.set_source_rgba(*line, min(0.8, a))
@@ -1164,7 +1375,8 @@ class AmbientHomeScreen(Screen):
         cr.restore()
 
     def needs_anim(self):
-        return ((not self.idle.ambient) or self.canvas.fading() or self.chrome > 0.0
+        fading = self.canvas.fading() and not (self.idle.ambient and self.shape_drives())
+        return ((not self.idle.ambient) or fading or self.chrome > 0.0
                 or (self.style == "network" and self.dust_amt > 0.0 and self.morph.target is None
                     and not self.shape_candidate()))
 
@@ -1179,6 +1391,14 @@ class AmbientHomeScreen(Screen):
             self.anim_id = 0
 
     def anim_step(self):
+        if PERF:
+            t0 = PERF.now()
+            ok = self._anim_step()
+            PERF.tick("anim", t0, self.perf_phase())
+            return ok
+        return self._anim_step()
+
+    def _anim_step(self):
         now = time.monotonic()
         dt = min(0.2, now - self.last_anim)
         self.last_anim = now
