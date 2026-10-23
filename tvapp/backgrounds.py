@@ -27,6 +27,7 @@ MAX_PIXELS = 60_000_000
 MAX_SIDE = 16384
 MIN_WIDTH = 640
 MAX_IMAGES = 200
+SEED_DIR = Path(__file__).resolve().parent / "assets" / "retro"
 THUMB_W = 320
 CREDIT = "User-provided image"
 EXTS = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "bmp": ".bmp", "tiff": ".tif", "gif": ".gif",
@@ -256,6 +257,29 @@ class Backgrounds:
             self._thumb(rec).unlink(missing_ok=True)
             self._write([r for r in images if r["id"] != bid])
             return True
+
+    def seed(self, assets_dir):
+        """First run only: import the bundled starter pictures (scripts/make-retro-seed.py). A marker file keeps
+        pictures the user later removes from coming back. Returns how many were added."""
+        marker = self.dir / ".seeded"
+        added = 0
+        with self._lock:
+            if marker.exists():
+                return 0
+            try:
+                files = sorted(Path(assets_dir).glob("*.jpg"))
+            except OSError:
+                files = []
+            for f in files:
+                try:
+                    name = f.stem.replace("-", " ").title() + f.suffix
+                    added += self.import_file(f, name)["status"] == "added"
+                except Exception as exc:
+                    _log("seed %s:" % f.name, exc)
+            if files:
+                self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+                marker.write_text(str(added))
+        return added
 
     # ---- provider boundary (same as ambient.Library)
     def items(self, only=None):

@@ -505,6 +505,7 @@ class AmbientHomeScreen(Screen):
         self.current_item = None
         self.library = ambient.Library(screens.DATA, shell.sw, shell.sh) if ambient else None
         self.retro = backgrounds.Backgrounds(screens.DATA)
+        threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
         self.bg_source = self.cfg["background"]      # "photos" | "retro", re-read from home.json when it changes
         self.bg_pick = self.cfg["retro_pick"]
         self.bg_gen = 0                              # bumped on a source change: stale preloads are dropped

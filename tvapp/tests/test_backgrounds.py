@@ -97,6 +97,23 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(self.lib.next(ids[1])["id"], ids[1])
         self.assertIsNone(self.lib.next("f" * 12))
 
+    def test_seed_imports_once_and_respects_removal(self):
+        assets = self.root / "assets"
+        assets.mkdir()
+        image(assets / "neon-grid.jpg", 1920, 1080, "jpeg")
+        image(assets / "sun-set.jpg", 1920, 1080, "jpeg", rgb=0xcc5500ff)
+        self.assertEqual(self.lib.seed(assets), 2)
+        self.assertEqual(sorted(i["name"] for i in self.lib.list()), ["Neon Grid", "Sun Set"])
+        self.lib.remove(self.lib.list()[0]["id"])
+        self.assertEqual(self.lib.seed(assets), 0)             # marker: removed pictures stay removed
+        self.assertEqual(len(self.lib.list()), 1)
+
+    def test_bundled_starter_set_is_full_resolution_and_valid(self):
+        files = sorted(backgrounds.SEED_DIR.glob("*.jpg"))
+        self.assertGreaterEqual(len(files), 5)
+        for f in files:
+            self.assertEqual(backgrounds.probe(f)[1:], (3840, 2160), f.name)
+
     def test_remove(self):
         a = self.lib.import_file(image(self.src / "x.png", 1280, 720))
         self.assertTrue(self.lib.remove(a["id"]))

@@ -377,6 +377,7 @@ class Controller:
         self.action_lock = threading.RLock()
         self.settings_lock = threading.Lock()
         self.retro = backgrounds.Backgrounds(DATA)
+        threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
         self.home_lock = threading.Lock()
         self.selection_path = DATA / "selection.json"
         selection = self._read_json(self.selection_path, {})
