@@ -252,14 +252,14 @@ class SettingsScreen(Screen):
         cfg = widgets.load_config(display.DATA)
         lib = self.retro.list()
         use_retro = cfg["background"] == "retro" and bool(lib)
-        self.content.pack_start(text_label("BACKGROUND", "set-section"), False, False, 0)
-        self.grid([self.button("Photos", "Bing and Wikimedia", not use_retro, ("bg", "photos"),
+        self.content.pack_start(text_label("THEMES", "set-section"), False, False, 0)
+        self.grid([self.button("Focus", "Nature photos", not use_retro, ("bg", "photos"),
                                lambda: self.choose_background("photos", "shuffle")),
                    self.button("Retro", ("%d pictures" % len(lib)) if lib else "None added yet", use_retro,
                                ("bg", "retro"), lambda: self.choose_background("retro", cfg["retro_pick"]))])
         if lib:
             pick = cfg["retro_pick"] if any(i["id"] == cfg["retro_pick"] for i in lib) else "shuffle"
-            hdr = text_label("RETRO PICTURES", "set-section")
+            hdr = text_label("RETRO BACKGROUNDS", "set-section")
             hdr.set_margin_top(px(16))
             self.content.pack_start(hdr, False, False, 0)
             btns = [self.button("Shuffle all", "", pick == "shuffle", ("bg", "pick", "shuffle"),
@@ -269,7 +269,7 @@ class SettingsScreen(Screen):
                                         ("bg", "pick", i["id"]),
                                         lambda b=i["id"]: self.choose_background("retro", b)))
             self.grid(btns)
-        note = ("Add pictures from your phone (Settings, Background)." if not lib else
+        note = ("Add pictures from your phone (Settings, Themes)." if not lib else
                 "Add or replace pictures from your phone. They stay at full size.")
         self.content.pack_start(text_label(note, "set-note"), False, False, 0)
 
@@ -278,7 +278,7 @@ class SettingsScreen(Screen):
             self.shell.toast("Add a retro picture from your phone first", 4)
             return
         widgets.save_keys(display.DATA, {"background": source, "retro_pick": pick})
-        self.shell.toast("Background: " + ("Retro" if source == "retro" else "Photos"), 3)
+        self.shell.toast("Theme: " + ("Retro" if source == "retro" else "Focus"), 3)
         self.render()
         self.content.show_all()
         key = ("bg", "retro" if source == "retro" else "photos")

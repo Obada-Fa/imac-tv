@@ -130,6 +130,6 @@ in Downloads. Preserve the user's unrelated untracked `CLAUDE.md`.
 - home.json keys `background` ("photos" | "retro") and `retro_pick` ("shuffle" | id), validated in `widgets.parse_config`,
   written with `widgets.save_keys`. Home re-reads them (mtime check in `supervise`), drops stale preloads, and switches.
   An empty Retro library falls back to photos.
-- Phone: Settings > Background (source, pick, thumbnails, add, remove); `POST /api/retro/upload?name=` takes raw bytes;
-  actions `background_set`, `retro_remove`. TV: Settings > Background.
+- Phone: Settings > Themes (Focus | Retro) (source, pick, thumbnails, add, remove); `POST /api/retro/upload?name=` takes raw bytes;
+  actions `background_set`, `retro_remove`. TV: Settings > Themes (Focus | Retro).
 - Tests: `tvapp/tests/test_backgrounds.py`.

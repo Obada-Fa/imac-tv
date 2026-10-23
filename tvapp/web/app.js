@@ -847,7 +847,7 @@
       d.onclick = ev => { ev.stopPropagation(); if (confirm('Remove "' + r.name + '"?')) settingsCall('retro_remove', {id: r.id}); };
       b.append(d); list.append(b);
     }
-    $('bg-note').textContent = bg.wanted === 'retro' && !bg.retro.length ? 'No retro pictures yet, so Photos are showing.' : '';
+    $('bg-note').textContent = bg.wanted === 'retro' && !bg.retro.length ? 'No retro pictures yet, so Focus is showing.' : '';
   }
   document.querySelectorAll('#bg-source button').forEach(b => b.onclick = () => {
     const bg = (setState && setState.background) || {};
