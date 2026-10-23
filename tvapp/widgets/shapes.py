@@ -396,13 +396,20 @@ class Field:
 
 # ---------------------------------------------------------------- visualizer
 
-def ease_levels(cur, target, dt, attack=12.0, release=2.2):
-    """Smooth the audio levels: quick to rise, ~1.5 s to settle. -> new dict."""
+HITS = ("bass_hit", "mid_hit", "treble_hit")
+
+
+def ease_levels(cur, target, dt, attack=30.0, release=9.0):
+    """Light anti-jitter over the analyser's levels (it already shapes them): rises within a frame, falls in
+    ~0.1 s, so the dips between beats survive. The per-band hits pass straight through. -> new dict of floats
+    (no "onset": that counter is read from the analyser's own dict)."""
     out = {}
     for k in ("bass", "mid", "treble", "beat"):
         c, t = cur.get(k, 0.0), float(target.get(k, 0.0))
         rate = attack if t > c else release
         out[k] = c + (t - c) * (1 - math.exp(-rate * max(0.0, dt)))
+    for k in HITS:
+        out[k] = max(0.0, min(1.0, float(target.get(k, 0.0))))
     return out
 
 
@@ -437,6 +444,8 @@ MODE_MORPH = 2.8                 # seconds for one mode to flow into the next
 MODE_EVERY = (45.0, 100.0)       # seconds between random mode changes within a track
 FIRST_CHANGE = (10.0, 18.0)      # the photo's ridge plays first, then the first random mode
 PULSE_HOP = 0.32                 # seconds for a beat pulse to run along one edge
+SPARK_SHARE = 5                  # a treble hit lights up about 1 in SPARK_SHARE of the shown dots
+SPARK_DEPTH = 0.5                # ...by bringing them this much "nearer" (bigger, brighter in the renderer)
 DEFAULT_PALETTE = [(0.72, 0.84, 1.0), (0.80, 0.94, 1.0), (1.0, 0.86, 0.72)]
 
 
@@ -462,14 +471,21 @@ def palette_from_bgrx(data, w, h, stride, n=3):
     return out
 
 
-def _nearest_edges(pts, k):
-    """Each point linked to its k nearest neighbours (2D or 3D tuples), deduplicated."""
-    edges = set()
+def _neighbours(pts, k):
+    """For each point, the indices of its k nearest others (2D or 3D tuples), nearest first."""
+    dist = math.dist
+    out = []
     for i, p in enumerate(pts):
-        near = sorted((sum((a - b) ** 2 for a, b in zip(p, q)), j) for j, q in enumerate(pts) if j != i)
-        for _, j in near[:k]:
-            edges.add((min(i, j), max(i, j)))
-    return sorted(edges)
+        row = [dist(p, q) for q in pts]
+        row[i] = math.inf
+        out.append(sorted(range(len(pts)), key=row.__getitem__)[:k])
+    return out
+
+
+def _nearest_edges(pts, k, near=None):
+    """Each point linked to its k nearest neighbours (2D or 3D tuples), deduplicated."""
+    near = near or _neighbours(pts, k)
+    return sorted({(min(i, j), max(i, j)) for i, row in enumerate(near) for j in row[:k]})
 
 
 class _Mode:
@@ -486,7 +502,7 @@ class _Mode:
 
     def step(self, dt, lv):
         self.kick = max(0.0, self.kick - dt * 1.5)
-        self.ph += dt * (0.5 + 1.2 * lv.get("mid", 0.0))
+        self.ph += dt * (0.5 + 1.2 * lv.get("mid", 0.0) + 2.0 * lv.get("mid_hit", 0.0))
 
     def beat(self):
         self.kick = 1.0
@@ -537,10 +553,12 @@ class RidgeMode(_Mode):
 
     def points(self, t, lv):
         bass, mid, sw, sh = lv.get("bass", 0.0), lv.get("mid", 0.0), self.sw, self.sh
+        hit = lv.get("bass_hit", 0.0)
         out = []
         for (x, y), l in zip(self.base, self.lift):
             u = x / sw
-            dy = -0.05 * sh * (0.25 + 0.75 * l) * (0.6 * bass + 0.4 * mid * math.sin(u * self.k + self.ph))
+            dy = -0.05 * sh * (0.25 + 0.75 * l) * (0.6 * bass + 0.4 * mid * math.sin(u * self.k + self.ph)
+                                                   + 0.7 * hit * l)
             if self.kick > 0.0:
                 ring = abs(u - self.kx) - (1.0 - self.kick) * 0.7
                 dy -= 0.03 * sh * self.kick * math.exp(-(ring / 0.07) ** 2)
@@ -567,9 +585,8 @@ class ConstellationMode(_Mode):
         self.base = pts
         self.cx, self.cy = cx, cy
         self.seed = [rng.uniform(0, 2 * math.pi) for _ in range(n)]
-        self.near = [[j for _, j in sorted((math.hypot(p[0] - q[0], p[1] - q[1]), j)
-                                           for j, q in enumerate(pts) if j != i)[:6]] for i, p in enumerate(pts)]
-        self.ea = {e: 1.0 for e in _nearest_edges(pts, 2)}       # edge -> current alpha
+        self.near = _neighbours(pts, 6)
+        self.ea = {e: 1.0 for e in _nearest_edges(pts, 2, self.near)}      # edge -> current alpha
         self.et = dict.fromkeys(self.ea, 1.0)                      # edge -> target alpha
 
     def beat(self):
@@ -598,7 +615,7 @@ class ConstellationMode(_Mode):
         return [(i, j, a) for (i, j), a in self.ea.items()]
 
     def points(self, t, lv):
-        z = 1.0 + 0.025 * lv.get("bass", 0.0) + 0.012 * self.kick
+        z = 1.0 + 0.025 * lv.get("bass", 0.0) + 0.012 * self.kick + 0.03 * lv.get("bass_hit", 0.0)
         amp = 0.010 * self.sw
         out = []
         for (x, y), s in zip(self.base, self.seed):
@@ -665,13 +682,14 @@ class EdgeFlowMode(_Mode):
         self.cap = round(self.n * (0.45 + 0.50 * energy))        # how many may be alive: the spawn rate follows
         speed = 0.035 * self.sw * (0.55 + 1.1 * energy + 0.5 * self.kick)      # px/s
         sw, sh, m = self.sw, self.sh, self.margin * 1.6
+        spin = 1.0 + 5.0 * lv.get("mid_hit", 0.0)
         alive = sum(self.live)
         for k in range(self.n):
             if self.live[k]:
                 self.hd[k] += self.curve[k] * dt
                 self.px[k] += math.cos(self.hd[k]) * speed * self.spd[k] * dt
                 self.py[k] += math.sin(self.hd[k]) * speed * self.spd[k] * dt
-                self.ang[k] += self.spin[k] * dt
+                self.ang[k] += self.spin[k] * dt * spin
                 if not (-m < self.px[k] < sw + m and -m < self.py[k] < sh + m):
                     self.live[k] = False
                     alive -= 1
@@ -700,7 +718,11 @@ class EdgeFlowMode(_Mode):
         return self.lk
 
     def points(self, t, lv):
-        return [(x, y) for x, y in zip(self.px, self.py)]
+        z = 0.045 * lv.get("bass_hit", 0.0)
+        if z <= 0.0:
+            return list(zip(self.px, self.py))
+        cx, cy = 0.5 * self.sw, 0.5 * self.sh
+        return [(x + (x - cx) * z * d, y + (y - cy) * z * d) for x, y, d in zip(self.px, self.py, self.depth)]
 
 
 class TerrainMode(_Mode):
@@ -729,12 +751,12 @@ class TerrainMode(_Mode):
         self.cx, self.near_y, self.horizon = 0.50 * sw, 0.92 * sh, 0.52 * sh
 
     def points(self, t, lv):
-        bass, mid = lv.get("bass", 0.0), lv.get("mid", 0.0)
+        bass, mid, hit = lv.get("bass", 0.0), lv.get("mid", 0.0), lv.get("bass_hit", 0.0)
         front = 1.0 - (1.0 - self.kick) * 1.2
         out, depth = [], []
         for x, z in self.grid:
             h = sum(a * math.sin(kx * x + kz * z + w * t + p) for kx, kz, w, p, a in self.waves) * (0.6 + 0.6 * mid)
-            h += 0.05 * bass * (1.0 - z) * (0.6 + 0.4 * math.sin(3 * x + self.ph))
+            h += (0.05 * bass + 0.05 * hit) * (1.0 - z) * (0.6 + 0.4 * math.sin(3 * x + self.ph))
             h += 0.08 * self.kick * math.exp(-((z - front) / 0.16) ** 2)
             p = 1.0 / (1.0 + 1.9 * z)
             y = self.horizon + (self.near_y - self.horizon) * (p - 1 / 2.9) / (1 - 1 / 2.9)
@@ -807,6 +829,10 @@ class Viz:
         self.since = 0.0
         self.next_change = every or rng.uniform(*FIRST_CHANGE)
         self.colour = 0
+        self._onset = None               # last analyser onset count seen
+        self._hit = [0.0, 0.0, 0.0]      # last bass/mid/treble hit seen (a jump = an onset)
+        self.spark = {}                  # mode dot index -> 1 while it sparkles (scaled by treble_hit)
+        self.spark_amt = 0.0
         if start is not None and start is not base and start.get("pts"):
             self.prev, self.prev_perm = StillMode(self.n, sw, sh, rng, start), list(range(self.n))
             self.blend = 0.0
@@ -867,10 +893,31 @@ class Viz:
             out[perm[k]] = p
         return out
 
-    def step(self, dt, lv, beat=False, t=0.0, auto=True):
+    def _jumped(self, k, v):
+        jump = v > 0.8 and v > self._hit[k] + 0.3
+        self._hit[k] = v
+        return jump
+
+    def step(self, dt, lv, beat=False, t=0.0, auto=True, onset=None):
+        """beat: the caller's own beat flag. onset: the analyser's onset counter (or lv["onset"]); every new
+        value is one beat. Without either, a jump in lv["bass_hit"] counts as a beat. One beat per frame."""
         self.cur.step(dt, lv)
         if self.prev:
             self.prev.step(dt, lv)
+        if onset is None:
+            onset = lv.get("onset")
+        kicked = self._jumped(0, lv.get("bass_hit", 0.0))
+        if onset is not None:
+            kicked = self._onset is not None and onset != self._onset
+            self._onset = onset
+        beat = bool(beat) or (auto and kicked)
+        self._jumped(1, lv.get("mid_hit", 0.0))
+        if self._jumped(2, lv.get("treble_hit", 0.0)) and auto:
+            shown = [k for k in range(self.n) if self.cur.alpha[k] > 0.3]
+            self.spark = dict.fromkeys(self.rng.sample(shown, min(len(shown), max(1, len(shown) // SPARK_SHARE))), 1.0)
+        self.spark_amt = lv.get("treble_hit", 0.0) if self.spark else 0.0
+        if self.spark_amt <= 0.02:
+            self.spark = {}
         if beat:
             self.cur.beat()
             self.spawn_pulses()
@@ -915,11 +962,17 @@ class Viz:
     _adj = {}
 
     def frame(self, t, lv):
-        """-> {"pts", "alpha", "depth", "links": [(i, j, a)], "pulses": [(x0, y0, x1, y1, a)], "trail", "hue"}"""
+        """-> {"pts", "alpha", "depth", "links": [(i, j, a)], "pulses": [(x0, y0, x1, y1, a)], "trail", "colour",
+        "glyph", "ang", "spark": per-dot 0..1 treble sparkle or None}"""
         cur = self.cur
         pts = self.slot(cur, self.perm, cur.points(t, lv))
         alpha = self.slot(cur, self.perm, cur.alpha)
         depth = self.slot(cur, self.perm, cur.depth) if cur.depth else None
+        spark = None
+        if self.spark:
+            spark = [0.0] * self.n
+            for k in self.spark:
+                spark[self.perm[k]] = self.spark_amt
         links = {}
         e = 1.0
         if self.prev:
@@ -944,11 +997,13 @@ class Viz:
             u0 = max(0.0, p["u"] - 0.35)
             pulses.append((x0 + (x1 - x0) * u0, y0 + (y1 - y0) * u0,
                            x0 + (x1 - x0) * p["u"], y0 + (y1 - y0) * p["u"], 1.0))
+        if spark:                        # sparkling dots come nearer: bigger and brighter in the renderer
+            depth = [min(1.25, d + SPARK_DEPTH * s) for d, s in zip(depth or [0.75] * self.n, spark)]
         self.last = pts
         trail = cur.trail * e + (self.prev.trail * (1 - e) if self.prev else 0.0)
         glyph = self.slot(cur, self.perm, cur.glyph) if getattr(cur, "glyph", None) else None
         ang = self.slot(cur, self.perm, cur.ang) if glyph else None
         return {"pts": pts, "alpha": alpha, "depth": depth, "trail": trail, "pulses": pulses,
-                "glyph": glyph, "ang": ang,
+                "glyph": glyph, "ang": ang, "spark": spark,
                 "links": [(i, j, a) for (i, j), a in links.items() if a > 0.01],
                 "colour": self.colour}

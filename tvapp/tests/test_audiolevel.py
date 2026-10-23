@@ -30,7 +30,7 @@ class AnalyzerTest(unittest.TestCase):
         self.assertTrue(o["active"])
         self.assertGreater(o["bass"], 0.5)
         self.assertGreater(o["bass"], 3 * o["treble"])
-        self.assertGreater(o["bass"], 3 * o["mid"])
+        self.assertGreater(o["bass"], 2 * o["mid"])      # levels blend band and overall gain: leaks read as ~sqrt
 
     def test_treble_dominant(self):
         o = run(audiolevel.Analyzer(RATE, FPS), sine(4000, frames=40))
@@ -39,7 +39,8 @@ class AnalyzerTest(unittest.TestCase):
 
     def test_silence_inactive(self):
         o = run(audiolevel.Analyzer(RATE, FPS), array.array("h", [0] * N * 40))
-        self.assertEqual(o, {"bass": 0.0, "mid": 0.0, "treble": 0.0, "beat": 0.0, "active": False})
+        self.assertEqual(o, {"bass": 0.0, "mid": 0.0, "treble": 0.0, "beat": 0.0, "active": False,
+                             "onset": audiolevel._onsets[0], "bass_hit": 0.0, "mid_hit": 0.0, "treble_hit": 0.0})
 
     def test_active_needs_half_second_and_drops(self):
         an = audiolevel.Analyzer(RATE, FPS)
@@ -73,8 +74,145 @@ class AnalyzerTest(unittest.TestCase):
         an = audiolevel.Analyzer(RATE, FPS)
         for f in range(30):
             o = an.feed(sine(200 + f * 90, amp=32000, start=f * N))
-            for k in ("bass", "mid", "treble", "beat"):
+            for k in ("bass", "mid", "treble", "beat", "bass_hit", "mid_hit", "treble_hit"):
                 self.assertTrue(0.0 <= o[k] <= 1.0)
+
+    def test_onset_counts_every_beat_and_never_goes_back(self):
+        an = audiolevel.Analyzer(RATE, FPS)
+        first = an.onset
+        seen = [first]
+        for f in range(80):
+            x = sine(80, amp=300, start=f * N)
+            if f % 10 == 5:
+                x = sine(60, amp=12000, start=f * N)
+            o = an.feed(x)
+            seen.append(o["onset"])
+            if o["beat"] == 1.0:
+                self.assertEqual(o["onset"], seen[-2] + 1)
+        self.assertEqual(seen, sorted(seen))
+        self.assertGreaterEqual(seen[-1] - first, 5)
+        quiet = run(an, array.array("h", [0] * N * 20))         # inactive dicts keep the count
+        self.assertFalse(quiet["active"])
+        self.assertEqual(quiet["onset"], seen[-1])
+        self.assertEqual(audiolevel.AudioLevels().levels()["onset"], seen[-1])   # a fresh instance too
+
+
+def synth(path, secs=6.0, bpm=120, seed=3):
+    """Kick on every beat, closed hats on the off 16ths (one in each kick's tail), a soft mid pad."""
+    import random
+    import wave
+    rng = random.Random(seed)
+    n = int(secs * RATE)
+    y = [0.0] * n
+    step = 60.0 / bpm
+    kicks = [0.5 + k * step for k in range(int((secs - 0.5) / step))]
+    hats = [t + off for t in kicks for off in (0.125, 0.375)]
+    for t0 in kicks:
+        s, ph = int(t0 * RATE), 0.0
+        for i in range(min(n - s, int(0.25 * RATE))):
+            ph += 2 * math.pi * (50 + 100 * math.exp(-i / RATE / 0.03)) / RATE
+            y[s + i] += 22000 * math.exp(-i / RATE / 0.07) * math.sin(ph)
+    for t0 in hats:
+        s, last = int(t0 * RATE), 0.0
+        for i in range(min(n - s, int(0.06 * RATE))):
+            w = rng.uniform(-1, 1)
+            y[s + i] += 5000 * math.exp(-i / RATE / 0.015) * (w - last)      # differenced noise: bright
+            last = w
+    for i in range(n):
+        tt = i / RATE
+        y[i] += 1200 * (math.sin(2 * math.pi * 330 * tt) + math.sin(2 * math.pi * 415 * tt)
+                        + math.sin(2 * math.pi * 494 * tt)) * (0.8 + 0.2 * math.sin(tt))
+    x = array.array("h", (max(-32767, min(32767, int(v))) for v in y))
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(x.tobytes())
+    return kicks, hats
+
+
+class SyntheticTrackTest(unittest.TestCase):
+    FPS = audiolevel.ANALYSIS_FPS
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.wav = os.path.join(cls.tmp.name, "track.wav")
+        cls.kicks, cls.hats = synth(cls.wav)
+        cls.lv = audiolevel.levels_from_wav(cls.wav, RATE, cls.FPS)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def frame(self, t):
+        return int(t * self.FPS)
+
+    def test_onsets_line_up_with_the_kicks(self):
+        ons = [f for f in range(1, len(self.lv)) if self.lv[f]["onset"] != self.lv[f - 1]["onset"]]
+        kicks = [self.frame(t) for t in self.kicks if t >= 1.0]     # the first kick lands while auto-gain warms up
+        for k in kicks:
+            self.assertTrue(any(abs(f - k) <= 1 for f in ons), "kick at frame %d missed (%s)" % (k, ons))
+        stray = [f for f in ons if f >= kicks[0] - 1 and not any(abs(f - k) <= 1 for k in kicks)]
+        self.assertEqual(stray, [])
+        for f in ons:
+            self.assertEqual(self.lv[f]["onset"] - self.lv[f - 1]["onset"], 1)
+            self.assertEqual(self.lv[f]["beat"], 1.0)
+            self.assertGreater(self.lv[f]["bass_hit"], 0.9)
+
+    def test_bass_dips_between_kicks(self):
+        for t in self.kicks[2:]:
+            k = self.frame(t)
+            peak = max(self.lv[f]["bass"] for f in range(k, k + 3))
+            dip = min(self.lv[f]["bass"] for f in range(k + 6, k + 14))      # 200..470 ms after the kick
+            self.assertGreater(peak, 0.8)
+            self.assertLess(dip, 0.25)
+            self.assertLess(self.lv[k + 7]["bass_hit"], 0.1)                # the hit is a short transient
+
+    def test_treble_hits_on_hats_even_while_the_bass_is_loud(self):
+        for t in self.hats[4:]:
+            f = self.frame(t)
+            self.assertTrue(any(self.lv[g]["treble_hit"] > 0.9 for g in (f, f + 1)), "hat at %.3f s" % t)
+        loud = [self.frame(t + 0.125) for t in self.kicks[2:]]           # the hats inside a kick's tail
+        self.assertTrue(all(max(self.lv[f]["bass"], self.lv[f - 1]["bass"]) > 0.4 for f in loud))
+        self.assertTrue(all(max(self.lv[f]["treble_hit"], self.lv[f + 1]["treble_hit"]) > 0.9 for f in loud))
+        for t in self.kicks[2:]:                                            # kicks alone don't sparkle
+            f = self.frame(t)
+            self.assertLess(self.lv[f]["treble_hit"], 0.5)
+
+    def test_dsp_cost_per_frame(self):
+        x = audiolevel.read_wav(self.wav, RATE)
+        an, hop = audiolevel.Analyzer(RATE, self.FPS), RATE // self.FPS
+        frames = [x[k:k + hop] for k in range(0, len(x) - hop + 1, hop)]
+        t0 = time.perf_counter()
+        for fr in frames:
+            an.feed(fr)
+        per = (time.perf_counter() - t0) / len(frames)
+        self.assertLess(per, 0.002)
+
+    def test_wav_hook_plays_in_real_time(self):
+        old = os.environ.get("IMACTV_LEVELS_WAV")
+        os.environ["IMACTV_LEVELS_WAV"] = self.wav
+        try:
+            a = audiolevel.AudioLevels(rate=RATE, fps=15)
+        finally:
+            if old is None:
+                os.environ.pop("IMACTV_LEVELS_WAV")
+            else:
+                os.environ["IMACTV_LEVELS_WAV"] = old
+        a.start()
+        try:
+            o0, deadline, seen = a.levels()["onset"], time.time() + 6, set()
+            while time.time() < deadline and a.levels()["onset"] < o0 + 2:
+                seen.update(k for k, v in a.levels().items() if v)
+                time.sleep(0.02)
+            self.assertGreaterEqual(a.levels()["onset"], o0 + 2)
+            self.assertTrue(a.levels()["active"])
+            self.assertIn("treble_hit", seen)
+        finally:
+            a.stop()
+        self.assertFalse(a.levels()["active"])
 
 
 def alive(pid):
