@@ -1,0 +1,8 @@
+# viz-bench baseline: clean HEAD b342856 (git archive), Xvfb 1920x1080x24, 30 s/mode after 5 s warm-up, 2026-10-23
+# command: scripts/viz-bench.sh <HEAD export>/tvapp 30   (CPU % = share of ONE core; draw ms/area % from the perf log, phase-agnostic window)
+mode           | python % | Xvfb %  | total % | draw ms | area % | fps
+---------------|----------|---------|---------|---------|--------|------
+edgeflow       |      2.9 |     3.6 |     6.5 |    1.58 |   20.7 |  15.6
+ridge          |      2.9 |     4.4 |     7.4 |    1.54 |   21.2 |  15.4
+constellation  |      2.8 |     3.7 |     6.5 |    1.42 |   19.4 |  15.9
+terrain        |      2.7 |     3.5 |     6.3 |    1.33 |   19.5 |  15.7

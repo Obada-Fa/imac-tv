@@ -262,6 +262,7 @@ class PhotoCanvas(Gtk.DrawingArea):
         self.ambient = False    # ambient mode shows the same sharp photo; dim darkens it while music plays
         self.fade = 1.0
         self.dim = 0.0          # drawn darkness 0..1, in 1/DIM_STEPS steps (the screen eases it)
+        self.fb = None          # the client-side framebuffer the lines are drawn into (see on_draw)
         self.dark = None        # (photo, dim, the photo pre-darkened to that dim)
         self.set_has_window(False)
         self.connect("draw", self.on_draw)
@@ -294,43 +295,109 @@ class PhotoCanvas(Gtk.DrawingArea):
 
     def on_draw(self, _w, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height()
+        if not self.extra:
+            self.fb = None                          # free the framebuffer once nothing is drawn over the photo
+            paint_background(self, cr, w, h)
+            return False
+        # The lines are many tiny strokes: rasterize them here (pixman) and upload the result once, instead of
+        # having the X server trace every segment.
+        fb = self.fb
+        if fb is None or fb.get_width() != w or fb.get_height() != h:
+            fb = self.fb = cairo.ImageSurface(cairo.FORMAT_RGB24, w, h)
+        fcr = cairo.Context(fb)
+        for x, y, rw, rh in clip_rects(cr, w, h):
+            fcr.rectangle(x, y, rw, rh)
+        fcr.clip()
+        paint_background(self, fcr, w, h)
+        self.extra(fcr)
         t0 = PERF.now() if PERF else 0.0
-        if self.cur is None:
-            g = cairo.LinearGradient(0, 0, w, h)
-            g.add_color_stop_rgb(0, 0.05, 0.07, 0.12)
-            g.add_color_stop_rgb(0.55, 0.07, 0.09, 0.15)
-            g.add_color_stop_rgb(1, 0.02, 0.03, 0.06)
-            cr.set_source(g)
-            cr.paint()
-        elif self.prev is not None and self.fade < 1.0:
-            cr.set_source_surface(self.prev, 0, 0)
-            cr.paint()
-            e = self.fade * self.fade * (3 - 2 * self.fade)
-            cr.set_source_surface(self.cur, 0, 0)
-            cr.paint_with_alpha(e)
-        else:
-            dark = dimmed(self)
-            cr.set_operator(cairo.OPERATOR_SOURCE)
-            cr.set_source_surface(dark or self.cur, 0, 0)
-            cr.paint()
-            cr.set_operator(cairo.OPERATOR_OVER)
-            if dark is not None:
-                if PERF:
-                    PERF.layer("photo", PERF.ms(t0))
-                if self.extra:
-                    self.extra(cr)
-                return False
+        fb.flush()
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        cr.set_source_surface(fb, 0, 0)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
         if PERF:
-            PERF.layer("photo", PERF.ms(t0))
-            t0 = PERF.now()
-        if self.dim > 0.003:            # the visualizer's stage: the same sharp photo, a little darker
-            cr.set_source_rgba(0.01, 0.015, 0.035, MUSIC_DIM * self.dim)
-            cr.paint()
-        if PERF:
-            PERF.layer("dim", PERF.ms(t0))
-        if self.extra:
-            self.extra(cr)
+            PERF.layer("blit", PERF.ms(t0))
         return False
+
+
+WHITE = (1, 1, 1)
+
+
+def paint_background(self, cr, w, h):
+    """The photo (or gradient / crossfade) plus the visualizer's dim overlay, onto any context."""
+    t0 = PERF.now() if PERF else 0.0
+    if self.cur is None:
+        g = cairo.LinearGradient(0, 0, w, h)
+        g.add_color_stop_rgb(0, 0.05, 0.07, 0.12)
+        g.add_color_stop_rgb(0.55, 0.07, 0.09, 0.15)
+        g.add_color_stop_rgb(1, 0.02, 0.03, 0.06)
+        cr.set_source(g)
+        cr.paint()
+    elif self.prev is not None and self.fade < 1.0:
+        cr.set_source_surface(self.prev, 0, 0)
+        cr.paint()
+        e = self.fade * self.fade * (3 - 2 * self.fade)
+        cr.set_source_surface(self.cur, 0, 0)
+        cr.paint_with_alpha(e)
+    else:
+        dark = dimmed(self)
+        cr.set_operator(cairo.OPERATOR_SOURCE)
+        cr.set_source_surface(dark or self.cur, 0, 0)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
+        if dark is not None:
+            if PERF:
+                PERF.layer("photo", PERF.ms(t0))
+            return
+    if PERF:
+        PERF.layer("photo", PERF.ms(t0))
+        t0 = PERF.now()
+    if self.dim > 0.003:            # the visualizer's stage: the same sharp photo, a little darker
+        cr.set_source_rgba(0.01, 0.015, 0.035, MUSIC_DIM * self.dim)
+        cr.paint()
+    if PERF:
+        PERF.layer("dim", PERF.ms(t0))
+
+
+def clip_rects(cr, w, h):
+    """[(x, y, w, h)] of cr's clip, or the whole area when it cannot be listed."""
+    try:
+        rects = cr.copy_clip_rectangle_list()
+        if rects:
+            return [(int(r.x), int(r.y), int(r.width), int(r.height)) for r in rects]
+        ext = cr.clip_extents()
+        if ext[2] > ext[0] and ext[3] > ext[1]:
+            x0, y0, x1, y1 = int(ext[0]), int(ext[1]), math.ceil(ext[2]), math.ceil(ext[3])
+            return [(x0, y0, x1 - x0, y1 - y0)]
+    except Exception:
+        pass
+    return [(0, 0, w, h)]
+
+
+def batch_segments(segs, alpha_steps=8, amax=1.0):
+    """Group line segments so each (colour, alpha, width) is one stroke. segs: (rgb, alpha, width, x0, y0, x1, y1).
+    Alpha is quantized to alpha_steps levels over 0..amax (never to zero for a visible segment), width to 0.5 px;
+    segments with alpha <= 0 are dropped.
+    Returns [(rgb, alpha, width, [(x0, y0, x1, y1), ...])] in first-seen order."""
+    groups = {}
+    for rgb, a, wd, x0, y0, x1, y1 in segs:
+        if a <= 0:
+            continue
+        qa = max(1, round(min(a, amax) / amax * alpha_steps)) * amax / alpha_steps
+        key = (tuple(rgb), qa, max(0.5, round(wd * 2) / 2))
+        groups.setdefault(key, []).append((x0, y0, x1, y1))
+    return [(k[0], k[1], k[2], v) for k, v in groups.items()]
+
+
+def stroke_batches(cr, batches):
+    for rgb, a, wd, lines in batches:
+        cr.set_source_rgba(*rgb, a)
+        cr.set_line_width(wd)
+        for x0, y0, x1, y1 in lines:
+            cr.move_to(x0, y0)
+            cr.line_to(x1, y1)
+        cr.stroke()
 
 
 def dimmed(canvas):
@@ -906,12 +973,9 @@ class AmbientHomeScreen(Screen):
         s, pts, al = g["scale"], g["pts"], g["alpha"]
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_width(max(1.0, 1.0 * s))
-        for i, j, a in g["links"]:
-            cr.set_source_rgba(1, 1, 1, min(0.32, 0.34 * a))
-            cr.move_to(*pts[i])
-            cr.line_to(*pts[j])
-            cr.stroke()
+        wd = max(1.0, 1.0 * s)
+        segs = [(WHITE, min(0.32, 0.34 * a), wd, *pts[i], *pts[j]) for i, j, a in g["links"]]
+        stroke_batches(cr, batch_segments(segs, 8, 0.32))
         for (x, y), a in zip(pts, al):
             if a < 0.02:
                 continue
@@ -1287,7 +1351,8 @@ class AmbientHomeScreen(Screen):
         rmax = g["rmax"] * 1.05
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_width(max(1.3, 1.3 * s))
+        wd = max(1.3, 1.3 * s)
+        segs = []
         for i, j, _a in g["links"]:
             a = 0.30 * e * e + 0.10 * lv["mid"] * e
             if lv["beat"] > 0.02:
@@ -1295,10 +1360,8 @@ class AmbientHomeScreen(Screen):
                 a += shapes.wave_boost(math.hypot(mx - cx, my - cy) / rmax, lv["beat"]) * e
             if a < 0.01:
                 continue
-            cr.set_source_rgba(1, 1, 1, min(0.9, a))
-            cr.move_to(*pts[i])
-            cr.line_to(*pts[j])
-            cr.stroke()
+            segs.append((WHITE, min(0.9, a), wd, *pts[i], *pts[j]))
+        stroke_batches(cr, batch_segments(segs, 8, 0.9))
         for i, (x, y) in enumerate(pts):
             a = g["alphas"][i] * 0.85
             if a < 0.01:
@@ -1339,36 +1402,31 @@ class AmbientHomeScreen(Screen):
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
         if g["tails"]:
             tr = fr["trail"]
-            cr.set_line_width(max(1.0, 1.6 * s))
+            wd = max(1.0, 1.6 * s)
+            segs = []
             for i, (x, y) in enumerate(pts):
                 a = alphas[i] * 0.15 * tr
                 if a > 0.01:
                     tx, ty = g["tails"][i]
-                    cr.set_source_rgba(*halo, a)
-                    cr.move_to(x, y)
-                    cr.line_to(tx, ty)
-                    cr.stroke()
+                    segs.append((halo, a, wd, x, y, tx, ty))
+            stroke_batches(cr, batch_segments(segs, 6, 0.15))
         gain = 0.55 + 0.45 * min(1.0, bass + mid)          # a background: music modulates, never dominates
         base_a = viz_base_alpha(lv)
+        segs = []
         for i, j, la in g["links"]:
             dd = (depth[i] + depth[j]) / 2 if depth else 0.75
             a = viz_link_alpha(base_a, la, alphas, depth, i, j)
             if a < 0.01:
                 continue
-            cr.set_source_rgba(*line, min(0.8, a))
-            cr.set_line_width(max(1.0, 1.1 * s * (0.6 + 0.6 * dd)))
-            cr.move_to(*pts[i])
-            cr.line_to(*pts[j])
-            cr.stroke()
+            segs.append((line, min(0.8, a), max(1.0, 1.1 * s * (0.6 + 0.6 * dd)), *pts[i], *pts[j]))
+        stroke_batches(cr, batch_segments(segs, 8, 0.8))
         if fr["pulses"]:
-            cr.set_line_width(max(1.6, 2.4 * s))
-            for x0, y0, x1, y1, a in fr["pulses"]:
-                cr.set_source_rgba(*spark, 0.6 * a)
-                cr.move_to(x0, y0)
-                cr.line_to(x1, y1)
-                cr.stroke()
+            wd = max(1.6, 2.4 * s)
+            segs = [(spark, 0.6 * a, wd, x0, y0, x1, y1) for x0, y0, x1, y1, a in fr["pulses"]]
+            stroke_batches(cr, batch_segments(segs, 6, 0.6))
         sprite, r = self.glow_sprite()
         hub = self.cfg["node_shape"]
+        outlines = []                   # the white glyph outlines, stroked in batches after the loop
         for i, (x, y) in enumerate(pts):
             a = alphas[i]
             if a < 0.02:
@@ -1383,23 +1441,22 @@ class AmbientHomeScreen(Screen):
             if gl in (1, 2, 3):
                 ang = fr["ang"][i]
                 al = min(0.7, (0.30 + 0.35 * dd + 0.3 * tw) * a * gain)
+                wd = max(1.0, 1.1 * s)
                 if gl == 3:
                     dx, dy = math.cos(ang) * d * 2.4, math.sin(ang) * d * 2.4
-                    cr.move_to(x - dx, y - dy)
-                    cr.line_to(x + dx, y + dy)
+                    outlines.append((WHITE, al, wd, x - dx, y - dy, x + dx, y + dy))
                 else:
-                    r = d * (2.2 if gl == 1 else 1.9)
+                    gr = d * (2.2 if gl == 1 else 1.9)     # not r: that is the glow sprite's radius
                     n = 3 if gl == 1 else 6
-                    cr.new_path()
-                    for q in range(n):
-                        px, py = x + r * math.cos(ang + 6.2832 * q / n), y + r * math.sin(ang + 6.2832 * q / n)
-                        cr.line_to(px, py) if q else cr.move_to(px, py)
+                    ring = [(x + gr * math.cos(ang + 6.2832 * q / n), y + gr * math.sin(ang + 6.2832 * q / n))
+                            for q in range(n)]
+                    cr.move_to(*ring[0])
+                    for p in ring[1:]:
+                        cr.line_to(*p)
                     cr.close_path()
                     cr.set_source_rgba(*line, 0.07 * a * gain)
-                    cr.fill_preserve()
-                cr.set_source_rgba(1, 1, 1, al)
-                cr.set_line_width(max(1.0, 1.1 * s))
-                cr.stroke()
+                    cr.fill()
+                    outlines.extend((WHITE, al, wd, *ring[q - 1], *ring[q]) for q in range(n))
             elif gl == 4:
                 poly = network.poly_points(hub, d * 2.0, x, y)
                 network.poly_path(cr, poly)
@@ -1416,6 +1473,7 @@ class AmbientHomeScreen(Screen):
                 cr.line_to(x - d, y)
                 cr.close_path()
                 cr.fill()
+        stroke_batches(cr, batch_segments(outlines, 8, 0.7))
         for _x0, _y0, x1, y1, a in fr["pulses"]:
             cr.set_source_rgba(*spark, 0.45 * a)
             cr.mask_surface(sprite, x1 - r, y1 - r)
