@@ -196,10 +196,39 @@ def media_target(params):
 def media_stream(value):
     if value is None:
         return None
+    if isinstance(value, dict) and value.get("url") is not None:
+        url = value["url"]
+        if not isinstance(url, str) or len(url) > 2048 or not re.match(r"^https?://[^\s]+$", url, re.I):
+            raise ValueError("Invalid stream")
+        return {"url": url, "info_hash": None, "file_idx": None}
     if not isinstance(value, dict) or not isinstance(value.get("info_hash"), str) or not HASH.match(value["info_hash"]):
         raise ValueError("Invalid stream")
     idx = value.get("file_idx")
-    return {"info_hash": value["info_hash"].lower(), "file_idx": None if idx is None else _count(idx, "file index", 0)}
+    return {"url": None, "info_hash": value["info_hash"].lower(),
+            "file_idx": None if idx is None else _count(idx, "file index", 0)}
+
+
+def _card(meta):
+    year = str(meta.get("releaseInfo") or meta.get("year") or "")[:4]
+    return {"id": meta.get("id"), "type": meta.get("type"), "name": meta.get("name"),
+            "year": year, "poster": meta.get("poster")}
+
+
+def _addon(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except addons.AddonError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def _season_list(videos):
+    seasons = {}
+    for v in videos or []:
+        if isinstance(v.get("season"), int) and isinstance(v.get("episode"), int):
+            seasons.setdefault(v["season"], []).append(
+                {"episode": v["episode"], "name": v.get("name") or v.get("title") or "", "released": v.get("released")})
+    return [{"season": n, "episodes": sorted(seasons[n], key=lambda e: e["episode"])}
+            for n in sorted(seasons, key=lambda n: (n == 0, n))]
 
 
 class Controller:
@@ -474,7 +503,7 @@ class Controller:
         except (OSError, RuntimeError, ValueError, TimeoutError):
             pass
         self._stop_proc()
-        if session:
+        if session and session["engine"] and session["info_hash"]:
             session["engine"].remove(session["info_hash"])
         return bool(session)
 
@@ -528,7 +557,7 @@ class Controller:
             self.app, self.phase, self.error, self.buffering = "home", "ready", str(exc)[:300], None
             session, self.session = self.session, None
         self._stop_proc()
-        if session:
+        if session and session["engine"] and session["info_hash"]:
             session["engine"].remove(session["info_hash"])
         self._show_home()
 
@@ -604,12 +633,18 @@ class Controller:
             streams_job = None if stream else pool.submit(addons.streams, kind, video_id)
             subs_job = pool.submit(addons.subtitles, kind, video_id)
             pool.shutdown(wait=False)
-            torrents = media_engine.Engine(cfg["engine"])
-            if not torrents.healthy():
-                raise RuntimeError(f"Can't reach the Stremio server at {cfg['engine']}")
-            if torrents.is_local and not self.cache_ready:
-                torrents.configure_cache(cfg["cache_bytes"])
-                self.cache_ready = True
+            torrents = None
+
+            def engine_ready():
+                eng = media_engine.Engine(cfg["engine"])
+                if not eng.healthy():
+                    raise RuntimeError(f"Can't reach the Stremio server at {cfg['engine']}")
+                if eng.is_local and not self.cache_ready:
+                    eng.configure_cache(cfg["cache_bytes"])
+                    self.cache_ready = True
+                return eng
+            if stream and not stream.get("url"):
+                torrents = engine_ready()
             try:
                 meta = meta_job.result() or {}
             except addons.AddonError:
@@ -619,8 +654,10 @@ class Controller:
             with self.lock:
                 if generation == self.generation:
                     self.media.update(name=name, poster=meta.get("poster"), background=meta.get("background"))
+            direct = None
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
+                direct = stream.get("url")
                 sources = []
             else:
                 found = [media_streams.parse(s) for s in streams_job.result()]
@@ -628,10 +665,18 @@ class Controller:
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
+                direct = chosen.get("url")
                 sources = chosen.get("sources") or []
-            self._set_stage(generation, "Connecting to peers…", source=label)
-            if not torrents.create(info_hash, sources):
-                LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
+                if direct:
+                    info_hash = None
+                else:
+                    torrents = engine_ready()
+            if direct:
+                self._set_stage(generation, "Opening TorBox link…", source=label)
+            else:
+                self._set_stage(generation, "Connecting to peers…", source=label)
+                if not torrents.create(info_hash, sources):
+                    LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
             try:
                 tracks = media_subs.pick(subs_job.result(), cfg["sub_langs"])
             except addons.AddonError:
@@ -650,7 +695,7 @@ class Controller:
             except OSError:
                 pass
             slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
-            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
+            argv = player.mpv_argv(direct or torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
                                   log_file=str(DATA / "mpv.log"))
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
@@ -670,7 +715,7 @@ class Controller:
                     if win:
                         activate(win)
                         raised = True
-                stats = torrents.stats(info_hash, file_idx)
+                stats = torrents.stats(info_hash, file_idx) if torrents else None
                 if stats:
                     with self.lock:
                         if generation == self.generation and self.buffering:
@@ -882,10 +927,18 @@ class Controller:
             if action == "play_media":
                 return self.play_media(params)
             if action == "open_search":
+                if self.app == "youtube":
+                    # Stay on YouTube: focus VacuumTube and press the YouTube TV search shortcut.
+                    # "s" is the common leanback shortcut; nothing in this repo documents a better key.
+                    win = window_for("youtube")
+                    if win:
+                        activate(win)
+                    command(["xdotool", "key", "--clearmodifiers", "s"], check=False)
+                    return {"ok": True, "target": "youtube"}
                 if self.app != "home":
                     self.select("home")
                 self._ui_request("search")
-                return {"ok": True}
+                return {"ok": True, "target": "home"}
             if action == "sources":
                 kind, _, _, _, video_id = media_target(params)
                 try:
@@ -893,6 +946,53 @@ class Controller:
                 except addons.AddonError as exc:
                     raise RuntimeError(str(exc)) from exc
                 return {"sources": media_streams.rank(found, media_config.load())}
+            if action == "browse":
+                kind, skip = params.get("type"), params.get("skip", 0)
+                if kind not in ("movie", "series"):
+                    raise ValueError("Type must be movie or series")
+                skip = _count(skip, "skip", 0)
+                return {"items": [_card(m) for m in _addon(addons.catalog, kind, "top", skip=skip)[:50]]}
+            if action == "find":
+                query = params.get("query")
+                query = query.strip() if isinstance(query, str) else ""
+                if not 1 <= len(query) <= 80:
+                    raise ValueError("Search must be 1-80 characters")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    jobs = {k: pool.submit(addons.search, k, query) for k in ("movie", "series")}
+                out, failures = {}, []
+                for k, job in jobs.items():
+                    try:
+                        out[k] = [_card(m) for m in job.result()[:50]]
+                    except addons.AddonError as exc:
+                        out[k] = []
+                        failures.append(exc)
+                if len(failures) == len(jobs):
+                    raise RuntimeError(str(failures[0]))
+                return {"movies": out["movie"], "series": out["series"]}
+            if action == "title":
+                kind, item = params.get("type"), params.get("id")
+                if kind not in ("movie", "series"):
+                    raise ValueError("Type must be movie or series")
+                if not isinstance(item, str) or not MEDIA_ID.match(item):
+                    raise ValueError("Invalid title id")
+                meta = _addon(addons.meta, kind, item)
+                card = _card(dict(meta, id=meta.get("id") or item, type=kind))
+                runtime = meta.get("runtime")
+                genres = meta.get("genres")
+                card.update(background=meta.get("background"), description=meta.get("description"),
+                            runtime=runtime if isinstance(runtime, str) else "",
+                            genres=genres if isinstance(genres, list) else [],
+                            resume=history.resume_position(item) if kind == "movie" else 0)
+                if kind == "series":
+                    card["seasons"] = _season_list(meta.get("videos"))
+                return card
+            if action == "continue":
+                items = []
+                for entry in history.continue_watching():
+                    row = _card(entry)
+                    row.update({k: entry[k] for k in ("season", "episode", "position", "duration") if k in entry})
+                    items.append(row)
+                return {"items": items}
             if action in ("seek", "subtitle", "subdelay", "audio"):
                 if not playback()["active"]:
                     raise RuntimeError("This control is available only while MPV is playing")

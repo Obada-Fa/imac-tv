@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#11151c"><meta name="apple-mobile-web-app-capable" content="yes">
 <title>iMac TV Remote</title><link rel="stylesheet" href="/app.css" defer><script src="/app.js" defer></script></head>
 <body>
+<div id="message" class="toast" role="alert" hidden></div>
 <main id="remote" class="shell" hidden>
   <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
   <div class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
@@ -22,7 +23,6 @@
     </div>
     <button id="fullscreen" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen">⛶<span>Full</span></button>
   </div>
-  <div id="message" class="toast" role="alert" hidden></div>
   <section id="controls" class="controls" aria-label="Remote controls" data-view="browse">
     <div id="buffer" class="card buffer" hidden>
       <div class="spinner" aria-hidden="true"></div>
@@ -54,7 +54,7 @@
         <button data-action="down" class="down" aria-label="Down">▼</button>
       </div>
       <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click</small></div>
-      <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button id="search-open" class="accent" aria-label="Search">⌕<span>Search</span></button></div>
+      <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button id="search-open" class="accent" aria-label="Type on TV">⌕<span>Type on TV</span></button></div>
       <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" aria-label="Backspace">⌫</button></form>
     </div>
     <div class="volume"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
@@ -62,7 +62,34 @@
   <footer id="foot"><button id="mode" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open">Type</button><button id="more-open">More</button></footer>
 </main>
 
+<main id="browser" class="shell" hidden>
+  <section id="tab-movie" class="pane" data-type="movie" hidden>
+    <h2 class="ptitle">Movies</h2>
+    <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
+    <div class="grid"></div>
+    <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
+    <button class="more" type="button" hidden>Load more</button>
+  </section>
+  <section id="tab-series" class="pane" data-type="series" hidden>
+    <h2 class="ptitle">Series</h2>
+    <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
+    <div class="grid"></div>
+    <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
+    <button class="more" type="button" hidden>Load more</button>
+  </section>
+  <section id="tab-search" class="pane" hidden>
+    <form id="find-form" class="findbox" autocomplete="off"><input id="find-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies and series" aria-label="Search titles"><button type="button" id="find-clear" aria-label="Clear" hidden>✕</button></form>
+    <div id="find-results">
+      <div class="spin" id="find-spin" hidden><div class="spinner" aria-hidden="true"></div></div>
+      <p id="find-empty" class="muted"></p>
+      <div id="find-movies" hidden><h3>Movies</h3><div class="grid"></div></div>
+      <div id="find-series" hidden><h3>Series</h3><div class="grid"></div></div>
+    </div>
+  </section>
+</main>
+
 <section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown along the bottom of TV Home.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
 
 <section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" aria-label="Close">✕</button></div><div id="sheet-content"></div></div></section>
+<nav id="tabbar" class="tabbar" aria-label="Sections" hidden><button type="button" data-tab="remote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7" y="2.5" width="10" height="19" rx="3"/><circle cx="12" cy="9" r="2"/><path d="M10 15h4"/></svg><span>Remote</span></button><button type="button" data-tab="movie"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 10h4M3 14h4M17 10h4M17 14h4"/></svg><span>Movies</span></button><button type="button" data-tab="series"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Series</span></button><button type="button" data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button></nav>
 </body></html>

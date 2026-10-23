@@ -236,6 +236,83 @@ class PlayMediaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.action("sources", {"type": "movie", "id": "bad"})
 
+    def test_media_stream_url_validation(self):
+        self.assertEqual(server.media_stream({"url": "https://tb/x"}), {"url": "https://tb/x", "info_hash": None, "file_idx": None})
+        for bad in ("ftp://x/y", "javascript:alert(1)", "https://" + "a" * 2048, "", 5):
+            with self.assertRaises(ValueError):
+                server.media_stream({"url": bad})
+
+    def test_worker_plays_url_stream_without_engine(self):
+        c = self.controller()
+        popen, _ = self.worker(c, stream=server.media_stream({"url": "https://tb/x.mkv"}), found=[], healthy=False)
+        self.assertEqual(popen.call_args.args[0][-1], "https://tb/x.mkv")
+        eng = self.eng_holder["eng"]
+        eng.healthy.assert_not_called()
+        eng.create.assert_not_called()
+        eng.stats.assert_not_called()
+        self.assertIsNone(c.session["info_hash"])
+        with mock.patch.object(server, "mpv"), mock.patch.object(c, "_stop_proc"):
+            self.assertTrue(c._end_playback())
+        eng.remove.assert_not_called()
+
+    def test_worker_auto_picks_cached_torbox_stream(self):
+        c = self.controller()
+        found = [{"name": "[TB+] Torrentio\n1080p", "title": "M 1080p x264\n\U0001f4be 2 GB", "url": "https://tb/auto"}]
+        popen, _ = self.worker(c, found=found, healthy=False)
+        self.assertEqual(popen.call_args.args[0][-1], "https://tb/auto")
+        self.eng_holder["eng"].create.assert_not_called()
+
+    def test_browse_find_title_continue_actions(self):
+        c = self.controller()
+        metas = [{"id": "tt1", "type": "movie", "name": "A", "releaseInfo": "1999-2001", "poster": "p", "extra": 1}] * 60
+        with mock.patch.object(server.addons, "catalog", return_value=metas) as cat:
+            out = c.action("browse", {"type": "movie", "skip": 20})
+        cat.assert_called_once_with("movie", "top", skip=20)
+        self.assertEqual(len(out["items"]), 50)
+        self.assertEqual(out["items"][0], {"id": "tt1", "type": "movie", "name": "A", "year": "1999", "poster": "p"})
+        for bad in ({"type": "tv"}, {"type": "movie", "skip": -1}):
+            with self.assertRaises(ValueError):
+                c.action("browse", bad)
+        with mock.patch.object(server.addons, "catalog", side_effect=server.addons.AddonError("down")):
+            with self.assertRaises(RuntimeError):
+                c.action("browse", {"type": "movie"})
+
+        def search(kind, q):
+            if kind == "series":
+                raise server.addons.AddonError("x")
+            return [{"id": "tt2", "type": "movie", "name": q, "year": 2020}]
+        with mock.patch.object(server.addons, "search", side_effect=search):
+            out = c.action("find", {"query": "  dune "})
+            self.assertEqual((out["movies"][0]["name"], out["movies"][0]["year"], out["series"]), ("dune", "2020", []))
+        with mock.patch.object(server.addons, "search", side_effect=server.addons.AddonError("x")):
+            with self.assertRaises(RuntimeError):
+                c.action("find", {"query": "dune"})
+        for bad in ("   ", "x" * 81, None):
+            with self.assertRaises(ValueError):
+                c.action("find", {"query": bad})
+
+        meta = {"id": "tt3", "name": "Show", "releaseInfo": "2010", "runtime": "45 min", "genres": ["Drama"],
+                "videos": [{"season": 0, "episode": 1, "name": "Sp"}, {"season": 2, "episode": 1, "name": "B"},
+                           {"season": 1, "episode": 2, "name": "A2"}, {"season": 1, "episode": 1, "name": "A1", "released": "r"}]}
+        with mock.patch.object(server.addons, "meta", return_value=meta), \
+                mock.patch.object(server.history, "resume_position", return_value=42.0):
+            out = c.action("title", {"type": "series", "id": "tt3"})
+            self.assertEqual([s["season"] for s in out["seasons"]], [1, 2, 0])
+            self.assertEqual([e["episode"] for e in out["seasons"][0]["episodes"]], [1, 2])
+            self.assertEqual((out["resume"], out["runtime"], out["genres"], out["type"]), (0, "45 min", ["Drama"], "series"))
+            out = c.action("title", {"type": "movie", "id": "tt3"})
+            self.assertEqual(out["resume"], 42.0)
+            self.assertNotIn("seasons", out)
+        with self.assertRaises(ValueError):
+            c.action("title", {"type": "movie", "id": "bad"})
+
+        entry = {"id": "tt3", "type": "series", "name": "Show", "poster": "p", "season": 1, "episode": 2,
+                 "position": 10.0, "duration": 100.0, "video_id": "tt3:1:2"}
+        with mock.patch.object(server.history, "continue_watching", return_value=[entry]):
+            row = c.action("continue", {})["items"][0]
+        self.assertEqual((row["id"], row["season"], row["episode"], row["position"], row["duration"]), ("tt3", 1, 2, 10.0, 100.0))
+        self.assertNotIn("video_id", row)
+
     def test_audio_action_sets_aid_only_while_playing(self):
         c = self.controller()
         with mock.patch.object(server, "playback", return_value={"active": False}):
@@ -350,9 +427,22 @@ class LifecycleTests(unittest.TestCase):
         c = self.controller()
         with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv", side_effect=OSError), \
                 mock.patch.object(server.threading, "Thread"):
-            self.assertEqual(c.action("open_search", {}), {"ok": True})
+            self.assertEqual(c.action("open_search", {}), {"ok": True, "target": "home"})
         self.assertEqual((c.app, self.ui()["screen"]), ("home", "search"))
         self.assertIn("ts", self.ui())
+
+    def test_open_search_stays_on_youtube(self):
+        c = self.controller()
+        c.app = "youtube"
+        with mock.patch.object(server, "window_for", return_value={"id": "0x9"}), mock.patch.object(server, "activate") as act, \
+                mock.patch.object(server, "command") as cmd, mock.patch.object(c, "select") as select, \
+                mock.patch.object(c, "_ui_request") as ui:
+            self.assertEqual(c.action("open_search", {}), {"ok": True, "target": "youtube"})
+        act.assert_called_once_with({"id": "0x9"})
+        cmd.assert_called_once_with(["xdotool", "key", "--clearmodifiers", "s"], check=False)
+        select.assert_not_called()
+        ui.assert_not_called()
+        self.assertEqual(c.app, "youtube")
 
     def test_select_home_requests_home_and_ts_increases(self):
         c = self.controller()

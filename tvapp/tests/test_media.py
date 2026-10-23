@@ -92,6 +92,33 @@ class StreamTests(unittest.TestCase):
         self.assertTrue(streams.parse({"title": "M 1080p x264 10bit\n\U0001f464 5", "infoHash": "d" * 40})["ten_bit"])
 
 
+class DebridStreamTests(unittest.TestCase):
+    TB = {"name": "[TB+] Torrentio\n1080p", "title": "Movie 1080p WEB-DL x264\n\U0001f4be 2 GB", "url": "https://tb.example/dl/abc"}
+
+    def test_parse_cached_and_uncached_torbox(self):
+        hit = streams.parse(self.TB)
+        self.assertEqual((hit["url"], hit["direct"], hit["cached"], hit["info_hash"]), (self.TB["url"], True, True, ""))
+        self.assertTrue(hit["label"].endswith("TorBox ⚡"))
+        self.assertNotIn("seeds", hit["label"])
+        miss = streams.parse(dict(self.TB, name="[TB download] Torrentio\n1080p"))
+        self.assertEqual((miss["direct"], miss["cached"]), (True, False))
+        self.assertTrue(miss["label"].endswith("Debrid (not cached)"))
+        self.assertTrue(streams.parse(dict(self.TB, name="TorBox\n1080p"))["cached"])
+        self.assertFalse(streams.parse(dict(self.TB, name="TorBox download"))["cached"])
+        self.assertIsNone(streams.parse(dict(self.TB, url="ftp://x/y"))["url"])
+        tor = streams.parse({"title": "M 1080p\n\U0001f464 5", "infoHash": "d" * 40})
+        self.assertEqual((tor["url"], tor["direct"], tor["cached"]), (None, False, False))
+        self.assertTrue(tor["label"].endswith("5 seeds"))
+
+    def test_rank_cached_then_torrent_then_uncached(self):
+        cached = streams.parse(dict(self.TB, name="[TB+] Torrentio\n720p", title="M 720p\n\U0001f4be 1 GB"))
+        uncached = streams.parse(dict(self.TB, name="[TB download] Torrentio\n2160p", title="M 2160p\n\U0001f4be 1 GB"))
+        torrent = streams.parse({"name": "T\n1080p", "title": "M 1080p\n\U0001f464 50 \U0001f4be 2 GB", "infoHash": "d" * 40})
+        junk = streams.parse({"name": "x", "title": "nothing"})
+        ranked = streams.rank([uncached, torrent, junk, cached], config.load())
+        self.assertEqual([r["cached"] or r["info_hash"] and "t" or "u" for r in ranked], [True, "t", "u"])
+
+
 class SubsTests(unittest.TestCase):
     def test_pick_normalises_and_limits(self):
         lst = [{"url": f"https://s/{i}", "lang": lang} for i, lang in

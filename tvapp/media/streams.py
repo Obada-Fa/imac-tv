@@ -8,6 +8,7 @@ UNITS = {"KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12}
 BAD = re.compile(r"\b(cam|hdcam|camrip|ts|hdts|telesync|tc|telecine|scr|screener|dvdscr|workprint)\b", re.I)
 SOURCES = (("REMUX", r"remux"), ("BluRay", r"blu-?ray|bdrip|brrip|bdremux"), ("WEB-DL", r"web-?dl|webrip|web\b"),
            ("HDTV", r"hdtv"), ("DVDRip", r"dvd"))
+CACHED = re.compile(r"\[(TB|RD|AD|PM|DL)\+\]|⚡|instant", re.I)
 CODECS = (("AV1", r"\bav1\b"), ("HEVC", r"x265|hevc|h\.?265"), ("H264", r"x264|avc|h\.?264"))
 
 
@@ -35,8 +36,13 @@ def parse(stream):
     source = next((label for label, pattern in SOURCES if re.search(pattern, text, re.I)), "")
     codec = next((label for label, pattern in CODECS if re.search(pattern, text, re.I)), "")
     idx = stream.get("fileIdx")
+    url = stream.get("url")
+    url = url if isinstance(url, str) and re.match(r"https?://", url, re.I) else None
+    cached = bool(url) and bool(CACHED.search(name) or CACHED.search(head)
+                                or (re.search(r"torbox", name, re.I) and not re.search(r"download", name, re.I)))
     out = {"info_hash": str(stream.get("infoHash") or "").lower(),
            "file_idx": idx if isinstance(idx, int) and not isinstance(idx, bool) and idx >= 0 else None,
+           "url": url, "direct": bool(url), "cached": cached,
            "title": head.strip(),
            "quality": _quality(name, title),
            "hdr": bool(re.search(r"\bhdr(10)?\b", text, re.I)),
@@ -61,7 +67,10 @@ def label(src):
         parts.append(src["source"])
     if src["size_bytes"]:
         parts.append(f"{src['size_bytes'] / 1e9:.1f} GB" if src["size_bytes"] >= 1e8 else f"{src['size_bytes'] / 1e6:.0f} MB")
-    parts.append(f"{src['seeders']} seeds")
+    if src.get("direct"):
+        parts.append("TorBox ⚡" if src.get("cached") else "Debrid (not cached)")
+    else:
+        parts.append(f"{src['seeders']} seeds")
     return " · ".join(parts)
 
 
@@ -69,16 +78,19 @@ def rank(sources, cfg):
     order = cfg.get("quality_order", [])
     codecs = cfg.get("codec_order", ["H264", "", "HEVC", "AV1"])
     limit = cfg.get("max_size_gb", 25) * 1e9
-    good = [s for s in sources if len(s.get("info_hash") or "") == 40 and not BAD.search(s.get("title", ""))
+    good = [s for s in sources if (len(s.get("info_hash") or "") == 40 or s.get("url")) and not BAD.search(s.get("title", ""))
             and s.get("quality") != "cam" and s.get("size_bytes", 0) <= limit]
 
     def key(s):
         # Quality first: a live 1080p always beats better-seeded 4K/720p; dead torrents (<2 seeds) go last.
+        direct = bool(s.get("url"))
+        group = (0 if s.get("cached") else 2) if direct else 1
+        seeders = 0 if direct else s["seeders"]
         q = order.index(s["quality"]) if s["quality"] in order else len(order)
         # Old/weak CPUs decode H.264 in hardware; HEVC (esp. 10-bit/HDR) and AV1 fall back to the CPU and stutter.
         c = codecs.index(s.get("codec", "")) if s.get("codec", "") in codecs else len(codecs)
         heavy = bool(s.get("ten_bit") or s.get("hdr") or s.get("dv"))
-        return (s["seeders"] < 2, q, c, heavy, s["seeders"] < 5, -s["seeders"])
+        return (group, seeders < 2, q, c, heavy, seeders < 5, -seeders)
     return sorted(good, key=key)
 
 

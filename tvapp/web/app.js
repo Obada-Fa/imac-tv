@@ -1,7 +1,7 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const remote = $('remote'), pair = $('pair'), sheet = $('sheet');
+  const remote = $('remote'), pair = $('pair'), sheet = $('sheet'), browser = $('browser'), tabbar = $('tabbar');
   let state = null, online = false, mode = 'dpad', sheetName = '', draggingSeek = false;
   let draggingBrightness = false, brightnessReason = '';
 
@@ -31,12 +31,13 @@
     online = value;
     $('connection').textContent = label;
     $('connection').classList.toggle('off', !value);
-    document.querySelectorAll('#controls button, footer button, .apps button').forEach(b => b.disabled = !value);
+    document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => b.disabled = !value);
   }
 
   function showPair() {
-    pair.hidden = false; remote.hidden = true; sheet.hidden = true;
+    pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
     connected(false, 'Pair this phone');
+    updateTabbar();
   }
 
   function fmt(seconds) {
@@ -47,8 +48,9 @@
 
   function render(s) {
     state = s;
-    pair.hidden = true; remote.hidden = false;
+    pair.hidden = true;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
+    applyTab();
     const appNames = {home: 'TV Home', youtube: 'YouTube', player: 'Player'};
     const pb = s.playback || {}, name = (s.media && s.media.name) || pb.title;
     $('app-name').textContent = (pb.active || s.phase === 'buffering') && name ? name : (appNames[s.app] || s.app);
@@ -125,7 +127,7 @@
     const c = $('controls');
     if (c.dataset.view !== view) {
       c.dataset.view = view;
-      if (view !== 'browse') closeSearch();
+      if (view !== 'browse') { closeSearch(); showTab('remote'); }
       if (view !== 'playing') { subDelay = 0; sigs = {}; }
     }
     $('browse').hidden = view !== 'browse';
@@ -157,6 +159,10 @@
       $('np-delay').textContent = `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
     }
     $('search-open').classList.toggle('on', searching);
+    const yt = s.app === 'youtube', label = yt ? 'Search YouTube' : 'Type on TV';
+    $('search-open').querySelector('span').textContent = label;
+    $('search-open').setAttribute('aria-label', label);
+    $('search-input').placeholder = yt ? 'Type to search YouTube on the TV' : 'Type to search on the TV';
   }
 
   function closeSearch() {
@@ -186,7 +192,11 @@
   }
   $('search-open').onclick = openSearch;
   $('search-input').addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = setTimeout(flushTyping, 400); });
-  $('search-box').onsubmit = async e => { e.preventDefault(); await flushTyping(); fire('enter'); };
+  $('search-box').onsubmit = async e => {
+    e.preventDefault(); await flushTyping(); fire('enter');
+    // Drop the keyboard so the D-pad is reachable again.
+    $('search-input').value = ''; sent = ''; $('search-input').blur();
+  };
   $('search-del').onclick = async () => {
     const i = $('search-input');
     if (i.value) { i.value = i.value.slice(0, -1); await flushTyping(); } else fire('delete');
@@ -239,7 +249,7 @@
   }
 
   function openSheet(name) {
-    sheetName = name; sheet.hidden = false;
+    sheetName = name; sheet.hidden = false; updateTabbar();
     $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off'}[name];
     const content = $('sheet-content');
     if (name === 'type') {
@@ -301,7 +311,7 @@
     sub.append(row);
   }
 
-  function closeSheet() { sheet.hidden = true; sheetName = ''; }
+  function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
   $('sheet-close').onclick = closeSheet;
   $('mode').onclick = () => setMode(mode === 'pointer' ? 'dpad' : 'pointer');
   // One request per drag: the readout follows the thumb, the TV changes on release.
@@ -433,6 +443,178 @@
       $('pair-error').textContent = err.message;
     }
   }
+
+  // ---- Tabs: Remote / Movies / Series / Search ----
+  let tab = 'remote', titleToken = 0, findFocused = false;
+  try { const t = sessionStorage.getItem('tab'); if (['remote', 'movie', 'series', 'search'].includes(t)) tab = t; } catch (e) {}
+  const loaded = {movie: false, series: false}, items = {movie: [], series: []}, busy = {};
+  let continueItems = null;
+
+  function updateTabbar() {
+    tabbar.hidden = !pair.hidden || !sheet.hidden || findFocused;
+  }
+  function applyTab() {
+    remote.hidden = tab !== 'remote';
+    browser.hidden = tab === 'remote';
+    for (const id of ['movie', 'series', 'search']) $('tab-' + id).hidden = tab !== id;
+    tabbar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+    updateTabbar();
+    if ((tab === 'movie' || tab === 'series') && online && !loaded[tab]) loadTab(tab);
+  }
+  function showTab(name) {
+    if (name === tab) { applyTab(); return; }
+    tab = name;
+    try { sessionStorage.setItem('tab', name); } catch (e) {}
+    applyTab();
+    window.scrollTo(0, 0);
+  }
+  tabbar.querySelectorAll('button').forEach(b => b.onclick = () => { buzz(8); showTab(b.dataset.tab); });
+
+  const data = r => (r && r.result) || {};
+  function posterEl(item) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'poster'; b.disabled = !online;
+    const art = document.createElement('div'); art.className = 'art';
+    if (item.poster) {
+      const img = document.createElement('img');
+      img.loading = 'lazy'; img.alt = ''; img.src = item.poster;
+      img.onerror = () => { img.remove(); art.textContent = item.name || ''; };
+      art.append(img);
+    } else art.textContent = item.name || 'Untitled';
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = item.name || '';
+    b.append(art, nm);
+    if (item.position > 0 && item.duration > 0) {
+      const p = document.createElement('div'); p.className = 'prog';
+      const i = document.createElement('i'); i.style.width = Math.min(100, item.position / item.duration * 100) + '%';
+      p.append(i); b.append(p);
+    }
+    b.onclick = () => { buzz(8); openTitle(item); };
+    return b;
+  }
+  function fill(el, list, append) {
+    if (!append) el.replaceChildren();
+    el.append(...list.map(posterEl));
+  }
+
+  async function loadTab(type, more) {
+    if (busy[type]) return;
+    if (!more && loaded[type]) return;
+    const pane = $(type === 'movie' ? 'tab-movie' : 'tab-series');
+    busy[type] = true;
+    pane.querySelector('.spin').hidden = false;
+    pane.querySelector('.more').hidden = true;
+    try {
+      const jobs = [send('browse', {type, skip: more ? items[type].length : 0})];
+      if (!more && continueItems === null) jobs.push(send('continue').then(r => { continueItems = data(r).items || []; }).catch(() => { continueItems = []; }));
+      const r = await jobs[0];
+      if (!r) throw new Error('Not connected');
+      const list = data(r).items || [];
+      items[type] = more ? items[type].concat(list) : list;
+      fill(pane.querySelector('.grid'), list, more);
+      loaded[type] = true;
+      pane.querySelector('.more').hidden = !list.length;
+      if (jobs[1]) await jobs[1];
+      const cont = (continueItems || []).filter(i => i.type === type);
+      pane.querySelector('.cont').hidden = !cont.length;
+      fill(pane.querySelector('.hrow'), cont, false);
+      if (!list.length && !more && !items[type].length) message('Nothing to show here yet');
+    } catch (e) { /* toast already shown by send() */ }
+    busy[type] = false;
+    pane.querySelector('.spin').hidden = true;
+  }
+  document.querySelectorAll('.pane .more').forEach(b => b.onclick = () => loadTab(b.closest('.pane').dataset.type, true));
+
+  // ---- Title sheet ----
+  async function openTitle(item) {
+    const token = ++titleToken;
+    sheetName = 'title'; sheet.hidden = false; updateTabbar();
+    $('sheet-title').textContent = item.name || 'Title';
+    const content = $('sheet-content');
+    content.innerHTML = '<div class="spin"><div class="spinner"></div></div>';
+    let t;
+    try { t = data(await send('title', {type: item.type, id: item.id})); } catch (e) { if (token === titleToken) closeSheet(); return; }
+    if (token !== titleToken || sheetName !== 'title') return;
+    const el = document.createElement('div'); el.className = 'tsheet';
+    const bg = t.background || t.poster || item.poster;
+    if (bg) { const h = document.createElement('div'); h.className = 'hero'; h.style.backgroundImage = `url("${String(bg).replace(/"/g, '%22')}")`; el.append(h); }
+    const h2 = document.createElement('h2'); h2.textContent = t.name || item.name || ''; el.append(h2);
+    const meta = [t.year || item.year, t.runtime, Array.isArray(t.genres) ? t.genres.join(', ') : t.genres].filter(Boolean).join(' · ');
+    if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; el.append(m); }
+    if (t.description) {
+      const d = document.createElement('p'); d.className = 'desc'; d.textContent = t.description;
+      d.onclick = () => d.classList.toggle('open'); el.append(d);
+    }
+    const type = t.type || item.type, id = t.id || item.id;
+    const play = async params => {
+      buzz(12);
+      try { await send('play_media', Object.assign({type, id}, params)); } catch (e) { return; }
+      closeSheet(); showTab('remote'); refresh();
+    };
+    const btn = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'playbtn'; b.textContent = label; b.disabled = !online; b.onclick = fn; return b; };
+    if (type === 'series') {
+      const seasons = (t.seasons || []).filter(s => s.episodes && s.episodes.length);
+      const chipBox = document.createElement('div'); chipBox.className = 'chips'; chipBox.style.margin = '10px 0';
+      const eps = document.createElement('div'); eps.className = 'eps';
+      let cur = (seasons.find(s => s.season >= 1) || seasons[0] || {}).season;
+      const draw = () => {
+        chipBox.replaceChildren(...seasons.map(s => chip(s.season === 0 ? 'Specials' : `Season ${s.season}`, s.season === cur, () => { cur = s.season; draw(); })));
+        const s = seasons.find(x => x.season === cur);
+        eps.replaceChildren(...((s && s.episodes) || []).map(ep => {
+          const b = document.createElement('button'); b.type = 'button'; b.disabled = !online;
+          const n = document.createElement('b'); n.textContent = ep.episode;
+          const nm = document.createElement('span'); nm.textContent = ep.name || `Episode ${ep.episode}`;
+          b.append(n, nm);
+          if (ep.released) { const r = document.createElement('small'); r.textContent = String(ep.released).slice(0, 10); b.append(r); }
+          b.onclick = () => play({season: cur, episode: ep.episode});
+          return b;
+        }));
+      };
+      if (seasons.length) { draw(); el.append(chipBox, eps); }
+      else { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No episodes found.'; el.append(p); }
+    } else if (t.resume > 0) {
+      el.append(btn(`▶ Resume from ${fmt(t.resume)}`, () => play({})), btn('Start over', () => play({start: 0})));
+    } else {
+      el.append(btn('▶ Play on TV', () => play({})));
+    }
+    content.replaceChildren(el);
+  }
+
+  // ---- Search tab: results on the phone, keyboard stays out of the way ----
+  const fi = $('find-input');
+  let findTimer = null, findSeq = 0;
+  fi.addEventListener('focus', () => { findFocused = true; updateTabbar(); });
+  fi.addEventListener('blur', () => { findFocused = false; updateTabbar(); });
+  async function runFind() {
+    clearTimeout(findTimer);
+    const q = fi.value.trim(), seq = ++findSeq;
+    if (q.length < 2) { showFind(null); return; }
+    $('find-spin').hidden = false; $('find-empty').textContent = '';
+    try {
+      const r = data(await send('find', {query: q}));
+      if (seq !== findSeq) return;
+      showFind(r);
+    } catch (e) { if (seq === findSeq) showFind(null); }
+  }
+  function showFind(r) {
+    $('find-spin').hidden = true;
+    const movies = (r && r.movies) || [], series = (r && r.series) || [];
+    fill($('find-movies').querySelector('.grid'), movies, false);
+    fill($('find-series').querySelector('.grid'), series, false);
+    $('find-movies').hidden = !movies.length; $('find-series').hidden = !series.length;
+    $('find-empty').textContent = r && !movies.length && !series.length ? 'No results' : '';
+  }
+  fi.addEventListener('input', () => {
+    $('find-clear').hidden = !fi.value;
+    clearTimeout(findTimer);
+    if (fi.value.trim().length < 2) { findSeq++; showFind(null); return; }
+    findTimer = setTimeout(runFind, 450);
+  });
+  $('find-form').onsubmit = e => { e.preventDefault(); fi.blur(); runFind(); };
+  $('find-clear').onclick = () => { fi.value = ''; $('find-clear').hidden = true; findSeq++; clearTimeout(findTimer); showFind(null); };
+  const results = $('find-results');
+  // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.
+  results.addEventListener('touchstart', () => fi.blur(), {passive: true});
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   checkAutoPair();
