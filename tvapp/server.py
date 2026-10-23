@@ -406,6 +406,7 @@ class Controller:
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
         self._stop_proc()
         if app == "home":
+            self._ui_request("home")
             self._show_home()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
@@ -421,7 +422,9 @@ class Controller:
             return generation == self.generation
 
     def _ui_request(self, screen, media=None):
-        request = {"screen": screen, "ts": time.time()}
+        with self.lock:
+            self.ui_ts = max(time.time(), getattr(self, "ui_ts", 0) + 0.001)
+            request = {"screen": screen, "ts": self.ui_ts}
         if media:
             request["media"] = media
         self._save_json(self.ui_path, request)
@@ -445,27 +448,30 @@ class Controller:
                 LOG.exception("Could not save watch history")
 
     def _end_playback(self):
-        """Idempotent teardown: final history record, quit mpv, drop the torrent. True if a session was ended."""
-        if not self.session and not self._mpv_active():
+        """Idempotent teardown: final history record, quit mpv, drop the torrent. True if this call ended a session."""
+        with self.lock:
+            session, self.session = self.session, None
+        if not session and not self._mpv_active():
             return False
-        try:
-            if self.session:
+        if session:
+            try:
                 pos, dur = mpv("get_property", "time-pos"), mpv("get_property", "duration")
-                with self.lock:
-                    if self.session:
-                        if isinstance(pos, (int, float)):
-                            self.session["pos"] = float(pos)
-                        if isinstance(dur, (int, float)) and dur > 0:
-                            self.session["dur"] = float(dur)
-        except (OSError, RuntimeError, ValueError, TimeoutError):
-            pass
-        self._record()
+                if isinstance(pos, (int, float)):
+                    session["pos"] = float(pos)
+                if isinstance(dur, (int, float)) and dur > 0:
+                    session["dur"] = float(dur)
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                pass
+            entry = dict(session["entry"], position=session["pos"], duration=session["dur"])
+            if entry["position"] > 0 or entry["duration"] > 0:
+                try:
+                    history.record(entry)
+                except (OSError, ValueError):
+                    LOG.exception("Could not save watch history")
         try:
             mpv("quit")
         except (OSError, RuntimeError, ValueError, TimeoutError):
             pass
-        with self.lock:
-            session, self.session = self.session, None
         self._stop_proc()
         if session:
             session["engine"].remove(session["info_hash"])

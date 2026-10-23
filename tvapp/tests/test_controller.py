@@ -330,6 +330,26 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual((c.app, self.ui()["screen"]), ("home", "search"))
         self.assertIn("ts", self.ui())
 
+    def test_select_home_requests_home_and_ts_increases(self):
+        c = self.controller()
+        c.session = None
+        with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv", side_effect=OSError), \
+                mock.patch.object(server.threading, "Thread"):
+            c.select("home")
+            first = self.ui()
+            c.action("open_search", {})
+        self.assertEqual(first["screen"], "home")
+        self.assertEqual(self.ui()["screen"], "search")
+        self.assertGreater(self.ui()["ts"], first["ts"])
+
+    def test_end_playback_runs_once(self):
+        c = self.controller()
+        with mock.patch.object(server, "mpv", return_value=None):
+            self.assertTrue(c._end_playback())
+            with mock.patch.object(server, "playback", return_value={"active": False}):
+                self.assertFalse(c._end_playback())
+        self.eng.remove.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
