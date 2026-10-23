@@ -470,7 +470,8 @@ class LifecycleTests(unittest.TestCase):
         with mock.patch.object(server.nowplaying, "control") as ctl, mock.patch.object(server.nowplaying, "current", return_value=state), \
                 mock.patch.object(server.time, "sleep"):
             c._yt_cache = (server.time.monotonic(), None)
-            self.assertEqual(c.action("youtube_media", {"cmd": "play_pause"}), {"youtube_now": state})
+            self.assertEqual(c.action("youtube_media", {"cmd": "play_pause"}),
+                             {"youtube_now": dict(state, youtube_mode="video", youtube_reason="no music signal")})
         ctl.assert_called_once_with("play_pause", None)
 
     def test_youtube_media_seek_and_set_position_validate_and_clamp(self):

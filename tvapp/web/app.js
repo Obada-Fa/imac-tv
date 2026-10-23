@@ -164,6 +164,15 @@
     $('yt-next').hidden = yt.can_next === false;
     $('yt-play').hidden = yt.can_pause === false;
     if (Date.now() > ytPending) { $('yt-play').textContent = yt.status === 'Playing' ? '⏸' : '▶'; }
+    const mode = $('yt-mode'), known = !open && (yt.youtube_mode === 'music' || yt.youtube_mode === 'video');
+    mode.hidden = !known;
+    if (known) {
+      mode.dataset.mode = yt.youtube_mode === 'music' ? 'video' : 'music';
+      mode.textContent = yt.youtube_mode === 'music' ? '📺 Show video' : '🎵 Show visualizer';
+      const who = document.createElement('small');
+      who.textContent = 'always, for this channel';
+      mode.appendChild(who);
+    }
   }
   async function ytSend(params, onFail) {
     try { const r = await send('youtube_media', params); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
@@ -188,6 +197,11 @@
     if (ytState) { ytState.position = position; ytAt = Date.now(); }
     ytSend({cmd: 'set_position', position}).then(() => { ytDragging = false; });
   });
+  $('yt-mode').onclick = async () => {
+    buzz(8);
+    try { const r = await send('youtube_mode', {mode: $('yt-mode').dataset.mode}); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
+    catch (e) {}
+  };
   [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { buzz(8); send('select', {app: 'youtube'}).catch(() => {}); });
 
   // Playback prompts: each button is one server action; the TV answers the same prompts with OK / Back.
@@ -362,7 +376,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       buzz(8);
-      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);

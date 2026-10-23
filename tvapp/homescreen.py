@@ -85,10 +85,15 @@ class IdleTracker:
         return False
 
 
-def idle_delay(quiet, music, state):
-    """Seconds of no input before ambient: shorter while YouTube plays in the background."""
-    playing = bool(state and state.get("status") == "Playing")
-    return min(quiet, music) if playing else quiet
+MUSIC_IDLE = 15.0       # seconds before the visualizer when YouTube plays music behind Home
+
+
+def idle_delay(quiet, music, state, audio=MUSIC_IDLE):
+    """Seconds of no input before ambient: shorter while YouTube plays in the background, shortest for music
+    (the server's youtube_mode). Never longer than the quiet delay."""
+    if not (state and state.get("status") == "Playing"):
+        return quiet
+    return min(quiet, audio if state.get("youtube_mode") == "music" else music)
 
 
 def search_scope(sname):
@@ -707,6 +712,9 @@ class AmbientHomeScreen(Screen):
         def work():
             try:
                 state = nowplaying.current()
+                if state and hasattr(nowplaying, "read_mode"):
+                    mode, _reason = nowplaying.read_mode(screens.DATA, state)
+                    state = dict(state, youtube_mode=mode)
             except Exception:
                 state = None
             GLib.idle_add(self.set_now, state)
@@ -723,6 +731,8 @@ class AmbientHomeScreen(Screen):
             if self.cont:
                 self.cont.set_now(state, auto_focus=self.auto_focus)
             self.update_bottom_label()
+        elif state:
+            self.now_state = state          # same track; the music/video answer may have arrived
         return False
 
     def update_bottom_label(self):

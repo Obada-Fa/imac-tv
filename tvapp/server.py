@@ -27,6 +27,10 @@ BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 import nowplaying
+try:
+    import display
+except Exception:  # pragma: no cover
+    display = None
 from media import segments as media_segments, upnext
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
@@ -417,6 +421,14 @@ class Controller:
         self.audio_warning = None
         self._yt_paused_since = None
         self._yt_check_at = 0.0
+        self.yt = nowplaying.Classifier()
+        self._yt_modes = (None, {})     # (home.json mtime, youtube_modes)
+        self._yt_key = None             # track the decision below belongs to
+        self._yt_decided = (None, None, False)
+        self._yt_popped = None          # track VacuumTube was brought up for
+        self._yt_dismissed = None       # track the user sent back to Home
+        self._yt_busy = False
+        self._yt_tick_at = 0.0
         threading.Thread(target=self._watch, daemon=True).start()
 
     @staticmethod
@@ -606,6 +618,9 @@ class Controller:
             if time.monotonic() - self._yt_check_at >= 60:
                 self._yt_check_at = time.monotonic()
                 threading.Thread(target=self._close_youtube_if_long_paused, daemon=True).start()
+            if time.monotonic() - self._yt_tick_at >= self.YT_TICK and not self._yt_busy:
+                self._yt_tick_at, self._yt_busy = time.monotonic(), True
+                threading.Thread(target=self._youtube_tick, daemon=True).start()
             self.renew_pairing()
             with self.lock:
                 deadline = self.timer.get("deadline")
@@ -676,6 +691,7 @@ class Controller:
             raise ValueError("Unknown app")
         self._end_playback()
         with self.lock:
+            previous = self.app
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
@@ -683,12 +699,121 @@ class Controller:
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
         self._stop_proc()
         if app == "home":
+            with self.lock:
+                if previous == "youtube":     # the user left YouTube: don't bring this track back up
+                    self._yt_dismissed = self._yt_key
             self._ui_request("home")
             self._show_home()
             self._minimize_youtube()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
+
+    YT_TICK = 3.0
+
+    def _youtube_overrides(self):
+        """youtube_modes from home.json, re-read only when the file changed."""
+        try:
+            mtime = (DATA / "home.json").stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime != self._yt_modes[0]:
+            self._yt_modes = (mtime, nowplaying.load_modes(DATA))
+        return self._yt_modes[1]
+
+    def _youtube_classify(self, state):
+        """(mode, reason, pending) for this now-playing state; never blocks. Remembers the answer for Home."""
+        key = nowplaying.track_key(state)
+        if not key:
+            return None, None, False
+        decided = self.yt.mode(state, self._youtube_overrides())
+        with self.lock:
+            changed = (key, decided[:2]) != (self._yt_key, self._yt_decided[:2])
+            self._yt_key, self._yt_decided = key, decided
+        if changed:
+            try:
+                nowplaying.write_mode_file(DATA, key, decided[0], decided[1])
+            except OSError:
+                LOG.exception("Could not save the YouTube mode")
+        return decided
+
+    def _movie_active(self):
+        with self.lock:
+            if self.session is not None or self.phase == "buffering" or self.app == "player":
+                return True
+        return self._mpv_active()
+
+    def _screen_live(self):
+        if display is None:
+            return True
+        try:
+            display.watch.poll()
+            return display.watch.live
+        except Exception:
+            return True
+
+    def _youtube_tick(self):
+        """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
+        try:
+            state = self.youtube_now()
+            mode, _reason, pending = self._youtube_classify(state)
+            key = nowplaying.track_key(state)
+            with self.lock:
+                app, dismissed, popped = self.app, self._yt_dismissed, self._yt_popped
+            if mode != "video" or app != "home" or pending:
+                return
+            if nowplaying.pop_up(mode, key, app=app, status=(state or {}).get("status"), movie=self._movie_active(),
+                                 screen_live=self._screen_live(), dismissed=dismissed, popped=popped, pending=pending):
+                self._pop_youtube(key)
+        except Exception:
+            LOG.exception("YouTube mode check failed")
+        finally:
+            self._yt_busy = False
+
+    def _pop_youtube(self, key):
+        """A video is playing behind Home: bring VacuumTube up, un-minimized and fullscreen."""
+        win = window_for("youtube")
+        if not win:
+            return False
+        with self.lock:
+            if self.app != "home":
+                return False
+            self.generation += 1
+            self.app, self.phase, self.error = "youtube", "ready", ""
+            self._yt_popped = key
+            self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "youtube"})
+        LOG.info("YouTube is playing a video; showing it")
+        command(["wmctrl", "-i", "-r", win["id"], "-b", "remove,hidden"], check=False)
+        activate(win)
+        return True
+
+    def set_youtube_mode(self, mode):
+        """Phone toggle: force the current track's mode and remember it for this channel."""
+        if mode not in nowplaying.MODES:
+            raise ValueError("Mode must be music or video")
+        with self.lock:
+            self._yt_cache = None
+        state = self.youtube_now()
+        key = nowplaying.track_key(state)
+        if not key:
+            raise RuntimeError("Nothing is playing on YouTube")
+        artist = (state or {}).get("artist") or (state or {}).get("title")
+        self._yt_modes = (None, nowplaying.save_mode(DATA, artist, mode))
+        self._youtube_classify(state)
+        if mode == "video":
+            with self.lock:
+                self._yt_dismissed = None
+                app = self.app
+            if app == "home" and not self._movie_active():
+                self._pop_youtube(key)
+        else:
+            with self.lock:
+                app = self.app
+            if app == "youtube":
+                self.select("home")
+        with self.lock:
+            self._yt_cache = None
+        return {"youtube_now": self.youtube_now(), "app": self.app}
 
     def _minimize_youtube(self):
         """YouTube keeps playing behind Home: minimize it (only once Home is up) so the video isn't rendered.
@@ -1290,6 +1415,9 @@ class Controller:
             value = nowplaying.current()
         except Exception:
             value = None
+        if value and nowplaying.track_key(value):
+            mode, reason, _pending = self._youtube_classify(value)
+            value = dict(value, youtube_mode=mode, youtube_reason=reason)
         with self.lock:
             self._yt_cache = (time.monotonic(), value)
         return value
@@ -1325,6 +1453,7 @@ class Controller:
         except Exception:
             gui = False
         player = playback()
+        yt_now = self.youtube_now()
         cpu_temp = max(temps) if temps else None
         gpu_temp = max(gpu_temps) if gpu_temps else None
         win = window_for(app) if gui else None
@@ -1338,7 +1467,9 @@ class Controller:
                 "audio_warning": self.audio_warning,
                 "old_link_active": bool(self.legacy_secret),
                 "torbox": {"configured": bool(media_config.read_key())},
-                "playback": player, "remote": self.remote_state(), "youtube_now": self.youtube_now(), **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
+                "playback": player, "remote": self.remote_state(), "youtube_now": yt_now,
+                "youtube_mode": (yt_now or {}).get("youtube_mode"), "youtube_reason": (yt_now or {}).get("youtube_reason"),
+                **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
                 "brightness": brightness(), "screen_off": screen_blanked(),
                 "fullscreen": bool(win) and fullscreen_state(win["id"]),
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
@@ -1462,6 +1593,8 @@ class Controller:
                     return {"ok": True, "ignored": True}
                 self._ui_request(screen)
                 return {"ok": True}
+            if action == "youtube_mode":
+                return self.set_youtube_mode(params.get("mode"))
             if action == "youtube_media":
                 cmd = params.get("cmd")
                 if cmd not in nowplaying.COMMANDS:
