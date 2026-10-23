@@ -2,11 +2,9 @@
 """Artwork-led, remote-friendly TV Home for iMac TV."""
 import datetime
 import fcntl
-import io
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import threading
@@ -20,13 +18,11 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
-                     HomeScreen, BrowseScreen, SearchScreen, DetailsScreen, SourcesScreen,
+                     BrowseScreen, SearchScreen, DetailsScreen, SourcesScreen,
                      BufferingOverlay, Toast, BACK_KEYS, ARROWS)
-
-try:
-    import qrcode
-except ImportError:
-    qrcode = None
+from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
+from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code  # noqa: E402,F401
+from widgets import pairing as pairing_ui  # noqa: E402
 
 BASE = Path(__file__).resolve().parent
 DATA = screens.DATA
@@ -82,90 +78,7 @@ window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "
 .progress progress {{ min-height: {round(6 * scale)}px; background: #fff; }}
 .tv-scrollbar {{ opacity: 0; }}
 button {{ outline: none; }}
-""".encode() + screens.build_css(scale).encode()
-
-
-def get_network_info():
-    """Discover active LAN IP, connection type (Wi-Fi/Ethernet), and Wi-Fi signal/SSID."""
-    info = {"connected": False, "type": "none", "ssid": "", "signal": 0, "ip": "127.0.0.1"}
-
-    try:
-        route_out = subprocess.check_output(["ip", "route", "get", "1.1.1.1"], text=True, timeout=1)
-        m = re.search(r"src\s+([0-9\.]+)", route_out)
-        if m:
-            info["ip"] = m.group(1)
-    except Exception:
-        pass
-    if info["ip"] == "127.0.0.1":
-        try:
-            ips = subprocess.check_output(["hostname", "-I"], text=True, timeout=1).split()
-            for ip in ips:
-                if ip.startswith(("192.168.", "10.", "172.")) and not ip.startswith(("172.17.", "172.18.")):
-                    info["ip"] = ip
-                    break
-        except Exception:
-            pass
-
-    try:
-        wf_out = subprocess.check_output(
-            ["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "device", "wifi", "list", "--rescan", "no"],
-            text=True, timeout=1
-        )
-        for line in wf_out.strip().splitlines():
-            if line.startswith("yes:"):
-                parts = line.split(":")
-                if len(parts) >= 3:
-                    info["connected"] = True
-                    info["type"] = "wifi"
-                    info["ssid"] = parts[1]
-                    try:
-                        info["signal"] = int(parts[2])
-                    except ValueError:
-                        info["signal"] = 75
-                    break
-    except Exception:
-        pass
-
-    if info["type"] != "wifi":
-        try:
-            dev_out = subprocess.check_output(
-                ["nmcli", "-t", "-f", "TYPE,STATE", "device"],
-                text=True, timeout=1
-            )
-            for line in dev_out.strip().splitlines():
-                if line.startswith("ethernet:connected"):
-                    info["connected"] = True
-                    info["type"] = "ethernet"
-                    break
-        except Exception:
-            pass
-
-    if info["type"] == "none" and info["ip"] != "127.0.0.1":
-        info["connected"] = True
-
-    return info
-
-
-def make_qr_pixbuf(text, size=320):
-    """Generate in-memory GdkPixbuf QR code."""
-    if not qrcode:
-        return None
-    try:
-        qr = qrcode.QRCode(box_size=6, border=2)
-        qr.add_data(text)
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        loader = GdkPixbuf.PixbufLoader()
-        loader.write(buf.getvalue())
-        loader.close()
-        pb = loader.get_pixbuf()
-        if size and (pb.get_width() != size or pb.get_height() != size):
-            return pb.scale_simple(size, size, GdkPixbuf.InterpType.NEAREST)
-        return pb
-    except Exception:
-        return None
+""".encode() + screens.build_css(scale).encode() + home_css(scale).encode()
 
 
 
@@ -180,6 +93,9 @@ class Home(Gtk.Window):
         self.connect("delete-event", lambda *_: True)
         self.connect("key-press-event", self.on_key_press)
         self.connect("set-focus", self.on_set_focus)
+        self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.connect("motion-notify-event", self.on_pointer)
+        self.connect("button-press-event", self.on_pointer)
         screen = Gdk.Screen.get_default()
         self.sw = screen.get_width()
         self.sh = screen.get_height()
@@ -292,7 +208,7 @@ class Home(Gtk.Window):
     # ---- screens / back stack
     def top_screen(self, name):
         if name not in self.tops:
-            self.tops[name] = {"home": HomeScreen, "search": SearchScreen,
+            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
                                "series": lambda s: BrowseScreen(s, "series")}[name](self)
         return self.tops[name]
@@ -426,8 +342,17 @@ class Home(Gtk.Window):
         screen.last_focus = None
         self.focus_screen(screen)
 
+    def on_pointer(self, *_):
+        screen = self.current()
+        if hasattr(screen, "poke"):
+            screen.poke()
+        return False
+
     def on_key_press(self, _window, event):
         key = Gdk.keyval_name(event.keyval)
+        screen = self.current()
+        if hasattr(screen, "poke") and screen.poke(True) and not self.modal_open:
+            return True  # first key only wakes the ambient screen
         if self.buffering.get_visible():
             if key in BACK_KEYS:
                 self.buffering.hide_now()
@@ -474,13 +399,16 @@ class Home(Gtk.Window):
     def handle_ui_request(self, req):
         name = req.get("screen")
         if name == "search":
+            scope = search_scope(getattr(self.current(), "sname", ""))
             self.goto_top("search")
+            if hasattr(self.tops["search"], "set_scope"):
+                self.tops["search"].set_scope(scope)
             if isinstance(req.get("query"), str):
                 self.tops["search"].set_query(req["query"])
         elif name == "details" and isinstance(req.get("media"), dict) and req["media"].get("id"):
             self.show_media(req["media"])
-        elif name == "home":
-            self.goto_top("home")
+        elif name in ("home", "movies", "series"):
+            self.goto_top(name)
         else:
             return
         self.present()
@@ -501,117 +429,15 @@ class Home(Gtk.Window):
                               media.get("season"), media.get("episode"))
 
     def show_pairing(self):
-        code = "------"
-        try:
-            info = json.loads((DATA / "pairing.json").read_text())
-            if time.time() < info.get("expires", 0):
-                code = str(info.get("code", "------"))
-        except (OSError, ValueError, KeyError):
-            pass
-        if code == "------":
-            res = local_api("/api/pair-status")
-            if res and "code" in res:
-                code = str(res["code"])
-
-        net = get_network_info()
-        ip = net.get("ip", "127.0.0.1")
-        url = f"http://{ip}:8765/?pair={code}"
-
-        dialog = Gtk.Dialog(title="Connect Phone Remote", transient_for=self, modal=True)
-        dialog.set_default_size(round(740 * self.scale), round(800 * self.scale))
-        dialog.get_style_context().add_class("qr-dialog")
-
-        content = dialog.get_content_area()
-        content.set_spacing(round(16 * self.scale))
-        content.set_margin_start(round(36 * self.scale))
-        content.set_margin_end(round(36 * self.scale))
-        content.set_margin_top(round(26 * self.scale))
-        content.set_margin_bottom(round(24 * self.scale))
-
-        title = text_label("Connect Your Phone Remote", "qr-dialog-title")
-        title.set_halign(Gtk.Align.CENTER)
-        content.pack_start(title, False, False, 0)
-
-        sub = text_label("Scan this QR code with your phone camera to pair instantly without typing.", "qr-dialog-sub")
-        sub.set_halign(Gtk.Align.CENTER)
-        content.pack_start(sub, False, False, 0)
-
-        qr_pb = make_qr_pixbuf(url, round(360 * self.scale))
-        qr_frame = Gtk.EventBox()
-        qr_frame.get_style_context().add_class("conn-qr-frame")
-        qr_frame.set_halign(Gtk.Align.CENTER)
-        if qr_pb:
-            qr_img = Gtk.Image.new_from_pixbuf(qr_pb)
-        else:
-            qr_img = Gtk.Label(label="QR Code")
-        qr_frame.add(qr_img)
-        content.pack_start(qr_frame, False, False, round(10 * self.scale))
-
-        code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=round(6 * self.scale))
-        code_box.set_halign(Gtk.Align.CENTER)
-
-        formatted_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
-        code_lbl = text_label(f"Pairing Code:  {formatted_code}", "qr-dialog-code")
-        code_lbl.set_halign(Gtk.Align.CENTER)
-        code_box.pack_start(code_lbl, False, False, 0)
-
-        url_lbl = text_label(f"Or open browser:  http://{ip}:8765", "qr-dialog-url")
-        url_lbl.set_halign(Gtk.Align.CENTER)
-        code_box.pack_start(url_lbl, False, False, 0)
-
-        note_lbl = text_label("Rotating security code automatically refreshes every 5 minutes.", "section-note")
-        note_lbl.set_halign(Gtk.Align.CENTER)
-        code_box.pack_start(note_lbl, False, False, round(4 * self.scale))
-
-        content.pack_start(code_box, False, False, 0)
-
-        close_btn = Gtk.Button(label="Done / Close")
-        close_btn.get_style_context().add_class("hero-primary")
-        close_btn.set_halign(Gtk.Align.CENTER)
-        close_btn.connect("clicked", lambda *_: dialog.response(Gtk.ResponseType.CLOSE))
-        content.pack_start(close_btn, False, False, round(10 * self.scale))
-
-        content.show_all()
-        close_btn.grab_focus()
-
-        dialog.connect("key-press-event", lambda _w, e: dialog.response(Gtk.ResponseType.CLOSE) if Gdk.keyval_name(e.keyval) in ("Escape", "BackSpace", "XF86Back") else False)
-
-        self.modal_open = True
-        dialog.run()
-        self.modal_open = False
-        dialog.destroy()
-        self.ensure_focus()
+        pairing_ui.show_dialog(self)
 
     def confirm_off(self):
-        dialog = Gtk.MessageDialog(transient_for=self, modal=True,
-                                   message_type=Gtk.MessageType.QUESTION,
-                                   buttons=Gtk.ButtonsType.NONE,
-                                   text="Turn off the iMac?")
-        dialog.format_secondary_text("To use the TV again, press its physical power button.")
-        dialog.add_buttons("Cancel", Gtk.ResponseType.CANCEL,
-                           "Turn off", Gtk.ResponseType.OK)
-        self.modal_open = True
-        answer = dialog.run()
-        self.modal_open = False
-        if answer == Gtk.ResponseType.OK:
-            threading.Thread(target=lambda: cmd("poweroff", {"confirm": True}),
-                              daemon=True).start()
-        dialog.destroy()
+        pairing_ui.confirm_off(self)
 
     def trigger_network_refresh(self):
         def worker():
             net = get_network_info()
-            code = "------"
-            try:
-                info = json.loads((DATA / "pairing.json").read_text())
-                if time.time() < info.get("expires", 0):
-                    code = str(info.get("code", "------"))
-            except (OSError, ValueError, KeyError):
-                pass
-            if code == "------":
-                res = local_api("/api/pair-status")
-                if res and "code" in res:
-                    code = str(res["code"])
+            code = current_code()
             GLib.idle_add(self.update_network_ui, net, code)
         threading.Thread(target=worker, daemon=True).start()
 
