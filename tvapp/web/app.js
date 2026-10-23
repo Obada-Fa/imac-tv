@@ -112,7 +112,14 @@
     pob: 'Portuguese (BR)', rum: 'Romanian', ron: 'Romanian', rus: 'Russian', ru: 'Russian', spa: 'Spanish', es: 'Spanish',
     swe: 'Swedish', sv: 'Swedish', tha: 'Thai', tur: 'Turkish', tr: 'Turkish', ukr: 'Ukrainian', vie: 'Vietnamese', hin: 'Hindi'};
   const PREFERRED = ['Arabic', 'Dutch', 'English'];
-  const langName = t => (t.title && String(t.title).length > 3 ? t.title : '') || LANG[String(t.lang || '').toLowerCase()] || t.title || t.lang || `Track ${t.id}`;
+  // Language first ("English · Surround 5.1"): audio titles are often just the channel layout.
+  const langName = t => {
+    const code = String(t.lang || '').toLowerCase(), title = String(t.title || '').trim();
+    const lang = code && code !== 'und' ? (LANG[code] || code.toUpperCase()) : '';
+    if (lang && title.toLowerCase().startsWith(lang.toLowerCase())) return title;  // "Chinese (Traditional)"
+    const detail = title && title.toLowerCase() !== code ? title : '';
+    return [lang, detail].filter(Boolean).join(' · ') || `Track ${t.id}`;
+  };
   const isPreferred = t => PREFERRED.includes(LANG[String(t.lang || '').toLowerCase()]);
   let sigs = {}, subDelay = 0, searching = false, sent = '', typeTimer = null;
 
