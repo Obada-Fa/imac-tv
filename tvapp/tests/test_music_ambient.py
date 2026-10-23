@@ -150,3 +150,58 @@ class AmbientMusicTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(homescreen is None, "GTK bindings unavailable")
+class QuietFieldTests(unittest.TestCase):
+    def make(self, music):
+        import random
+        from widgets import shapes
+        screen = SimpleNamespace(style="network", idle=SimpleNamespace(ambient=True), chrome=0.0,
+                                 active=lambda: True, shell=SimpleNamespace(sw=1920, sh=1080, scale=1.0),
+                                 rng=random.Random(1), field=None, field_geom=None, field_cells=set(),
+                                 music=music, invalidate_cells=mock.Mock())
+        screen.music_active = lambda: screen.music
+        screen.field_target = lambda: homescreen.AmbientHomeScreen.field_target(screen)
+        return screen
+
+    def test_field_needs_no_photo_trace_and_returns_within_two_seconds_of_music_stopping(self):
+        screen = self.make(True)
+        clock = 0.0
+        for _ in range(10):                                  # music playing: no particles
+            clock += 0.11
+            homescreen.AmbientHomeScreen.step_field(screen, 0.11, clock)
+        self.assertEqual(screen.field.amt, 0.0)
+        self.assertIsNone(screen.field_geom)
+        screen.music = False                                 # music stops at clock
+        stopped = clock
+        while screen.field.amt < 0.95 and clock - stopped < 5:
+            clock += 0.11
+            homescreen.AmbientHomeScreen.step_field(screen, 0.11, clock)
+        self.assertLess(clock - stopped, 2.0)
+        self.assertTrue(screen.field_geom["pts"])
+        screen.idle.ambient = False                          # waking fades it away again
+        for _ in range(15):
+            homescreen.AmbientHomeScreen.step_field(screen, 0.11, clock)
+        self.assertIsNone(screen.field_geom)
+
+
+@unittest.skipIf(homescreen is None, "GTK bindings unavailable")
+class WidgetMusicReportTests(unittest.TestCase):
+    def test_widgets_hear_music_start_and_stop_in_ambient(self):
+        widget = mock.Mock(spec=["on_music"])
+        plain = SimpleNamespace()
+        for style in ("network", "bubbles"):
+            screen = SimpleNamespace(style=style, idle=SimpleNamespace(ambient=True), items=[widget, plain],
+                                     music=True, active=lambda: False, viz_on=False, audio=None,
+                                     chrome=1.0, fake_levels=False)
+            screen.music_active = lambda: screen.music
+            homescreen.AmbientHomeScreen.sync_shapes(screen, 1.0)
+            widget.on_music.assert_called_with(True)
+            screen.music = False
+            homescreen.AmbientHomeScreen.sync_shapes(screen, 2.0)
+            widget.on_music.assert_called_with(False)
+        widget.on_music.reset_mock()
+        screen.idle.ambient = False
+        homescreen.AmbientHomeScreen.sync_shapes(screen, 3.0)
+        widget.on_music.assert_not_called()

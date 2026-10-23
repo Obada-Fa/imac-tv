@@ -237,7 +237,7 @@ class GenerativeVizTests(unittest.TestCase):
         self.assertTrue(all(a == 0 for a in fr["alpha"][m:]))
 
     def test_mode_change_flows_from_where_the_dots_are(self):
-        viz = shapes.Viz(self.base, 1920, 1080, self.rng, modes=["constellation", "wire"])
+        viz = shapes.Viz(self.base, 1920, 1080, self.rng, modes=["constellation", "terrain"])
         before = viz.frame(1.0, self.lv)["pts"]
         viz.switch(t=1.0, lv=self.lv)
         self.assertEqual(viz.mode, "constellation")
@@ -277,3 +277,76 @@ class GenerativeVizTests(unittest.TestCase):
         self.assertGreater(r, b)
         gray = bytes([128, 128, 128, 0] * (w * h))
         self.assertEqual(shapes.palette_from_bgrx(gray, w, h, w * 4), shapes.DEFAULT_PALETTE)
+
+
+class FieldAndEdgeFlowTests(unittest.TestCase):
+    def setUp(self):
+        import random
+        self.rng = random.Random(3)
+
+    def test_field_is_sparse_slow_and_renews_from_outside(self):
+        f = shapes.Field(1920, 1080, self.rng)
+        self.assertTrue(30 <= f.n <= 50)
+        f.step(1.0, 1.0)
+        for q in f.p:
+            self.assertLess(q["v"], 20)                     # a few px/s up to ~14
+        entered = False
+        for _ in range(60 * 9):                             # a minute at ~9 fps
+            f.step(0.11, 1.0)
+            for q in f.p:
+                if q["x"] < -10 or q["x"] > 1930 or q["y"] < -10 or q["y"] > 1090:
+                    entered = True
+        self.assertTrue(entered)                            # particles pass through the outside margin
+        fr = f.frame(1.0)
+        self.assertEqual(len(fr["pts"]), f.n)
+        self.assertTrue(fr["links"])
+        # nothing pops: alpha is ~0 for particles outside the screen
+        for (x, y), a in zip(fr["pts"], fr["alpha"]):
+            if x < -100 or x > 2020 or y < -100 or y > 1180:
+                self.assertLess(a, 0.02)
+
+    def test_field_fades_in_within_two_seconds(self):
+        f = shapes.Field(1920, 1080, self.rng)
+        t = 0.0
+        while t < 1.9:
+            f.step(0.11, 1.0)
+            t += 0.11
+        self.assertGreater(f.amt, 0.99)
+        while t < 4.0:
+            f.step(0.11, 0.0)
+            t += 0.11
+        self.assertEqual(f.amt, 0.0)
+
+    def test_edgeflow_enters_and_leaves_and_music_drives_it(self):
+        mode = shapes.EdgeFlowMode(shapes.VIZ_N, 1920, 1080, self.rng)
+        quiet = {"bass": 0.0, "mid": 0.0, "treble": 0.0}
+        loud = {"bass": 0.9, "mid": 0.8, "treble": 0.6}
+        seen_out = False
+        for f in range(15 * 60):
+            mode.step(1 / 15, quiet)
+            mode.points(f / 15, quiet)
+            seen_out = seen_out or any(not (0 <= x <= 1920 and 0 <= y <= 1080) and l
+                                       for x, y, l in zip(mode.px, mode.py, mode.live))
+        self.assertTrue(seen_out)
+        n_quiet = sum(a > 0.1 for a in mode.alpha)
+        for f in range(15 * 40):
+            mode.step(1 / 15, loud)
+        self.assertGreater(sum(a > 0.1 for a in mode.alpha), n_quiet)
+        self.assertTrue(mode.links())
+
+    def test_rotation_prefers_edgeflow_and_drops_centred_styles(self):
+        import collections
+        self.assertEqual(shapes.MODE_WEIGHTS["edgeflow"], max(shapes.MODE_WEIGHTS.values()))
+        for gone in ("rings", "wire", "orbits"):
+            self.assertNotIn(gone, shapes.VIZ_MODES)
+        base = shapes.wave_shape()
+        base["pts"] = [(x * 1920, y * 1080) for x, y in base["pts"]]
+        viz = shapes.Viz(base, 1920, 1080, self.rng, every=2)
+        seen = collections.Counter()
+        last = None
+        for f in range(15 * 2 * 90):
+            viz.step(1 / 15, {"bass": 0.3, "mid": 0.3, "treble": 0.2, "beat": 0}, t=f / 15)
+            if viz.mode != last:
+                seen[viz.mode] += 1
+                last = viz.mode
+        self.assertEqual(seen.most_common(1)[0][0], "edgeflow")

@@ -33,17 +33,21 @@ the physical power button is required to start the iMac again.
 
 Home keeps its rotating photo background, clock and launcher widgets during normal use. After the
 idle delay (`ambient.idle`, 120 s; `ambient.idle_music`, 30 s, while YouTube plays in the background)
-the tiles fade away, the clock shrinks, and the sharp photo stays with its caption. The drifting dots
-glide onto the photo's traced sky-line and hold still (no timer runs).
+the tiles fade away, the clock shrinks, and the sharp photo stays with its caption. With no music the
+screen is calm but never empty: about 40 particles drift a few px/s, entering from outside the screen
+edges and leaving again, with thin links between near neighbours (~9 fps, dirty regions only; it works on
+every photo). When the photo has a traced sky-line the dots also glide onto it and hold still.
 
 While music plays (YouTube's now-playing status, or sound on the speaker monitor) the photo dims a
-little and the dots become a generative visualizer: the sky-line starts to move, then every track
-(and every minute or so) the dots flow into another randomly chosen mode: a re-linking
-constellation, a turning wireframe sphere or torus, counter-rotating rings, orbits with streaks, a
-rolling low-poly terrain, or a Quick, Draw! animal. Beats send light along the edges; colours come
-from the photo. When the music stops it flows back onto the still sky-line. The caption shows the
-song and artist while playback metadata is available. The first remote or keyboard input wakes Home
-and is swallowed.
+little and the visualizer runs as a background, not a centrepiece. The sky-line starts to move, then every
+track (and every minute or so) the dots flow into a randomly chosen style, weighted: edge flow 6 (dots,
+triangles, hexagons and line fragments enter from outside the screen, cross it on gentle curves with links
+forming between them and leave again; the music sets their speed, how many are alive and their brightness),
+ridge 2, a re-linking full-screen constellation 2, a wide low-poly terrain 2 (no animal doodles). Bass
+breathes, beats send light along the links, treble twinkles; colours come from the photo. When the music
+stops the particle field fades back in within about a second (no waiting for the next photo). The caption
+shows the song and artist while playback metadata is available. The first remote or keyboard input wakes
+Home and is swallowed.
 
 ## Media
 

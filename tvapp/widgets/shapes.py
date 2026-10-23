@@ -325,6 +325,75 @@ class Morph:
         return [(dust_alpha if i < n_dust else 0.0) * (1 - e) + e for i in range(len(self.target["pts"]))]
 
 
+# ---------------------------------------------------------------- floating particles (no music)
+
+FIELD_N = 40
+FIELD_FADE = 1.0         # seconds for the field to appear / disappear
+
+
+class Field:
+    """A sparse field of softly drifting particles for the quiet ambient state. They drift in from outside
+    the screen edges, cross at a few px/s and leave again, so the field renews itself without anything
+    popping in. Pure state; homescreen.py steps it at a low frame rate and draws it."""
+
+    def __init__(self, sw, sh, rng, n=FIELD_N, speed=None):
+        self.sw, self.sh, self.rng, self.n = sw, sh, rng, n
+        self.margin = 0.05 * sw
+        self.speed = speed or 0.0055 * sw          # px/s: ~10 px/s on a 1080p screen
+        self.amt = 0.0                             # 0..1 overall visibility, eased
+        self.p = []
+        for _ in range(n):
+            self.p.append(self._new(inside=True))
+
+    def _new(self, inside=False):
+        rng, sw, sh, m = self.rng, self.sw, self.sh, self.margin
+        if inside:
+            x, y = rng.uniform(0, sw), rng.uniform(0, sh)
+        else:
+            side = rng.choice((0, 1, 2, 3))
+            x, y = {0: (-m, rng.uniform(0, sh)), 1: (sw + m, rng.uniform(0, sh)),
+                    2: (rng.uniform(0, sw), -m), 3: (rng.uniform(0, sw), sh + m)}[side]
+        tx, ty = rng.uniform(0.15, 0.85) * sw, rng.uniform(0.15, 0.85) * sh
+        hd = math.atan2(ty - y, tx - x) if not inside else rng.uniform(0, 2 * math.pi)
+        return {"x": x, "y": y, "hd": hd, "curve": rng.uniform(-0.05, 0.05),
+                "v": rng.uniform(0.5, 1.3) * self.speed, "r": rng.uniform(0.7, 1.4), "ph": rng.uniform(0, 6.3)}
+
+    def step(self, dt, target=1.0):
+        a = self.amt
+        self.amt = min(target, a + dt / FIELD_FADE) if a < target else max(target, a - dt / FIELD_FADE)
+        m = self.margin * 1.5
+        for q in self.p:
+            q["hd"] += q["curve"] * dt
+            q["x"] += math.cos(q["hd"]) * q["v"] * dt
+            q["y"] += math.sin(q["hd"]) * q["v"] * dt
+            if not (-m < q["x"] < self.sw + m and -m < q["y"] < self.sh + m):
+                q.update(self._new())
+
+    def edge_fade(self, q):
+        m = self.margin
+        e = min(q["x"] + m, self.sw + m - q["x"], q["y"] + m, self.sh + m - q["y"]) / m
+        return max(0.0, min(1.0, e))
+
+    def frame(self, t, reach=None):
+        """-> {"pts", "alpha", "links": [(i, j, a)]}; alpha already includes the field's overall visibility."""
+        reach = reach or 0.14 * self.sw
+        pts = [(q["x"], q["y"]) for q in self.p]
+        al = [self.edge_fade(q) * self.amt * (0.65 + 0.35 * math.sin(t * 0.5 + q["ph"])) for q in self.p]
+        links, deg = [], [0] * self.n
+        for i in range(self.n):
+            if al[i] < 0.02:
+                continue
+            for j in range(i + 1, self.n):
+                if al[j] < 0.02 or deg[i] >= 3 or deg[j] >= 3:
+                    continue
+                d = math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])
+                if d < reach:
+                    deg[i] += 1
+                    deg[j] += 1
+                    links.append((i, j, (1.0 - d / reach) * min(al[i], al[j])))
+        return {"pts": pts, "alpha": al, "links": links}
+
+
 # ---------------------------------------------------------------- visualizer
 
 def ease_levels(cur, target, dt, attack=12.0, release=2.2):
@@ -362,7 +431,8 @@ def twinkle(i, t, treble):
 # flows across instead of scrambling. All positions are screen pixels; nothing here touches cairo.
 
 VIZ_N = 64
-VIZ_MODES = ("ridge", "constellation", "wire", "rings", "orbits", "terrain", "doodle")
+VIZ_MODES = ("edgeflow", "ridge", "constellation", "terrain")      # no animal doodles in the rotation
+MODE_WEIGHTS = {"edgeflow": 6, "ridge": 2, "constellation": 2, "terrain": 2}   # random rotation
 MODE_MORPH = 2.8                 # seconds for one mode to flow into the next
 MODE_EVERY = (45.0, 100.0)       # seconds between random mode changes within a track
 FIRST_CHANGE = (10.0, 18.0)      # the photo's ridge plays first, then the first random mode
@@ -484,8 +554,8 @@ class ConstellationMode(_Mode):
 
     def __init__(self, n, sw, sh, rng):
         super().__init__(n, sw, sh, rng)
-        cx, cy, rx, ry = 0.57 * sw, 0.50 * sh, 0.31 * sw, 0.34 * sh
-        pts, gap, tries = [], 0.07 * sh, 0
+        cx, cy, rx, ry = 0.50 * sw, 0.50 * sh, 0.47 * sw, 0.45 * sh
+        pts, gap, tries = [], 0.09 * sh, 0
         while len(pts) < n:
             tries += 1
             if tries % 400 == 0:
@@ -528,8 +598,8 @@ class ConstellationMode(_Mode):
         return [(i, j, a) for (i, j), a in self.ea.items()]
 
     def points(self, t, lv):
-        z = 1.0 + 0.07 * lv.get("bass", 0.0) + 0.03 * self.kick
-        amp = 0.012 * self.sw
+        z = 1.0 + 0.025 * lv.get("bass", 0.0) + 0.012 * self.kick
+        amp = 0.010 * self.sw
         out = []
         for (x, y), s in zip(self.base, self.seed):
             x = self.cx + (x - self.cx) * z + amp * math.sin(t * 0.21 + s)
@@ -538,172 +608,99 @@ class ConstellationMode(_Mode):
         return out
 
 
-class WireMode(_Mode):
-    """A slowly turning wireframe (geodesic sphere or torus) in perspective; bass pushes it toward you."""
-    name = "wire"
+class EdgeFlowMode(_Mode):
+    """Dots and small shapes (triangles, hexagons, line fragments) enter from outside the screen, cross it on
+    gentle curves with links forming between near neighbours, and leave again. Music sets how many are on
+    screen, how fast they go and how bright; a quiet song still leaves a sparse drift."""
+    name = "edgeflow"
+    GLYPHS = 4                   # 0 diamond, 1 triangle, 2 hexagon, 3 line fragment
 
     def __init__(self, n, sw, sh, rng):
         super().__init__(n, sw, sh, rng)
-        self.kind = rng.choice(("sphere", "torus", "sphere"))
-        if self.kind == "sphere":
-            g = math.pi * (3 - math.sqrt(5))
-            pts = []
-            for k in range(n):
-                z = 1 - 2 * (k + 0.5) / n
-                r = math.sqrt(1 - z * z)
-                pts.append((r * math.cos(k * g), r * math.sin(k * g), z))
-            self.edges = _nearest_edges(pts, 3)
-        else:
-            a = max(4, round(math.sqrt(n * 2)))
-            b = max(3, n // a)
-            pts = []
-            for i in range(a):
-                for j in range(b):
-                    u, v = 2 * math.pi * i / a, 2 * math.pi * j / b
-                    rr = 0.72 + 0.30 * math.cos(v)
-                    pts.append((rr * math.cos(u), 0.30 * math.sin(v), rr * math.sin(u)))
-            for i in range(a):
-                for j in range(b):
-                    k = i * b + j
-                    self.edges += [(k, ((i + 1) % a) * b + j), (k, i * b + (j + 1) % b)]
-            self.alpha = [1.0] * len(pts) + [0.0] * (n - len(pts))
-            pts += [pts[0]] * (n - len(pts))
-        self.p3 = pts
-        self.yaw = rng.uniform(0, 2 * math.pi)
-        self.tilt = rng.uniform(0.35, 0.75)
-        self.spin = rng.choice((-1, 1)) * rng.uniform(0.10, 0.17)
-        self.cx, self.cy, self.r = 0.58 * sw, 0.50 * sh, 0.30 * sh
-
-    def step(self, dt, lv):
-        super().step(dt, lv)
-        self.yaw += dt * self.spin * (1.0 + 1.5 * lv.get("mid", 0.0) + 2.0 * self.kick)
-
-    def points(self, t, lv):
-        cy_, sy = math.cos(self.yaw), math.sin(self.yaw)
-        tl = self.tilt + 0.08 * math.sin(t * 0.13)
-        ct, st = math.cos(tl), math.sin(tl)
-        r = self.r * (1.0 + 0.12 * lv.get("bass", 0.0) + 0.04 * self.kick)
-        out, depth = [], []
-        for x, y, z in self.p3:
-            x, z = x * cy_ + z * sy, -x * sy + z * cy_
-            y, z = y * ct - z * st, y * st + z * ct
-            k = 3.2 / (3.2 - z)
-            out.append((self.cx + x * r * k, self.cy + y * r * k))
-            depth.append((z + 1) / 2)
-        self.depth = depth
-        return out
-
-
-class RingsMode(_Mode):
-    """Concentric polygons turning against each other, joined by spokes; beats send a ring of light outward."""
-    name = "rings"
-
-    def __init__(self, n, sw, sh, rng):
-        super().__init__(n, sw, sh, rng)
-        rings = rng.choice((3, 4, 4))
-        weights = [k + 1 for k in range(rings)]
-        counts = [max(4, round((n - 1) * w / sum(weights))) for w in weights]
-        while sum(counts) > n - 1:
-            counts[counts.index(max(counts))] -= 1
-        self.ring = [None]
-        self.ang = [0.0]
+        self.margin = 0.06 * sw
+        self.px = [0.0] * n
+        self.py = [0.0] * n
+        self.hd = [0.0] * n          # heading
+        self.curve = [0.0] * n       # heading change per second
+        self.spd = [1.0] * n
+        self.live = [False] * n
+        self.depth = [0.75] * n
+        self.glyph = [0 if k % 3 else 1 + (k // 3) % 3 for k in range(n)]
+        self.spin = [rng.uniform(-0.6, 0.6) for _ in range(n)]
+        self.ang = [rng.uniform(0, 6.28) for _ in range(n)]
+        self.alpha = [0.0] * n
+        self.vis = [0.0] * n
+        self.lk = []
+        self.cap = 0
+        for k in range(n * 3 // 5):              # already crossing when the mode starts, so it never opens empty
+            self.spawn(k, inside=True)
         self.edges = []
-        start = 1
-        for k, c in enumerate(counts):
-            off = rng.uniform(0, 2 * math.pi)
-            for i in range(c):
-                self.ring.append(k)
-                self.ang.append(off + 2 * math.pi * i / c)
-                self.edges.append((start + i, start + (i + 1) % c))
-                if k == 0:
-                    self.edges.append((0, start + i))
-            start += c
-        used = len(self.ring)
-        for i in range(1, used):                       # a spoke from each dot to the nearest dot one ring in
-            k = self.ring[i]
-            if k:
-                inner = [j for j in range(1, used) if self.ring[j] == k - 1]
-                j = min(inner, key=lambda j: abs(math.remainder(self.ang[j] - self.ang[i], 2 * math.pi)))
-                if i % 2 == 0:
-                    self.edges.append((j, i))
-        self.alpha = [1.0] * used + [0.0] * (n - used)
-        self.ring += [None] * (n - used)
-        self.ang += [0.0] * (n - used)
-        self.rings = rings
-        self.speed = [rng.uniform(0.04, 0.10) * (1 if k % 2 else -1) for k in range(rings)]
-        self.turn = [0.0] * rings
-        self.cx, self.cy, self.r = 0.57 * sw, 0.50 * sh, 0.36 * sh
-        self.lobes = rng.choice((3, 4, 5))
+
+    def spawn(self, k, inside=False):
+        rng, sw, sh, m = self.rng, self.sw, self.sh, self.margin
+        if inside:
+            x, y = rng.uniform(0.05, 0.95) * sw, rng.uniform(0.06, 0.94) * sh
+            tx, ty = rng.uniform(0.1, 0.9) * sw, rng.uniform(0.1, 0.9) * sh
+        else:
+            side = rng.choice((0, 0, 1, 1, 2, 3))              # more from the sides: the screen is wide
+            if side == 0:
+                x, y = -m, rng.uniform(0.0, 1.0) * sh
+            elif side == 1:
+                x, y = sw + m, rng.uniform(0.0, 1.0) * sh
+            elif side == 2:
+                x, y = rng.uniform(0.0, 1.0) * sw, -m
+            else:
+                x, y = rng.uniform(0.0, 1.0) * sw, sh + m
+            tx, ty = rng.uniform(0.1, 0.9) * sw, rng.uniform(0.1, 0.9) * sh
+        self.px[k], self.py[k] = x, y
+        self.hd[k] = math.atan2(ty - y, tx - x)
+        self.curve[k] = rng.choice((-1, 1)) * rng.uniform(0.02, 0.09)
+        self.spd[k] = rng.uniform(0.6, 1.4)
+        self.live[k] = True
+        self.depth[k] = rng.uniform(0.35, 1.0)
 
     def step(self, dt, lv):
         super().step(dt, lv)
-        for k in range(self.rings):
-            self.turn[k] += dt * self.speed[k] * (1.0 + 1.2 * lv.get("mid", 0.0))
+        energy = min(1.0, 0.6 * lv.get("bass", 0.0) + 0.5 * lv.get("mid", 0.0) + 0.3 * lv.get("treble", 0.0))
+        self.cap = round(self.n * (0.45 + 0.50 * energy))        # how many may be alive: the spawn rate follows
+        speed = 0.035 * self.sw * (0.55 + 1.1 * energy + 0.5 * self.kick)      # px/s
+        sw, sh, m = self.sw, self.sh, self.margin * 1.6
+        alive = sum(self.live)
+        for k in range(self.n):
+            if self.live[k]:
+                self.hd[k] += self.curve[k] * dt
+                self.px[k] += math.cos(self.hd[k]) * speed * self.spd[k] * dt
+                self.py[k] += math.sin(self.hd[k]) * speed * self.spd[k] * dt
+                self.ang[k] += self.spin[k] * dt
+                if not (-m < self.px[k] < sw + m and -m < self.py[k] < sh + m):
+                    self.live[k] = False
+                    alive -= 1
+            elif alive < self.cap and self.rng.random() < dt * 0.7:
+                self.spawn(k)
+                alive += 1
+        for k in range(self.n):                 # fade by distance to the screen edge, so nothing pops
+            e = min(self.px[k] + self.margin, sw + self.margin - self.px[k],
+                    self.py[k] + self.margin, sh + self.margin - self.py[k]) / self.margin
+            tgt = max(0.0, min(1.0, e)) if self.live[k] else 0.0
+            self.vis[k] += (tgt - self.vis[k]) * min(1.0, dt * 3.0)
+        self.alpha = [v for v in self.vis]
+        reach = 0.17 * sw
+        lk, deg = [], [0] * self.n
+        idx = [k for k in range(self.n) if self.vis[k] > 0.05]
+        for a, i in enumerate(idx):
+            for j in idx[a + 1:]:
+                d = math.hypot(self.px[i] - self.px[j], self.py[i] - self.py[j])
+                if d < reach and deg[i] < 3 and deg[j] < 3:
+                    deg[i] += 1
+                    deg[j] += 1
+                    lk.append((i, j, min(1.0, 2.2 * (1.0 - d / reach))))
+        self.lk = lk
+
+    def links(self):
+        return self.lk
 
     def points(self, t, lv):
-        bass, mid = lv.get("bass", 0.0), lv.get("mid", 0.0)
-        front = (1.0 - self.kick) * 1.3
-        out = []
-        for k, a in zip(self.ring, self.ang):
-            if k is None:
-                out.append((self.cx, self.cy))
-                continue
-            rn = (k + 1) / self.rings
-            a += self.turn[k]
-            r = rn * (1.0 + 0.07 * bass + 0.06 * mid * math.sin(self.lobes * a + self.ph))
-            r += 0.10 * self.kick * math.exp(-((rn - front) / 0.18) ** 2)
-            out.append((self.cx + self.r * r * math.cos(a), self.cy + self.r * r * math.sin(a)))
-        return out
-
-
-class OrbitsMode(_Mode):
-    """Dots on tilted elliptical orbits, inner ones faster; they leave short streaks."""
-    name = "orbits"
-    trail = 1.0
-
-    def __init__(self, n, sw, sh, rng):
-        super().__init__(n, sw, sh, rng)
-        m = rng.randint(3, 5)
-        R = 0.40 * sh
-        self.orb = []
-        for k in range(m):
-            a = R * (0.32 + 0.68 * k / (m - 1))
-            self.orb.append({"a": a * 1.35, "b": a * rng.uniform(0.35, 0.62), "rot": rng.uniform(-0.6, 0.6),
-                             "w": rng.choice((-1, 1)) * 0.22 / (a / R) ** 1.5, "ph": rng.uniform(0, 6.3)})
-        sizes = [o["a"] for o in self.orb]
-        counts = [max(3, round(n * s / sum(sizes))) for s in sizes]
-        while sum(counts) > n:
-            counts[counts.index(max(counts))] -= 1
-        while sum(counts) < n:
-            counts[counts.index(min(counts))] += 1
-        self.who, self.off = [], []
-        start = 0
-        for k, c in enumerate(counts):
-            for i in range(c):
-                self.who.append(k)
-                self.off.append(2 * math.pi * i / c + rng.uniform(-0.15, 0.15))
-                if rng.random() > 0.35:
-                    self.edges.append((start + i, start + (i + 1) % c))
-            start += c
-        self.cx, self.cy = 0.57 * sw, 0.50 * sh
-
-    def step(self, dt, lv):
-        super().step(dt, lv)
-        for o in self.orb:
-            o["ph"] += dt * o["w"] * (0.7 + 1.3 * lv.get("mid", 0.0) + 2.5 * self.kick)
-
-    def points(self, t, lv):
-        z = 1.0 + 0.06 * lv.get("bass", 0.0)
-        out, depth = [], []
-        for k, off in zip(self.who, self.off):
-            o = self.orb[k]
-            a = o["ph"] + off
-            x, y = o["a"] * z * math.cos(a), o["b"] * z * math.sin(a)
-            c, s = math.cos(o["rot"]), math.sin(o["rot"])
-            out.append((self.cx + x * c - y * s, self.cy + x * s + y * c))
-            depth.append(0.5 + 0.5 * math.sin(a))
-        self.depth = depth
-        return out
+        return [(x, y) for x, y in zip(self.px, self.py)]
 
 
 class TerrainMode(_Mode):
@@ -729,7 +726,7 @@ class TerrainMode(_Mode):
         self.grid += [self.grid[-1]] * (n - used)
         self.waves = [(rng.uniform(1.5, 3.5), rng.uniform(3.0, 6.0), rng.uniform(0.5, 1.0), rng.uniform(0, 6.3),
                        rng.uniform(0.04, 0.08)) for _ in range(3)]
-        self.cx, self.near_y, self.horizon = 0.60 * sw, 0.80 * sh, 0.40 * sh
+        self.cx, self.near_y, self.horizon = 0.50 * sw, 0.92 * sh, 0.52 * sh
 
     def points(self, t, lv):
         bass, mid = lv.get("bass", 0.0), lv.get("mid", 0.0)
@@ -737,11 +734,11 @@ class TerrainMode(_Mode):
         out, depth = [], []
         for x, z in self.grid:
             h = sum(a * math.sin(kx * x + kz * z + w * t + p) for kx, kz, w, p, a in self.waves) * (0.6 + 0.6 * mid)
-            h += 0.10 * bass * (1.0 - z) * (0.6 + 0.4 * math.sin(3 * x + self.ph))
+            h += 0.05 * bass * (1.0 - z) * (0.6 + 0.4 * math.sin(3 * x + self.ph))
             h += 0.08 * self.kick * math.exp(-((z - front) / 0.16) ** 2)
             p = 1.0 / (1.0 + 1.9 * z)
             y = self.horizon + (self.near_y - self.horizon) * (p - 1 / 2.9) / (1 - 1 / 2.9)
-            out.append((self.cx + x * 0.33 * self.sw * p, y - h * self.sh * 0.9 * p))
+            out.append((self.cx + x * 0.52 * self.sw * p, y - h * self.sh * 0.9 * p))
             depth.append(1.0 - z)
         self.depth = depth
         return out
@@ -820,8 +817,8 @@ class Viz:
             return RidgeMode(n, sw, sh, rng, self.base)
         if name == "doodle" and self.doodles:
             return DoodleMode(n, sw, sh, rng, rng.choice(self.doodles))
-        cls = {"constellation": ConstellationMode, "wire": WireMode, "rings": RingsMode,
-               "orbits": OrbitsMode, "terrain": TerrainMode}.get(name, ConstellationMode)
+        cls = {"constellation": ConstellationMode, "terrain": TerrainMode,
+               "edgeflow": EdgeFlowMode}.get(name, EdgeFlowMode)
         return cls(n, sw, sh, rng)
 
     @property
@@ -848,7 +845,7 @@ class Viz:
                 k = self.names.index(self.cur.name) + 1 if self.cur.name in self.names else 0
                 name = self.names[k % len(self.names)]
             else:
-                name = self.rng.choice(pool)
+                name = self.rng.choices(pool, [MODE_WEIGHTS.get(m, 1) for m in pool])[0]
         mode = self.build(name)
         mp = mode.points(t, lv)
         now = self.last or self.slot(self.cur, self.perm, self.cur.points(t, lv))
@@ -949,6 +946,9 @@ class Viz:
                            x0 + (x1 - x0) * p["u"], y0 + (y1 - y0) * p["u"], 1.0))
         self.last = pts
         trail = cur.trail * e + (self.prev.trail * (1 - e) if self.prev else 0.0)
+        glyph = self.slot(cur, self.perm, cur.glyph) if getattr(cur, "glyph", None) else None
+        ang = self.slot(cur, self.perm, cur.ang) if glyph else None
         return {"pts": pts, "alpha": alpha, "depth": depth, "trail": trail, "pulses": pulses,
+                "glyph": glyph, "ang": ang,
                 "links": [(i, j, a) for (i, j), a in links.items() if a > 0.01],
                 "colour": self.colour}

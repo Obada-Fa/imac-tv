@@ -46,8 +46,9 @@ PHOTO_FADE = 1.5        # seconds, crossfade
 REFRESH_PHOTOS = 6 * 3600
 NOW_EVERY = 3.0          # seconds between YouTube now-playing polls (only while Home is visible)
 SHAPE_MS = 66            # ~15 fps while a shape is morphing or the visualizer is running
+FIELD_MS = 110           # ~9 fps: the quiet floating particles drift a few px/s
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
-MUSIC_DIM = 0.34         # how far the photo darkens behind the visualizer
+MUSIC_DIM = 0.22         # how far the photo darkens behind the visualizer
 BLUR_K = 16              # frosted glass samples a 1/16 copy of the photo
 
 
@@ -349,6 +350,11 @@ class AmbientHomeScreen(Screen):
         self.viz_modes = [m for m in os.environ.get("IMACTV_VIZ_MODES", "").split(",") if m] or None  # screenshot hook
         self.viz_every = float(os.environ.get("IMACTV_VIZ_EVERY") or 0) or None                      # screenshot hook
         self.glow = None
+        self.field = None              # shapes.Field: the quiet floating particles (no music)
+        self.field_id = 0
+        self.field_geom = None
+        self.field_cells = set()
+        self.last_field = 0.0
         self.still = None              # the still shape the dots hold (sky-line, doodle or wave)
         self.shaped = False            # a shape has been chosen for this ambient stretch
         self.shape_since = 0.0
@@ -579,6 +585,7 @@ class AmbientHomeScreen(Screen):
             self.refresh_due = now + REFRESH_PHOTOS
             self.library.refresh_async(on_done=lambda added: GLib.idle_add(self.photos_changed))
         self.sync_shapes(now)
+        self.sync_field()
         self.start_anim()
         return True
 
@@ -641,7 +648,88 @@ class AmbientHomeScreen(Screen):
     def draw_links(self, cr):
         owned = self.morph.target is not None        # the morph draws the dots while it owns them
         network.draw_network(cr, self.geom, self.chrome, 0.0 if owned else self.dust_amt)
+        self.draw_field(cr)
         self.draw_shape(cr)
+
+    # ---- quiet floating particles
+    def field_target(self):
+        """1 while ambient is fully faded in and nothing plays; the field needs no photo trace."""
+        return 1.0 if (self.style == "network" and self.idle.ambient and self.chrome <= 0.0
+                       and self.active() and not self.music_active()) else 0.0
+
+    def sync_field(self):
+        if self.style != "network":
+            return
+        if self.field_target() > 0.0 or (self.field is not None and self.field.amt > 0.0):
+            self.start_field_timer()
+
+    def start_field_timer(self):
+        if self.field_id or not self.active():
+            return
+        self.last_field = time.monotonic()
+        self.field_id = GLib.timeout_add(FIELD_MS, self.field_tick)
+
+    def field_tick(self):
+        now = time.monotonic()
+        dt = min(0.5, now - self.last_field)
+        self.last_field = now
+        if not self.active():
+            self.field_id = 0
+            return False
+        self.step_field(dt, now)
+        if self.field_target() <= 0.0 and (self.field is None or self.field.amt <= 0.0):
+            self.field_id = 0
+            return False
+        return True
+
+    def step_field(self, dt, now):
+        """Advance the particles and repaint only the cells they (and last frame's) touch."""
+        if self.field is None:
+            self.field = shapes.Field(self.shell.sw, self.shell.sh, self.rng)
+        f = self.field
+        f.step(dt, self.field_target())
+        if f.amt <= 0.0:
+            if self.field_geom is not None:
+                self.field_geom = None
+                self.invalidate_cells(self.field_cells)
+                self.field_cells = set()
+            return
+        s = self.shell.scale
+        fr = f.frame(now, reach=0.16 * self.shell.sw)
+        fr["links"] = [(i, j, a) for i, j, a in fr["links"] if a > 0.01]
+        geo = [(i, j, math.hypot(fr["pts"][i][0] - fr["pts"][j][0], fr["pts"][i][1] - fr["pts"][j][1]))
+               for i, j, _ in fr["links"]]
+        cells = network.geometry_cells({"pts": fr["pts"], "n": 0, "links": geo}, margin=round(8 * s))
+        self.field_geom = dict(fr, scale=s)
+        dirty = cells | self.field_cells
+        self.field_cells = cells
+        self.invalidate_cells(dirty)
+
+    def draw_field(self, cr):
+        g = self.field_geom
+        if not g:
+            return
+        s, pts, al = g["scale"], g["pts"], g["alpha"]
+        cr.save()
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        cr.set_line_width(max(1.0, 1.0 * s))
+        for i, j, a in g["links"]:
+            cr.set_source_rgba(1, 1, 1, min(0.32, 0.34 * a))
+            cr.move_to(*pts[i])
+            cr.line_to(*pts[j])
+            cr.stroke()
+        for (x, y), a in zip(pts, al):
+            if a < 0.02:
+                continue
+            d = 3.0 * s
+            cr.set_source_rgba(1, 1, 1, min(0.85, 0.9 * a))
+            cr.move_to(x, y - d)
+            cr.line_to(x + d, y)
+            cr.line_to(x, y + d)
+            cr.line_to(x - d, y)
+            cr.close_path()
+            cr.fill()
+        cr.restore()
 
     # ---- ambient shapes + visualizer
     def origin(self, i, t):
@@ -739,6 +827,11 @@ class AmbientHomeScreen(Screen):
     def sync_shapes(self, now):
         """1 s housekeeping: start shapes after the fade, run the visualizer while music plays, ease back
         to the still sky-line when it stops, rotate doodles, and run audio capture."""
+        listeners = [w for w in getattr(self, "items", ()) if hasattr(w, "on_music")]
+        if self.idle.ambient and listeners:        # the weather line hides while music plays; any style
+            playing = self.music_active()
+            for w in listeners:
+                w.on_music(playing)
         if self.style != "network":
             return
         if self.idle.ambient and self.active():
@@ -752,7 +845,10 @@ class AmbientHomeScreen(Screen):
                 self.viz_stop = False            # music came back while flowing home: carry on
             elif viz is not None and not music and not self.viz_stop:
                 self.viz_stop = True             # flow back to the ridge; step_shape lands it on the still shape
-                if viz.mode != "ridge":
+                if self.still is None or self.still.get("kind") != "photo":
+                    self.shaped = False          # no sky-line to rest on: dissolve now, the particle field takes over
+                    self.morph.release()
+                elif viz.mode != "ridge":
                     base = self.base_shape()
                     if base:
                         viz.set_base(base)
@@ -902,6 +998,8 @@ class AmbientHomeScreen(Screen):
         else:
             geo_pts = pts
         self.viz_prev = pts if fr is not None else None
+        if fr is not None and fr["pulses"]:          # the pulse heads carry a glow: repaint around them too
+            geo_pts = list(geo_pts) + [(x1, y1) for _x0, _y0, x1, y1, _a in fr["pulses"]]
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
                            "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
                            "tails": tails, "beat": beat}
@@ -974,7 +1072,7 @@ class AmbientHomeScreen(Screen):
 
     def draw_viz(self, cr, g):
         s, t, pts, lv, fr = g["scale"], g["t"], g["pts"], g["lv"], g["viz"]
-        alphas, depth = g["alphas"], fr["depth"]
+        alphas, depth, glyph = g["alphas"], fr["depth"], fr.get("glyph")
         pal = self.viz.palette if self.viz else shapes.DEFAULT_PALETTE
         k = fr["colour"]
         line, spark, halo = pal[k % len(pal)], pal[(k + 1) % len(pal)], pal[(k + 2) % len(pal)]
@@ -985,28 +1083,29 @@ class AmbientHomeScreen(Screen):
             tr = fr["trail"]
             cr.set_line_width(max(1.0, 1.6 * s))
             for i, (x, y) in enumerate(pts):
-                a = alphas[i] * 0.22 * tr
+                a = alphas[i] * 0.15 * tr
                 if a > 0.01:
                     tx, ty = g["tails"][i]
                     cr.set_source_rgba(*halo, a)
                     cr.move_to(x, y)
                     cr.line_to(tx, ty)
                     cr.stroke()
-        base_a = 0.20 + 0.10 * mid + 0.12 * beat
+        gain = 0.55 + 0.45 * min(1.0, bass + mid)          # a background: music modulates, never dominates
+        base_a = (0.11 + 0.06 * mid + 0.10 * beat) * gain
         for i, j, la in g["links"]:
             dd = (depth[i] + depth[j]) / 2 if depth else 0.75
             a = base_a * la * min(alphas[i], alphas[j]) * (0.30 + 0.70 * dd)
             if a < 0.01:
                 continue
             cr.set_source_rgba(*line, min(0.8, a))
-            cr.set_line_width(max(1.0, 1.25 * s * (0.6 + 0.6 * dd)))
+            cr.set_line_width(max(1.0, 1.1 * s * (0.6 + 0.6 * dd)))
             cr.move_to(*pts[i])
             cr.line_to(*pts[j])
             cr.stroke()
         if fr["pulses"]:
             cr.set_line_width(max(1.6, 2.4 * s))
             for x0, y0, x1, y1, a in fr["pulses"]:
-                cr.set_source_rgba(*spark, 0.85 * a)
+                cr.set_source_rgba(*spark, 0.6 * a)
                 cr.move_to(x0, y0)
                 cr.line_to(x1, y1)
                 cr.stroke()
@@ -1021,17 +1120,38 @@ class AmbientHomeScreen(Screen):
             if i % 5 == 0 and dd > 0.45 and (beat > 0.05 or tw > 0.3):
                 cr.set_source_rgba(*halo, min(0.5, (0.35 * beat + 0.25 * tw) * a * dd))
                 cr.mask_surface(sprite, x - r, y - r)
-            d = (2.2 + 2.6 * dd) * s * (1 + 0.30 * bass + 0.5 * tw)
-            if i % 5 == 0:
+            d = (2.0 + 2.2 * dd) * s * (1 + 0.18 * bass + 0.5 * tw)
+            gl = glyph[i] if glyph else (4 if i % 5 == 0 else 0)
+            if gl in (1, 2, 3):
+                ang = fr["ang"][i]
+                al = min(0.7, (0.30 + 0.35 * dd + 0.3 * tw) * a * gain)
+                if gl == 3:
+                    dx, dy = math.cos(ang) * d * 2.4, math.sin(ang) * d * 2.4
+                    cr.move_to(x - dx, y - dy)
+                    cr.line_to(x + dx, y + dy)
+                else:
+                    r = d * (2.2 if gl == 1 else 1.9)
+                    n = 3 if gl == 1 else 6
+                    cr.new_path()
+                    for q in range(n):
+                        px, py = x + r * math.cos(ang + 6.2832 * q / n), y + r * math.sin(ang + 6.2832 * q / n)
+                        cr.line_to(px, py) if q else cr.move_to(px, py)
+                    cr.close_path()
+                    cr.set_source_rgba(*line, 0.07 * a * gain)
+                    cr.fill_preserve()
+                cr.set_source_rgba(1, 1, 1, al)
+                cr.set_line_width(max(1.0, 1.1 * s))
+                cr.stroke()
+            elif gl == 4:
                 poly = network.poly_points(hub, d * 2.0, x, y)
                 network.poly_path(cr, poly)
                 cr.set_source_rgba(*line, min(0.22, 0.06 + 0.10 * mid + 0.06 * tw) * a)
                 cr.fill_preserve()
-                cr.set_source_rgba(1, 1, 1, min(0.9, (0.45 + 0.40 * dd) * a))
+                cr.set_source_rgba(1, 1, 1, min(0.6, (0.35 + 0.30 * dd) * a))
                 cr.set_line_width(max(1.0, 1.3 * s))
                 cr.stroke()
             else:
-                cr.set_source_rgba(1, 1, 1, min(1.0, (0.40 + 0.45 * dd + 0.3 * tw) * a))
+                cr.set_source_rgba(1, 1, 1, min(0.8, (0.30 + 0.40 * dd + 0.3 * tw) * a * gain))
                 cr.move_to(x, y - d)
                 cr.line_to(x + d, y)
                 cr.line_to(x, y + d)
@@ -1039,7 +1159,7 @@ class AmbientHomeScreen(Screen):
                 cr.close_path()
                 cr.fill()
         for _x0, _y0, x1, y1, a in fr["pulses"]:
-            cr.set_source_rgba(*spark, 0.7 * a)
+            cr.set_source_rgba(*spark, 0.45 * a)
             cr.mask_surface(sprite, x1 - r, y1 - r)
         cr.restore()
 
