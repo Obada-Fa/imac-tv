@@ -630,7 +630,8 @@ class Controller:
             except OSError:
                 pass
             slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
-            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang)
+            argv = player.mpv_argv(torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
+                                  log_file=str(DATA / "mpv.log"))
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
             with self.lock:
@@ -638,11 +639,17 @@ class Controller:
                     proc.terminate()
                     return
                 self.proc = proc
+            raised = False
             for _ in range(240):
                 if not self._current(generation):
                     return
                 if proc.poll() is not None:
-                    raise RuntimeError("The player stopped before playback began")
+                    raise RuntimeError(f"The player stopped before playback began (see {DATA / 'mpv.log'})")
+                if not raised:
+                    win = window_for("player")
+                    if win:
+                        activate(win)
+                        raised = True
                 stats = torrents.stats(info_hash, file_idx)
                 if stats:
                     with self.lock:

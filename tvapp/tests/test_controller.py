@@ -159,6 +159,8 @@ class PlayMediaTests(unittest.TestCase):
                 mock.patch.object(server.subprocess, "Popen", return_value=proc) as popen, \
                 mock.patch.object(server, "mpv", side_effect=fake_mpv) as mpv_mock, \
                 mock.patch.object(server.time, "sleep"), mock.patch.object(c, "_show_home"), \
+                mock.patch.object(server, "window_for", return_value={"id": "0x5"}), \
+                mock.patch.object(server, "activate") as activate, \
                 mock.patch.object(c, "_playback_loop") as watcher:
             eng.return_value.healthy.return_value = healthy
             eng.return_value.is_local = local
@@ -166,7 +168,7 @@ class PlayMediaTests(unittest.TestCase):
             eng.return_value.stats.return_value = {"peers": 4, "speed": 1000.0, "downloaded": 1}
             self.eng_holder["eng"] = eng.return_value
             c._play_worker(gen, stream, 12.0)
-        self.watcher = watcher
+        self.watcher, self.activate = watcher, activate
         return popen, proc
 
     def test_worker_launches_best_source_and_reaches_playing(self):
@@ -181,6 +183,9 @@ class PlayMediaTests(unittest.TestCase):
         self.assertIn(("sub-add", "https://s/a.srt", "select", "Arabic", "ara"), self.calls)
         self.eng_holder["eng"].configure_cache.assert_called_once_with(3221225472)
         self.watcher.assert_called_once()
+        self.activate.assert_called_once_with({"id": "0x5"})
+        self.assertIn("--ontop", argv)
+        self.assertTrue(any(a.startswith("--log-file=") and a.endswith("mpv.log") for a in argv))
         self.assertEqual(c.session["entry"]["name"], "Night")
         self.assertEqual((c.app, c.phase, c.buffering), ("player", "playing", None))
         self.assertEqual(c.media["name"], "Night")
