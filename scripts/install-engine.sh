@@ -4,6 +4,9 @@
 # Installs the headless stremio-service (torrent streaming server on
 # 127.0.0.1:11470) and a systemd user unit `imactv-engine.service` that runs its
 # bundled server.js directly (no tray icon). Falls back to Flatpak.
+#
+# With a URL argument (install-engine.sh http://host:11470) nothing is installed:
+# the TV is pointed at that existing Stremio server via media.json instead.
 # ==============================================================================
 set -euo pipefail
 
@@ -11,6 +14,47 @@ BOLD='\033[1m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; NC='
 SHARE=/usr/share/stremio-service
 UNIT="$HOME/.config/systemd/user/imactv-engine.service"
 SUDO=""; [ "$EUID" -ne 0 ] && SUDO="sudo"
+
+if [ -n "${1:-}" ]; then
+  ENGINE_URL="${1%/}"
+  MEDIA_JSON="${IMACTV_DATA_DIR:-$HOME/.local/share/imactv}/media.json"
+  printf "${BLUE}${BOLD}=== Using existing Stremio server at %s ===${NC}\n" "$ENGINE_URL"
+  mkdir -p "$(dirname "$MEDIA_JSON")"
+  python3 - "$MEDIA_JSON" "$ENGINE_URL" <<'PYEOF'
+import json, sys
+path, url = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        data = {}
+except (OSError, ValueError):
+    data = {}
+data["engine"] = url
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PYEOF
+  # Any HTTP status means a server answered; 000 means nothing is listening.
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$ENGINE_URL/stats.json" || true)"
+  if [ "$CODE" != "000" ] && [ -n "$CODE" ]; then
+    printf "${GREEN}✓ Stremio server answers at %s${NC}\n" "$ENGINE_URL"
+  else
+    printf "${YELLOW}Saved, but %s is not answering yet. Make sure Stremio/stremio-service is running there\n" "$ENGINE_URL"
+    printf "and reachable from this machine (LAN or Tailscale, port open).${NC}\n"
+  fi
+  exit 0
+fi
+
+# A Stremio server already on 11470 that isn't ours (stremio-service tray, Stremio app): use it as-is
+# instead of adding a second one that would fight it for the port.
+if ! systemctl --user is-active --quiet imactv-engine.service 2>/dev/null; then
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:11470/stats.json || true)"
+  if [ -n "$CODE" ] && [ "$CODE" != "000" ]; then
+    printf "${GREEN}✓ Using the Stremio server already running on 127.0.0.1:11470${NC}\n"
+    printf "${YELLOW}  Keep Stremio/stremio-service starting at login, or the TV can't play movies.${NC}\n"
+    exit 0
+  fi
+fi
 
 printf "${BLUE}${BOLD}=== Installing streaming engine (stremio-service) ===${NC}\n"
 

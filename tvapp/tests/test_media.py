@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 import sys
 
@@ -147,6 +148,20 @@ class EngineTests(unittest.TestCase):
         with mock.patch.object(eng, "_get", side_effect=OSError):
             self.assertIsNone(eng.stats("a" * 40, 0))
             self.assertFalse(eng.healthy())
+
+    def test_healthy_accepts_any_http_answer(self):
+        eng = engine.Engine("http://100.64.0.5:11470")
+        err = urllib.error.HTTPError(eng.base + "/stats.json", 404, "Not Found", {}, None)
+        with mock.patch.object(eng, "_get", side_effect=err):
+            self.assertTrue(eng.healthy())
+        with mock.patch.object(eng, "_get", side_effect=urllib.error.URLError("refused")):
+            self.assertFalse(eng.healthy())
+
+    def test_is_local(self):
+        self.assertTrue(engine.Engine("http://127.0.0.1:11470").is_local)
+        self.assertTrue(engine.Engine("http://localhost:11470/").is_local)
+        self.assertFalse(engine.Engine("http://100.64.0.5:11470").is_local)
+        self.assertFalse(engine.Engine("http://stremio-box:11470").is_local)
 
 
 if __name__ == "__main__":

@@ -40,6 +40,23 @@ Nothing is kept on disk: the engine cache is capped (`cache_bytes`, 3 GB) and th
 torrent is removed when playback ends. Continue Watching comes from
 `~/.local/share/imactv/history.json`.
 
+### Using an existing Stremio server
+
+The engine **is** Stremio's streaming server. Torrentio, Cinemeta and OpenSubtitles are queried directly by the app (defaults in `tvapp/media/config.py`), not taken from your Stremio account, so only the streaming server is needed.
+
+To use a server on another machine instead of installing one locally:
+
+```bash
+./install.sh --engine-url http://HOST:11470
+# or just the engine step:
+scripts/install-engine.sh http://HOST:11470
+```
+
+or write `{"engine": "http://HOST:11470"}` into `~/.local/share/imactv/media.json` by hand and restart the controller.
+
+- The server must be reachable from the TV machine on port 11470 (LAN or Tailscale). Stremio's server binds `0.0.0.0:11470` by default.
+- For a remote engine the app does not push its cache cap (`cache_bytes`) onto it; that cap only applies to a local engine.
+
 The phone remote follows the TV state: D-pad and Search while browsing, a
 buffering card (source, peers, speed, Cancel), and a Now Playing card with scrub
 bar, skip, subtitle/audio pickers and subtitle delay. Stop returns to the

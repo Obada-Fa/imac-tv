@@ -15,7 +15,7 @@
 - `streams.py` — `parse(stream) -> Source` dict:
   `{"info_hash","file_idx","title","quality","hdr": bool,"dv": bool,"codec","source","size_bytes","seeders","languages":[..],"label"}`
   label example: `"1080p · WEB-DL · 2.4 GB · 312 seeds"`. `rank(sources, cfg) -> list` (filtered: no CAM/TS/SCR, size<=max_size_gb, must have info_hash), `best(sources, cfg) -> Source|None`.
-- `engine.py` — `Engine(base_url)`: `healthy() -> bool`, `url(info_hash, file_idx) -> str`
+- `engine.py` — `Engine(base_url)`: `healthy() -> bool` (any HTTP response counts as up), `is_local` (True for 127.0.0.1/localhost/::1), `url(info_hash, file_idx) -> str`
   (`{base}/{hash}/{idx}`), `stats(info_hash, file_idx) -> {"peers": int, "speed": float bytes/s, "downloaded": int} | None`,
   `remove(info_hash)`, `configure_cache(bytes)`.
 - `subs.py` — `pick(sub_list, langs, per_lang=2) -> [{"url","lang","label"}]` normalising lang codes (ar/ara, nl/dut/nld, en/eng). Labels: "Arabic", "Nederlands", "English".

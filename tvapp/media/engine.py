@@ -1,7 +1,10 @@
 """Client for the headless stremio-service torrent streaming server."""
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class Engine:
@@ -14,10 +17,16 @@ class Engine:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read(2_000_000)
 
+    @property
+    def is_local(self):
+        return urllib.parse.urlsplit(self.base).hostname in LOCAL_HOSTS
+
     def healthy(self):
         try:
-            self._get("/stats.json", timeout=1.5)
+            self._get("/stats.json", timeout=3)
             return True
+        except urllib.error.HTTPError:
+            return True  # the server answered, just not with 2xx
         except (urllib.error.URLError, OSError, ValueError):
             return False
 

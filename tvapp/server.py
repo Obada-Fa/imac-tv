@@ -594,8 +594,8 @@ class Controller:
             cfg = media_config.load()
             torrents = media_engine.Engine(cfg["engine"])
             if not torrents.healthy():
-                raise RuntimeError("The torrent engine is not running")
-            if not self.cache_ready:
+                raise RuntimeError(f"Can't reach the Stremio server at {cfg['engine']}")
+            if torrents.is_local and not self.cache_ready:
                 torrents.configure_cache(cfg["cache_bytes"])
                 self.cache_ready = True
             try:

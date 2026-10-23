@@ -53,10 +53,27 @@ Run the automated installer script:
 This single command will:
 1. Install all necessary system APT packages (`python3-gi`, `gir1.2-gtk-3.0`, `wmctrl`, `xdotool`, `mpv`, Noto and Inter fonts, etc.; Inter is downloaded if the distro lacks it).
 2. Set up **VacuumTube** via Flathub / Flatpak.
-3. Install **stremio-service** (official `.deb` from GitHub releases, Flatpak `com.stremio.Service` as fallback) and enable `imactv-engine.service`, which runs the bundled `server.js` headless. Use `--skip-engine` to skip.
+3. Install **stremio-service** (official `.deb` from GitHub releases, Flatpak `com.stremio.Service` as fallback) and enable `imactv-engine.service`, which runs the bundled `server.js` headless. Use `--skip-engine` to skip, or `--engine-url URL` to use an existing Stremio server (see below).
 4. Configure `tvremote.service` as a systemd user service (auto-starts on boot).
 5. Configure desktop autostart so **TV Home** launches automatically on login.
 6. Set up passwordless permissions for power off and desktop restart.
+
+### Using an existing Stremio server
+
+The engine **is** Stremio's streaming server. Torrentio, Cinemeta and OpenSubtitles are queried directly by the app (defaults in `tvapp/media/config.py`), not taken from your Stremio account, so only the streaming server is needed.
+
+To use a server on another machine instead of installing one locally:
+
+```bash
+./install.sh --engine-url http://HOST:11470
+# or just the engine step:
+scripts/install-engine.sh http://HOST:11470
+```
+
+or write `{"engine": "http://HOST:11470"}` into `~/.local/share/imactv/media.json` by hand and restart the controller.
+
+- The server must be reachable from the TV machine on port 11470 (LAN or Tailscale). Stremio's server binds `0.0.0.0:11470` by default.
+- For a remote engine the app does not push its cache cap (`cache_bytes`) onto it; that cap only applies to a local engine.
 
 ---
 

@@ -134,7 +134,7 @@ class PlayMediaTests(unittest.TestCase):
         self.assertEqual(c.media["video_id"], "tt0903747:1:2")
         self.assertEqual(server.Controller._read_json(server.DATA / "last_media.json", {})["video_id"], "tt0903747:1:2")
 
-    def worker(self, c, stream=None, mpv_results=None, healthy=True, found=None, tracks=(), loop=False):
+    def worker(self, c, stream=None, mpv_results=None, healthy=True, found=None, tracks=(), loop=False, local=True):
         c.action_lock = server.threading.RLock()
         with mock.patch.object(server.threading, "Thread"), mock.patch.object(server, "playback", return_value={"active": False}):
             c.action("play_media", {"type": "movie", "id": "tt0063350"})
@@ -161,6 +161,7 @@ class PlayMediaTests(unittest.TestCase):
                 mock.patch.object(server.time, "sleep"), mock.patch.object(c, "_show_home"), \
                 mock.patch.object(c, "_playback_loop") as watcher:
             eng.return_value.healthy.return_value = healthy
+            eng.return_value.is_local = local
             eng.return_value.url.side_effect = lambda h, i: f"http://e/{h}/{i}"
             eng.return_value.stats.return_value = {"peers": 4, "speed": 1000.0, "downloaded": 1}
             self.eng_holder["eng"] = eng.return_value
@@ -183,6 +184,12 @@ class PlayMediaTests(unittest.TestCase):
         self.assertEqual(c.session["entry"]["name"], "Night")
         self.assertEqual((c.app, c.phase, c.buffering), ("player", "playing", None))
         self.assertEqual(c.media["name"], "Night")
+
+    def test_remote_engine_leaves_cache_settings_alone(self):
+        c = self.controller()
+        popen, _ = self.worker(c, local=False)
+        popen.assert_called_once()
+        self.eng_holder["eng"].configure_cache.assert_not_called()
 
     def test_subs_select_default_language_and_prefer_embedded(self):
         c = self.controller()
@@ -210,7 +217,7 @@ class PlayMediaTests(unittest.TestCase):
         self.assertEqual((c.app, c.phase, c.error), ("home", "ready", "No playable sources found"))
         c = self.controller()
         self.worker(c, healthy=False)
-        self.assertIn("torrent engine", c.error)
+        self.assertIn("Can't reach the Stremio server at http://127.0.0.1:11470", c.error)
 
     def test_sources_action_returns_ranked(self):
         c = self.controller()

@@ -31,6 +31,8 @@ Options:
   --build-vacuumtube   Build VacuumTube from source (requires node/npm)
   --skip-apps          Skip installing apps (use if already installed)
   --skip-engine        Skip the stremio-service streaming engine
+  --engine-url URL     Use an existing Stremio server (e.g. http://192.168.1.50:11470)
+                       instead of installing one on this machine
   --skip-privileges    Skip configuring sudoers rule for poweroff/desktop restart
   -h, --help           Show this help message
 EOF
@@ -58,6 +60,11 @@ while [[ $# -gt 0 ]]; do
     --skip-engine)
       SKIP_ENGINE=true
       shift
+      ;;
+    --engine-url)
+      [ $# -ge 2 ] || { printf "${RED}--engine-url needs a URL${NC}\n"; usage; }
+      ENGINE_URL="$2"
+      shift 2
       ;;
     --skip-privileges)
       SKIP_PRIVILEGES=true
@@ -168,7 +175,7 @@ fi
 if [ "$SKIP_ENGINE" = true ]; then
   printf "${YELLOW}Skipping streaming engine (--skip-engine).${NC}\n"
 else
-  bash "$ROOT_DIR/scripts/install-engine.sh"
+  bash "$ROOT_DIR/scripts/install-engine.sh" ${ENGINE_URL:+"$ENGINE_URL"}
 fi
 
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
@@ -205,5 +212,9 @@ printf "     Scan the QR code or enter the code on your phone to connect!\n\n"
 printf "  ${BOLD}Installed:${NC}\n"
 printf "     - ${BOLD}VacuumTube:${NC} YouTube Leanback TV interface with adblocker and remote/gamepad nav\n"
 printf "     - ${BOLD}Movies & series:${NC} built-in catalog (Cinemeta/Torrentio add-ons) played with mpv\n"
-printf "     - ${BOLD}Engine:${NC} imactv-engine.service (stremio-service) on 127.0.0.1:11470\n"
+if [ -n "${ENGINE_URL:-}" ]; then
+    printf "     - ${BOLD}Engine:${NC} existing Stremio server at %s\n" "$ENGINE_URL"
+else
+    printf "     - ${BOLD}Engine:${NC} imactv-engine.service (stremio-service) on 127.0.0.1:11470\n"
+fi
 printf "     Add-ons are configurable in ~/.local/share/imactv/media.json\n\n"
