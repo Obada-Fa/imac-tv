@@ -15,7 +15,9 @@ except Exception:  # no GTK bindings
 
 @unittest.skipIf(homescreen is None, "GTK bindings unavailable")
 class AmbientMusicTests(unittest.TestCase):
-    def test_ambient_canvas_uses_blurred_photo_and_normal_uses_full_photo(self):
+    def test_ambient_canvas_keeps_the_sharp_photo_and_music_only_dims_it(self):
+        # 801ffa4 painted the 1/16 blurred copy in ambient mode; on the TV that read as "just a blurry
+        # background" whenever nothing played. Ambient keeps the real photo; the visualizer only darkens it.
         cairo = homescreen.cairo
 
         def solid(w, h, color):
@@ -26,13 +28,10 @@ class AmbientMusicTests(unittest.TestCase):
             return surf
 
         photo = solid(320, 192, (0, 1, 0))
-        blur_red = solid(20, 12, (1, 0, 0))
-        blur_blue = solid(20, 12, (0, 0, 1))
-        canvas = SimpleNamespace(ambient=True, cur=photo, blur_cur=blur_red,
-                                 blur_k=16, extra=None, prev=None, fade=1.0,
+        canvas = SimpleNamespace(ambient=True, cur=photo, blur_cur=solid(20, 12, (1, 0, 0)),
+                                 blur_k=16, extra=None, prev=None, fade=1.0, dim=0.0,
                                  get_allocated_width=lambda: 320,
                                  get_allocated_height=lambda: 192)
-        canvas.blur_layers = lambda: [(canvas.blur_cur, 1.0)]
 
         def center_rgb():
             out = cairo.ImageSurface(cairo.FORMAT_ARGB32, 320, 192)
@@ -42,24 +41,15 @@ class AmbientMusicTests(unittest.TestCase):
             b, g, r, _a = out.get_data()[p:p + 4]
             return r, g, b
 
-        red = center_rgb()
-        canvas.blur_cur = blur_blue
-        blue = center_rgb()
-        self.assertGreater(red[0], red[2])
-        self.assertGreater(blue[2], blue[0])
-
-        canvas.blur_prev = blur_red
-        canvas.fade = 0.5
-        canvas.blur_layers = lambda: homescreen.PhotoCanvas.blur_layers(canvas)
-        mixed = center_rgb()
-        self.assertGreater(mixed[0], blue[0])
-        self.assertGreater(mixed[2], red[2])
-
-        canvas.ambient = False
-        canvas.prev = None
-        normal = center_rgb()
-        self.assertGreater(normal[1], normal[0])
-        self.assertGreater(normal[1], normal[2])
+        still = center_rgb()
+        self.assertEqual(still, (0, 255, 0))
+        canvas.dim = 1.0
+        music = center_rgb()
+        self.assertGreater(music[1], 120)
+        self.assertLess(music[1], still[1])
+        self.assertLess(music[0], 10)
+        canvas.ambient, canvas.dim = False, 0.0
+        self.assertEqual(center_rgb(), (0, 255, 0))
 
     def test_titleless_audio_starts_listening_and_can_form_visualizer(self):
         screen = SimpleNamespace(style="network", idle=SimpleNamespace(ambient=True),
@@ -75,11 +65,15 @@ class AmbientMusicTests(unittest.TestCase):
 
         screen.shell = SimpleNamespace(sw=1920, sh=1080)
         screen.now_state = None
+        screen.shapes_mode, screen.trace, screen.doodles = "photo", None, []
+        screen.base_shape = lambda: homescreen.AmbientHomeScreen.base_shape(screen)
         screen.audio.levels.return_value = {"active": True}
         screen.music_active = lambda: homescreen.AmbientHomeScreen.music_active(screen)
         self.assertTrue(screen.music_active())
         shape = homescreen.AmbientHomeScreen.pick_shape(screen, 11)
-        self.assertEqual(shape["kind"], "constellation")
+        # The dots first gather on the photo's sky-line (a calm wave when it has none); the visualizer
+        # modes, the constellation among them, then grow out of that shape.
+        self.assertEqual(shape["kind"], "wave")
         self.assertTrue(shape["pts"])
 
     def test_inactive_home_stops_capture(self):
@@ -113,11 +107,11 @@ class AmbientMusicTests(unittest.TestCase):
         screen.cap.set_text.assert_called_with("Song")
         screen.credit.set_text.assert_called_with("Singer")
 
-        screen.idle.ambient = True
+        screen.idle.ambient = True       # paused in ambient: the photo's caption comes back (was blank)
         screen.now_state = {"status": "Paused", "title": "Song", "artist": "Singer"}
         homescreen.AmbientHomeScreen.update_bottom_label(screen)
-        screen.cap.set_text.assert_called_with("")
-        screen.credit.set_text.assert_called_with("")
+        screen.cap.set_text.assert_called_with("Mountain")
+        screen.credit.set_text.assert_called_with("A · Bing")
 
         screen.idle.ambient = False
         screen.now_state = None
@@ -131,7 +125,7 @@ class AmbientMusicTests(unittest.TestCase):
         screen = SimpleNamespace(pending=(item, (object(), object())),
                                  canvas=mock.Mock(cur=object()), now_state=None,
                                  idle=SimpleNamespace(ambient=True), photo_due=0, interval=90,
-                                 shaped=True, morph=SimpleNamespace(kind="constellation", target=target),
+                                 shaped=True, morph=SimpleNamespace(kind="constellation", target=target), viz=None,
                                  cap=mock.Mock(), credit=mock.Mock(),
                                  start_anim=mock.Mock(), preload=mock.Mock(),
                                  update_bottom_label=mock.Mock())

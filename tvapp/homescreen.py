@@ -13,7 +13,8 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 
 import datetime
-import math
+import hashlib
+import json
 import os
 import random
 
@@ -45,6 +46,8 @@ PHOTO_FADE = 1.5        # seconds, crossfade
 REFRESH_PHOTOS = 6 * 3600
 NOW_EVERY = 3.0          # seconds between YouTube now-playing polls (only while Home is visible)
 SHAPE_MS = 66            # ~15 fps while a shape is morphing or the visualizer is running
+ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
+MUSIC_DIM = 0.34         # how far the photo darkens behind the visualizer
 BLUR_K = 16              # frosted glass samples a 1/16 copy of the photo
 
 
@@ -72,6 +75,12 @@ class IdleTracker:
         return False
 
 
+def idle_delay(quiet, music, state):
+    """Seconds of no input before ambient: shorter while YouTube plays in the background."""
+    playing = bool(state and state.get("status") == "Playing")
+    return min(quiet, music) if playing else quiet
+
+
 def search_scope(sname):
     """Which catalog the phone/TV search should be scoped to, from the screen we are leaving."""
     return {"movies": "movie", "series": "series"}.get(sname)
@@ -92,13 +101,13 @@ def photo_label(item):
     return cap, tail
 
 
-def bottom_label(item, state=None, ambient=False):
-    """Choose track metadata while available, otherwise photo credit or a quiet ambient label."""
+def bottom_label(item, state=None):
+    """Track title/artist while something is playing, otherwise the photo's caption and credit."""
     state = state or {}
     title = (state.get("title") or "").strip()
     if state.get("status") == "Playing" and title:
         return title, (state.get("artist") or "").strip()
-    return ("", "") if ambient else photo_label(item)
+    return photo_label(item)
 
 
 def fade_step(value, target, dt, seconds):
@@ -147,6 +156,52 @@ def home_css(scale=1.0):
 
 # ---------------------------------------------------------------- photo canvas
 
+def gray_rows(pb):
+    """Small grayscale rows of a pixbuf (~240 px wide) for horizon tracing."""
+    sm = pb.scale_simple(shapes.TRACE_W, max(20, round(shapes.TRACE_W * pb.get_height() / pb.get_width())),
+                         GdkPixbuf.InterpType.BILINEAR)
+    w, h, rs, nc, d = sm.get_width(), sm.get_height(), sm.get_rowstride(), sm.get_n_channels(), sm.get_pixels()
+    gray = [[(d[y * rs + x * nc] * 77 + d[y * rs + x * nc + 1] * 150 + d[y * rs + x * nc + 2] * 29) >> 8
+             for x in range(w)] for y in range(h)]
+    blue = [[d[y * rs + x * nc + 2] - d[y * rs + x * nc] for x in range(w)] for y in range(h)]
+    return gray, blue
+
+
+def traced(path, w, h):
+    """Worker-thread: horizon trace for a photo, cached in DATA/shapecache keyed by file name + size
+    (the photo is only decoded again on a cache miss)."""
+    try:
+        st = os.stat(path)
+        key = hashlib.sha1(f"v2:{os.path.basename(path)}:{st.st_size}:{int(st.st_mtime)}".encode()).hexdigest()[:20]
+        cache = screens.DATA / "shapecache"
+        f = cache / (key + ".json")
+        try:
+            return json.loads(f.read_text())["trace"]
+        except (OSError, ValueError, KeyError):
+            pass
+        trace = shapes.trace_horizon(*gray_rows(cover_pixbuf(path, w, h)))
+        cache.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"trace": trace}))
+        old = sorted(cache.glob("*.json"), key=lambda p: p.stat().st_mtime)[:-80]
+        for p in old:
+            p.unlink(missing_ok=True)
+        return trace
+    except Exception as exc:
+        print("home trace:", exc)
+        return None
+
+
+def surface_palette(small):
+    """Accent colours for the visualizer from the small (frosted-glass) copy of a photo."""
+    try:
+        small.flush()
+        return shapes.palette_from_bgrx(bytes(small.get_data()), small.get_width(), small.get_height(),
+                                        small.get_stride())
+    except Exception as exc:
+        print("home palette:", exc)
+        return None
+
+
 def load_surface(path, w, h):
     """Worker-thread: decode, cover-crop and bake a soft scrim (readable clock/caption) into an ARGB surface."""
     pb = cover_pixbuf(path, w, h)
@@ -189,7 +244,7 @@ class PhotoCanvas(Gtk.DrawingArea):
         self.blur_cur = self.blur_prev = None
         self.blur_k = BLUR_K
         self.extra = None       # hook(cr): the network lines are drawn here, in the same pass as the photo
-        self.ambient = False
+        self.ambient = False    # ambient mode shows the same sharp photo; dim darkens it while music plays
         self.fade = 1.0
         self.dim = 0.0
         self.set_has_window(False)
@@ -223,26 +278,7 @@ class PhotoCanvas(Gtk.DrawingArea):
 
     def on_draw(self, _w, cr):
         w, h = self.get_allocated_width(), self.get_allocated_height()
-        if self.ambient and self.blur_cur is not None:
-            cr.save()
-            cr.scale(self.blur_k, self.blur_k)
-            for surf, alpha in self.blur_layers():
-                cr.set_source_surface(surf, 0, 0)
-                src = cr.get_source()
-                src.set_filter(cairo.FILTER_BILINEAR)
-                src.set_extend(cairo.EXTEND_PAD)
-                cr.paint_with_alpha(alpha)
-            cr.restore()
-            # Cool dark scrim preserves the photo's color and detail without competing with the mesh.
-            cr.set_source_rgba(0.025, 0.04, 0.09, 0.56)
-            cr.paint()
-            vignette = cairo.RadialGradient(w / 2, h / 2, min(w, h) * 0.16,
-                                            w / 2, h / 2, max(w, h) * 0.72)
-            vignette.add_color_stop_rgba(0, 0.015, 0.025, 0.055, 0.0)
-            vignette.add_color_stop_rgba(1, 0.005, 0.012, 0.035, 0.64)
-            cr.set_source(vignette)
-            cr.paint()
-        elif self.ambient or self.cur is None:
+        if self.cur is None:
             g = cairo.LinearGradient(0, 0, w, h)
             g.add_color_stop_rgb(0, 0.05, 0.07, 0.12)
             g.add_color_stop_rgb(0.55, 0.07, 0.09, 0.15)
@@ -260,6 +296,9 @@ class PhotoCanvas(Gtk.DrawingArea):
             cr.set_source_surface(self.cur, 0, 0)
             cr.paint()
             cr.set_operator(cairo.OPERATOR_OVER)
+        if self.dim > 0.003:            # the visualizer's stage: the same sharp photo, a little darker
+            cr.set_source_rgba(0.01, 0.015, 0.035, MUSIC_DIM * self.dim)
+            cr.paint()
         if self.extra:
             self.extra(cr)
         return False
@@ -279,6 +318,7 @@ class AmbientHomeScreen(Screen):
         amb = self.cfg["ambient"]
         self.interval = amb["interval"]
         self.idle = IdleTracker(amb["idle"], time.monotonic())
+        self.idle_quiet, self.idle_music = amb["idle"], amb["idle_music"]
         self.chrome = 1.0
         self.anim_id = 0
         self.last_anim = time.monotonic()
@@ -296,9 +336,23 @@ class AmbientHomeScreen(Screen):
         self.dust = []
         self.geom = None
         self.prev_cells = set()
+        self.shapes_mode = self.cfg["shapes"] if self.style == "network" else "off"
         self.viz_on = self.cfg["visualizer"] and self.style == "network"
         self.morph = shapes.Morph()
+        self.trace = None              # the current photo's sky-line (normalised), or None
+        self.palette = None            # the current photo's accent colours for the visualizer
+        self.doodles = shapes.load_doodles(screens.ASSETS / "shapes.json") if self.style == "network" else []
+        self.viz = None                # shapes.Viz while the music visualizer runs
+        self.viz_stop = False          # music stopped: flowing back to the still sky-line
+        self.viz_prev = None           # last frame's dot positions (motion streaks)
+        self.beat_raw = 0.0
+        self.viz_modes = [m for m in os.environ.get("IMACTV_VIZ_MODES", "").split(",") if m] or None  # screenshot hook
+        self.viz_every = float(os.environ.get("IMACTV_VIZ_EVERY") or 0) or None                      # screenshot hook
+        self.glow = None
+        self.still = None              # the still shape the dots hold (sky-line, doodle or wave)
         self.shaped = False            # a shape has been chosen for this ambient stretch
+        self.shape_since = 0.0
+        self.last_animal = -ANIMAL_EVERY
         self.shape_geom = None
         self.shape_cells = set()
         self.shape_id = 0
@@ -417,7 +471,6 @@ class AmbientHomeScreen(Screen):
             for w in self.items:
                 if w.keep_in_ambient:
                     w.on_ambient(False)
-                    w.widget.set_opacity(1.0)
             self.wake_shapes()
             self.start_anim()
         return woke
@@ -429,7 +482,6 @@ class AmbientHomeScreen(Screen):
         for w in self.items:
             if w.keep_in_ambient:
                 w.on_ambient(True)
-                w.widget.set_opacity(0.0)
         self.start_anim()
 
     # ---- photos
@@ -444,6 +496,8 @@ class AmbientHomeScreen(Screen):
                 item = self.library.next()
                 if item:
                     surf = load_surface(item["path"], self.shell.sw, self.shell.sh)   # (photo, blurred copy)
+                    trace = traced(item["path"], self.shell.sw, self.shell.sh) if self.style == "network" else None
+                    item = dict(item, trace=trace, palette=surface_palette(surf[1]))
             except Exception as exc:
                 print("home photo:", exc)
                 surf = None
@@ -470,9 +524,17 @@ class AmbientHomeScreen(Screen):
         item, (surf, blur) = self.pending
         self.pending = None
         self.current_item = item
+        self.trace = item.get("trace") if item else None
+        self.palette = item.get("palette") if item else None
         self.update_bottom_label()
         self.canvas.show_surface(surf, blur, animate=self.canvas.cur is not None)
         self.photo_due = time.monotonic() + self.interval
+        if self.viz:
+            base = self.base_shape()
+            if base:
+                self.viz.set_base(base)
+        elif self.shaped and self.morph.kind == "photo":
+            self.reform(time.monotonic())
         self.start_anim()
         self.preload()
 
@@ -496,6 +558,7 @@ class AmbientHomeScreen(Screen):
             return True
         if self.shell.sheet:
             self.idle.touch(now)          # an open pairing/power sheet counts as use
+        self.idle.idle_after = idle_delay(self.idle_quiet, self.idle_music, self.now_state)
         if self.idle.check(now):
             self.enter_ambient()
         for w in self.items:
@@ -534,14 +597,17 @@ class AmbientHomeScreen(Screen):
         self.now_busy = False
         key = lambda s: (s["status"], s["title"], s["artist"]) if s else None
         if key(state) != key(self.now_state):
+            new_track = bool(state and self.now_state and state.get("title") != self.now_state.get("title"))
             self.now_state = state
+            if self.viz and new_track and state.get("status") == "Playing" and not self.viz_stop:
+                self.viz.switch(t=time.monotonic(), lv=self.lv)          # every track gets a fresh mode
             if self.cont:
                 self.cont.set_now(state, auto_focus=self.auto_focus)
             self.update_bottom_label()
         return False
 
     def update_bottom_label(self):
-        cap, credit = bottom_label(self.current_item, self.now_state, self.idle.ambient)
+        cap, credit = bottom_label(self.current_item, self.now_state)
         self.cap.set_text(cap)
         self.credit.set_text(credit)
 
@@ -573,9 +639,6 @@ class AmbientHomeScreen(Screen):
         self.canvas.queue_draw_region(region)
 
     def draw_links(self, cr):
-        if self.canvas.ambient:
-            self.draw_shape(cr)
-            return
         owned = self.morph.target is not None        # the morph draws the dots while it owns them
         network.draw_network(cr, self.geom, self.chrome, 0.0 if owned else self.dust_amt)
         self.draw_shape(cr)
@@ -598,13 +661,26 @@ class AmbientHomeScreen(Screen):
         return bool(self.audio and self.audio.levels().get("active"))
 
     def shape_candidate(self):
-        return self.viz_on and self.music_active()
+        return self.shapes_mode != "off" and (self.trace is not None) or (self.viz_on and self.music_active())
+
+    def base_shape(self):
+        """The photo's sky-line in screen pixels (or a calm wave when the photo has none and music plays)."""
+        sw, sh = self.shell.sw, self.shell.sh
+        if self.shapes_mode != "off" and self.trace:
+            return {"pts": [(x * sw, y * sh) for x, y in self.trace["pts"]], "links": self.trace["links"],
+                    "kind": "photo"}
+        if self.viz_on and self.music_active():
+            sp = shapes.wave_shape()
+            sp["pts"] = [(x * sw, y * sh) for x, y in sp["pts"]]
+            return sp
+        return None
 
     def pick_shape(self, now):
-        sw, sh = self.shell.sw, self.shell.sh
-        if self.viz_on and self.music_active():
-            return shapes.constellation_shape(sw, sh)
-        return None
+        if (self.shapes_mode == "photo+animals" and self.doodles and now - self.last_animal >= ANIMAL_EVERY
+                and not self.music_active()):
+            self.last_animal = now
+            return shapes.place_doodle(self.rng.choice(self.doodles), self.shell.sw, self.shell.sh, self.rng)
+        return self.base_shape()
 
     def begin_shapes(self, now):
         """Called once the tiles/labels have faded: dust glides onto the chosen shape."""
@@ -613,28 +689,82 @@ class AmbientHomeScreen(Screen):
         shape = self.pick_shape(now)
         if shape:
             self.shaped = True
+            self.shape_since = now
+            self.viz = None
+            self.still = shape
             self.morph.start(shape)
             self.start_shape_timer()
 
+    def reform(self, now, prefer_other=False):
+        """New photo (or the 5-minute doodle rotation) while still: dissolve and form the next shape."""
+        if not (self.shaped and self.idle.ambient) or self.viz:
+            return
+        if prefer_other and self.morph.kind == "photo" and self.doodles:
+            self.last_animal = -ANIMAL_EVERY
+        elif prefer_other:
+            self.last_animal = now
+        shape = self.pick_shape(now)
+        self.shape_since = now
+        if shape:
+            self.still = shape
+            self.morph.start(shape)
+        else:
+            self.shaped = False
+            self.morph.release()
+        self.start_shape_timer()
+
     def wake_shapes(self):
         self.shaped = False
+        self.viz_stop = True              # the visualizer keeps moving while its dots glide home
         self.morph.release()
         if self.audio:
             self.stop_audio()
         self.dust_amt = max(self.dust_amt, 0.0)
         self.start_shape_timer()
 
+    def start_viz(self):
+        """Music while the dots hold the still shape: the sky-line starts to move, then the modes take over."""
+        base = self.base_shape()
+        if not base or len(base["pts"]) > shapes.VIZ_N:
+            return
+        start = self.still if self.morph.target is not None else None     # flow out of what is showing
+        self.viz = shapes.Viz(base, self.shell.sw, self.shell.sh, self.rng, doodles=self.doodles,
+                              palette=self.palette, modes=self.viz_modes, every=self.viz_every, start=start)
+        self.viz_stop = False
+        if self.morph.target is None:
+            self.morph.start(base)
+        self.still = base
+        self.start_shape_timer()
+
     def sync_shapes(self, now):
-        """1 s housekeeping: start the mesh after the fade, release it on silence, and run audio capture."""
+        """1 s housekeeping: start shapes after the fade, run the visualizer while music plays, ease back
+        to the still sky-line when it stops, rotate doodles, and run audio capture."""
         if self.style != "network":
             return
         if self.idle.ambient and self.active():
             self.begin_shapes(now)
-            if self.shaped:
-                if not self.music_active() and self.morph.dir >= 0:
-                    self.shaped = False
-                    self.morph.release()
-                    self.start_shape_timer()
+        if self.idle.ambient and self.active() and self.shaped:
+            music = self.viz_on and self.music_active()
+            viz = self.viz
+            if music and (viz is None or self.viz_stop) and self.morph.dir >= 0:
+                if viz is None:
+                    self.start_viz()
+                self.viz_stop = False            # music came back while flowing home: carry on
+            elif viz is not None and not music and not self.viz_stop:
+                self.viz_stop = True             # flow back to the ridge; step_shape lands it on the still shape
+                if viz.mode != "ridge":
+                    base = self.base_shape()
+                    if base:
+                        viz.set_base(base)
+                    viz.switch("ridge", t=now, lv=self.lv)
+                self.start_shape_timer()
+            elif viz is None and not music and self.morph.dir >= 0 and self.morph.kind == "wave":
+                self.shaped = False
+                self.morph.release()
+                self.start_shape_timer()
+            elif (viz is None and self.shapes_mode == "photo+animals" and self.doodles
+                  and not self.morph.moving and now - self.shape_since >= ANIMAL_EVERY):
+                self.reform(now, prefer_other=True)
         listen = self.viz_on and self.idle.ambient and self.active() and self.chrome <= 0.0
         if listen and not self.audio and not self.fake_levels and now >= self.audio_retry_due:
             self.start_audio()
@@ -671,12 +801,13 @@ class AmbientHomeScreen(Screen):
     def shape_needs_timer(self):
         lv = self.lv
         return (self.morph.moving or bool(self.audio) or self.fake_levels and self.idle.ambient
-                or max(lv.values()) > 0.01)
+                or self.viz is not None or self.canvas.dim > 0.0 or max(lv.values()) > 0.01)
 
     def start_shape_timer(self):
         if self.shape_id or not self.active():
             return
-        if self.morph.target is not None or ((self.audio or self.fake_levels) and self.idle.ambient):
+        if (self.morph.target is not None or self.viz is not None
+                or ((self.audio or self.fake_levels) and self.idle.ambient)):
             self.last_shape = time.monotonic()
             self.shape_period = SHAPE_MS
             self.shape_id = GLib.timeout_add(SHAPE_MS, self.shape_tick)
@@ -692,8 +823,9 @@ class AmbientHomeScreen(Screen):
         if not self.shape_needs_timer():
             self.shape_id = 0
             return False
-        lively = self.morph.moving or self.fake_levels or max(self.lv.values()) > 0.01
-        period = SHAPE_MS if lively else 250          # audio is on but silent: just keep an eye on the levels
+        lively = (self.morph.moving or self.fake_levels or self.viz is not None or self.canvas.dim > 0.0
+                  or max(self.lv.values()) > 0.01)
+        period = SHAPE_MS if lively else 500          # audio is on but silent: just keep an eye on the levels
         if period != self.shape_period:
             self.shape_period = period
             self.shape_id = GLib.timeout_add(period, self.shape_tick)
@@ -713,25 +845,67 @@ class AmbientHomeScreen(Screen):
                 tgt = {}
         else:
             tgt = {}
+        raw = float(tgt.get("beat", 0.0))
+        beat = raw > 0.6 and raw > self.beat_raw + 0.3
+        self.beat_raw = raw
         self.lv = shapes.ease_levels(self.lv, tgt, dt)
+        dim = 1.0 if (self.viz is not None and not self.viz_stop and self.idle.ambient) else 0.0
+        if self.canvas.dim != dim:
+            self.canvas.dim = fade_step(self.canvas.dim, dim, dt, 1.6)
+            self.canvas.queue_draw()           # the whole photo darkens: ~1.6 s of full repaints, once
         if m.target is None:
+            self.viz = None
+            self.viz_prev = None
             if self.shape_geom is not None:
                 self.shape_geom = None
                 self.invalidate_cells(self.shape_cells)
                 self.shape_cells = set()
             return
-        if (not m.moving and self.shape_geom is not None and max(self.lv.values()) < 0.01
-                and not self.fake_levels):
+        fr = None
+        if self.viz is not None:
+            self.viz.step(dt, self.lv, beat=beat and not self.viz_stop, t=now, auto=not self.viz_stop)
+            fr = self.viz.frame(now, self.lv)
+            m.target = dict(self.still or m.target, pts=fr["pts"], links=[])
+            if (self.viz_stop and self.viz.settled and self.viz.mode == "ridge" and self.idle.ambient
+                    and max(self.lv.values()) < 0.02 and self.still and self.still.get("kind") == "photo"
+                    and not m.moving):
+                m.target = self.still = self.viz.base
+                self.viz = None
+                self.viz_stop = False
+                self.viz_prev = None
+                fr = None
+            elif self.viz_stop and self.viz.settled and self.idle.ambient and not m.moving and not (
+                    self.still and self.still.get("kind") == "photo"):
+                self.shaped = False                    # no sky-line to rest on: back to drifting dust
+                m.release()
+        elif (not m.moving and self.shape_geom is not None and max(self.lv.values()) < 0.01
+              and not self.fake_levels):
             return                                  # holding still and silent: nothing to repaint
         s = self.shell.scale
         pts = m.positions(self.origin, now)
         alphas = m.alphas(len(self.dust), self.dust_amt)
-        if max(self.lv["bass"], 0.0) > 0.01:
-            pts = shapes.viz_points(pts, (m.cx, m.cy), self.lv["bass"])
-        links = [(i, j, math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])) for i, j in m.target["links"]]
+        if fr is None:
+            if self.lv["bass"] > 0.01:
+                pts = shapes.viz_points(pts, (m.cx, m.cy), self.lv["bass"])
+            links = [(i, j, 1.0) for i, j in m.target["links"]]
+        else:
+            alphas = [a * b for a, b in zip(alphas, fr["alpha"])]
+            links = fr["links"]
+        geo = [(i, j, math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1])) for i, j, _ in links]
+        tails = None
+        if fr is not None and fr["trail"] > 0.02 and self.viz_prev and len(self.viz_prev) == len(pts):
+            tails = [(x - 4 * (x - px), y - 4 * (y - py)) for (x, y), (px, py) in zip(pts, self.viz_prev)]
+            n = len(pts)
+            geo_pts = pts + tails
+            geo += [(i, n + i, math.hypot(pts[i][0] - tails[i][0], pts[i][1] - tails[i][1]))
+                    for i in range(n) if alphas[i] > 0.02]
+        else:
+            geo_pts = pts
+        self.viz_prev = pts if fr is not None else None
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
-                           "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv)}
-        cells = network.geometry_cells({"pts": pts, "n": 0, "links": links}, margin=round(24 * s))
+                           "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
+                           "tails": tails, "beat": beat}
+        cells = network.geometry_cells({"pts": geo_pts, "n": 0, "links": geo}, margin=round(22 * s))
         dirty = cells | self.shape_cells
         self.shape_cells = cells
         self.invalidate_cells(dirty)
@@ -749,45 +923,124 @@ class AmbientHomeScreen(Screen):
         g = self.shape_geom
         if not g:
             return
+        if g["viz"] is not None:
+            self.draw_viz(cr, g)
+            return
         s, t, pts, lv, e = g["scale"], g["t"], g["pts"], g["lv"], g["e"]
         cx, cy = g["centre"]
         rmax = g["rmax"] * 1.05
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
         cr.set_line_width(max(1.3, 1.3 * s))
-        for i, j, d in g["links"]:
-            a = 0.23 * e * e + 0.08 * lv["mid"] * e
+        for i, j, _a in g["links"]:
+            a = 0.30 * e * e + 0.10 * lv["mid"] * e
             if lv["beat"] > 0.02:
                 mx, my = (pts[i][0] + pts[j][0]) / 2, (pts[i][1] + pts[j][1]) / 2
                 a += shapes.wave_boost(math.hypot(mx - cx, my - cy) / rmax, lv["beat"]) * e
             if a < 0.01:
                 continue
-            cr.set_source_rgba(0.78, 0.87, 1.0, min(0.78, a * 0.82))
+            cr.set_source_rgba(1, 1, 1, min(0.9, a))
             cr.move_to(*pts[i])
             cr.line_to(*pts[j])
             cr.stroke()
         for i, (x, y) in enumerate(pts):
-            tw = shapes.twinkle(i, t, lv["treble"]) if lv["treble"] > 0.02 else 0.0
-            a = g["alphas"][i] * (0.5 + 0.4 * tw)
+            a = g["alphas"][i] * 0.85
             if a < 0.01:
                 continue
-            d = (8.0 + (3.5 if i % 3 == 0 else 0.0)) * s * (1 + 0.5 * tw + 0.35 * lv["bass"])
-            shape = self.cfg["node_shape"] if i >= 16 else ("hexagon" if i % 2 == 0 else "octagon")
-            polygon = network.poly_points(shape, d, x, y)
-            # A little glass fill and cool edge glow make the nodes read as the app's shapes at TV distance.
-            cr.set_source_rgba(0.56, 0.72, 1.0, min(0.25, 0.08 + 0.12 * lv["mid"] + 0.08 * tw))
-            cr.move_to(*polygon[0])
-            for point in polygon[1:]:
-                cr.line_to(*point)
+            d = 3.2 * s
+            cr.set_source_rgba(1, 1, 1, min(1.0, a))
+            cr.move_to(x, y - d)
+            cr.line_to(x + d, y)
+            cr.line_to(x, y + d)
+            cr.line_to(x - d, y)
             cr.close_path()
-            cr.fill_preserve()
-            for glow in (3.4, 1.8):
-                cr.set_source_rgba(0.56, 0.76, 1.0, min(0.24, (0.08 + 0.14 * tw) / glow))
-                cr.set_line_width(glow * s)
-                cr.stroke_preserve()
-            cr.set_source_rgba(0.9, 0.95, 1.0, min(0.92, a + 0.12))
-            cr.set_line_width(max(1.2, 1.5 * s))
+            cr.fill()
+        cr.restore()
+
+    def glow_sprite(self):
+        """A soft round light, rendered once and stamped (as a mask, so any colour) where it is needed."""
+        if self.glow is None:
+            r = max(8, round(22 * self.shell.scale))
+            surf = cairo.ImageSurface(cairo.FORMAT_A8, 2 * r, 2 * r)
+            c = cairo.Context(surf)
+            g = cairo.RadialGradient(r, r, 0, r, r, r)
+            g.add_color_stop_rgba(0, 0, 0, 0, 1.0)
+            g.add_color_stop_rgba(0.25, 0, 0, 0, 0.45)
+            g.add_color_stop_rgba(1, 0, 0, 0, 0.0)
+            c.set_source(g)
+            c.paint()
+            self.glow = (surf, r)
+        return self.glow
+
+    def draw_viz(self, cr, g):
+        s, t, pts, lv, fr = g["scale"], g["t"], g["pts"], g["lv"], g["viz"]
+        alphas, depth = g["alphas"], fr["depth"]
+        pal = self.viz.palette if self.viz else shapes.DEFAULT_PALETTE
+        k = fr["colour"]
+        line, spark, halo = pal[k % len(pal)], pal[(k + 1) % len(pal)], pal[(k + 2) % len(pal)]
+        bass, mid, beat = lv["bass"], lv["mid"], lv["beat"]
+        cr.save()
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        if g["tails"]:
+            tr = fr["trail"]
+            cr.set_line_width(max(1.0, 1.6 * s))
+            for i, (x, y) in enumerate(pts):
+                a = alphas[i] * 0.22 * tr
+                if a > 0.01:
+                    tx, ty = g["tails"][i]
+                    cr.set_source_rgba(*halo, a)
+                    cr.move_to(x, y)
+                    cr.line_to(tx, ty)
+                    cr.stroke()
+        base_a = 0.20 + 0.10 * mid + 0.12 * beat
+        for i, j, la in g["links"]:
+            dd = (depth[i] + depth[j]) / 2 if depth else 0.75
+            a = base_a * la * min(alphas[i], alphas[j]) * (0.30 + 0.70 * dd)
+            if a < 0.01:
+                continue
+            cr.set_source_rgba(*line, min(0.8, a))
+            cr.set_line_width(max(1.0, 1.25 * s * (0.6 + 0.6 * dd)))
+            cr.move_to(*pts[i])
+            cr.line_to(*pts[j])
             cr.stroke()
+        if fr["pulses"]:
+            cr.set_line_width(max(1.6, 2.4 * s))
+            for x0, y0, x1, y1, a in fr["pulses"]:
+                cr.set_source_rgba(*spark, 0.85 * a)
+                cr.move_to(x0, y0)
+                cr.line_to(x1, y1)
+                cr.stroke()
+        sprite, r = self.glow_sprite()
+        hub = self.cfg["node_shape"]
+        for i, (x, y) in enumerate(pts):
+            a = alphas[i]
+            if a < 0.02:
+                continue
+            dd = depth[i] if depth else 0.75
+            tw = shapes.twinkle(i, t, lv["treble"]) if lv["treble"] > 0.02 else 0.0
+            if i % 5 == 0 and dd > 0.45 and (beat > 0.05 or tw > 0.3):
+                cr.set_source_rgba(*halo, min(0.5, (0.35 * beat + 0.25 * tw) * a * dd))
+                cr.mask_surface(sprite, x - r, y - r)
+            d = (2.2 + 2.6 * dd) * s * (1 + 0.30 * bass + 0.5 * tw)
+            if i % 5 == 0:
+                poly = network.poly_points(hub, d * 2.0, x, y)
+                network.poly_path(cr, poly)
+                cr.set_source_rgba(*line, min(0.22, 0.06 + 0.10 * mid + 0.06 * tw) * a)
+                cr.fill_preserve()
+                cr.set_source_rgba(1, 1, 1, min(0.9, (0.45 + 0.40 * dd) * a))
+                cr.set_line_width(max(1.0, 1.3 * s))
+                cr.stroke()
+            else:
+                cr.set_source_rgba(1, 1, 1, min(1.0, (0.40 + 0.45 * dd + 0.3 * tw) * a))
+                cr.move_to(x, y - d)
+                cr.line_to(x + d, y)
+                cr.line_to(x, y + d)
+                cr.line_to(x - d, y)
+                cr.close_path()
+                cr.fill()
+        for _x0, _y0, x1, y1, a in fr["pulses"]:
+            cr.set_source_rgba(*spark, 0.7 * a)
+            cr.mask_surface(sprite, x1 - r, y1 - r)
         cr.restore()
 
     def needs_anim(self):

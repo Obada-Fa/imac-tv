@@ -201,3 +201,79 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GenerativeVizTests(unittest.TestCase):
+    def setUp(self):
+        import random
+        self.rng = random.Random(7)
+        base = shapes.wave_shape()
+        base["pts"] = [(x * 1920, y * 1080) for x, y in base["pts"]]
+        self.base = base
+        self.doodles = [{"name": "box", "pts": [(0, 0), (1, 0), (1, 1), (0, 1), (0.5, 0.5)],
+                         "strokes": [[0, 1, 2, 3, 0], [0, 4, 2]], "aspect": 1.0}]
+        self.lv = {"bass": 0.6, "mid": 0.5, "treble": 0.4, "beat": 0.0}
+
+    def test_every_mode_moves_the_same_dots_on_screen(self):
+        for name in shapes.VIZ_MODES:
+            viz = shapes.Viz(self.base, 1920, 1080, self.rng, doodles=self.doodles, modes=[name])
+            viz.switch(name)
+            for f in range(40):
+                viz.step(1 / 15, self.lv, beat=f % 9 == 0, t=f / 15)
+            fr = viz.frame(3.0, self.lv)
+            self.assertEqual(viz.mode, name)
+            self.assertEqual(len(fr["pts"]), viz.n)
+            self.assertEqual(len(fr["alpha"]), viz.n)
+            shown = [p for p, a in zip(fr["pts"], fr["alpha"]) if a > 0]
+            self.assertGreater(len(shown), 20, name)
+            self.assertTrue(all(-200 < x < 2120 and -200 < y < 1280 for x, y in shown), name)
+            self.assertTrue(all(0 <= i < viz.n and 0 <= j < viz.n for i, j, _ in fr["links"]), name)
+
+    def test_ridge_at_rest_is_exactly_the_still_shape(self):
+        viz = shapes.Viz(self.base, 1920, 1080, self.rng)
+        fr = viz.frame(0.0, {})
+        m = len(self.base["pts"])
+        self.assertEqual(fr["pts"][:m], self.base["pts"])
+        self.assertTrue(all(a == 0 for a in fr["alpha"][m:]))
+
+    def test_mode_change_flows_from_where_the_dots_are(self):
+        viz = shapes.Viz(self.base, 1920, 1080, self.rng, modes=["constellation", "wire"])
+        before = viz.frame(1.0, self.lv)["pts"]
+        viz.switch(t=1.0, lv=self.lv)
+        self.assertEqual(viz.mode, "constellation")
+        start = viz.frame(1.0, self.lv)["pts"]
+        self.assertTrue(all(abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6 for a, b in zip(before, start)))
+        for _ in range(int(shapes.MODE_MORPH * 15) + 2):
+            viz.step(1 / 15, self.lv, t=1.0)
+        self.assertTrue(viz.settled)
+
+    def test_modes_rotate_on_their_own_and_randomly(self):
+        viz = shapes.Viz(self.base, 1920, 1080, self.rng, doodles=self.doodles, every=5)
+        seen = set()
+        for f in range(15 * 60):
+            viz.step(1 / 15, self.lv, t=f / 15)
+            seen.add(viz.mode)
+        self.assertGreaterEqual(len(seen), 4)
+
+    def test_beats_send_pulses_along_edges_and_relink_the_constellation(self):
+        viz = shapes.Viz(self.base, 1920, 1080, self.rng, modes=["constellation"])
+        viz.switch("constellation")
+        for _ in range(60):
+            viz.step(1 / 15, self.lv)
+        links0 = {(i, j) for i, j, _ in viz.frame(0, self.lv)["links"]}
+        viz.step(1 / 15, self.lv, beat=True)
+        self.assertTrue(viz.frame(0, self.lv)["pulses"])
+        for f in range(150):
+            viz.step(1 / 15, self.lv, beat=f % 10 == 0)
+        links1 = {(i, j) for i, j, _ in viz.frame(0, self.lv)["links"]}
+        self.assertNotEqual(links0, links1)
+
+    def test_palette_follows_the_photo_and_falls_back(self):
+        w, h = 8, 4
+        warm = bytes([20, 90, 230, 0] * (w * h))          # BGRx orange
+        pal = shapes.palette_from_bgrx(warm, w, h, w * 4)
+        self.assertEqual(len(pal), 3)
+        r, g, b = pal[0]
+        self.assertGreater(r, b)
+        gray = bytes([128, 128, 128, 0] * (w * h))
+        self.assertEqual(shapes.palette_from_bgrx(gray, w, h, w * 4), shapes.DEFAULT_PALETTE)

@@ -13,7 +13,7 @@ from pathlib import Path
 DEFAULT_CONFIG = {
     "widgets": ["clock", "weather", "pairing", "continue", "apps"],
     "weather": {},
-    "ambient": {"interval": 90, "idle": 120},
+    "ambient": {"interval": 90, "idle": 120, "idle_music": 30},   # idle_music: while YouTube plays
     "style": "network",
     "node_shape": "hexagon",
     "tile_shape": "rounded",
@@ -127,6 +127,7 @@ def parse_config(raw):
     if isinstance(a, dict):
         cfg["ambient"]["interval"] = _int(a.get("interval"), 90, 10, 3600)
         cfg["ambient"]["idle"] = _int(a.get("idle"), 120, 10, 7200)
+        cfg["ambient"]["idle_music"] = _int(a.get("idle_music"), 30, 10, 7200)
     return cfg
 
 

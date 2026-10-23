@@ -22,27 +22,27 @@ class HomeConfigTests(unittest.TestCase):
         (d / "home.json").write_text("{not json")
         cfg = widgets.load_config(d)
         self.assertEqual(cfg["widgets"], ["clock", "weather", "pairing", "continue", "apps"])
-        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 120})
+        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 120, "idle_music": 30})
         self.assertEqual(cfg["weather"], {})
 
     def test_valid_file_is_merged_over_defaults(self):
         cfg = widgets.parse_config({"widgets": ["clock", "apps", "clock", 7], "ambient": {"idle": 30},
                                     "weather": {"place": " Delft ", "lat": 52.0, "lon": 4.36}})
         self.assertEqual(cfg["widgets"], ["clock", "apps"])
-        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 30})
+        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 30, "idle_music": 30})
         self.assertEqual(cfg["weather"], {"place": "Delft", "lat": 52.0, "lon": 4.36})
 
     def test_bad_values_fall_back(self):
         cfg = widgets.parse_config({"widgets": "clock", "ambient": {"interval": "x", "idle": True},
                                     "weather": {"place": "Nowhere"}})
         self.assertEqual(cfg["widgets"], widgets.DEFAULT_CONFIG["widgets"])
-        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 120})
+        self.assertEqual(cfg["ambient"], {"interval": 90, "idle": 120, "idle_music": 30})
         self.assertEqual(cfg["weather"], {})  # a place without coordinates is ignored
         self.assertEqual(widgets.parse_config([1, 2])["widgets"], widgets.DEFAULT_CONFIG["widgets"])
 
     def test_numbers_are_clamped(self):
-        cfg = widgets.parse_config({"ambient": {"interval": 1, "idle": 10**6}})
-        self.assertEqual(cfg["ambient"], {"interval": 10, "idle": 7200})
+        cfg = widgets.parse_config({"ambient": {"interval": 1, "idle": 10**6, "idle_music": 2}})
+        self.assertEqual(cfg["ambient"], {"interval": 10, "idle": 7200, "idle_music": 10})
 
     def test_style_defaults_to_network_and_accepts_bubbles(self):
         self.assertEqual(widgets.parse_config(None)["style"], "network")

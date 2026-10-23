@@ -63,7 +63,14 @@ class HelperTests(unittest.TestCase):
                          ("Lofoten", "A. Photog · Bing"))
         self.assertEqual(homescreen.bottom_label(photo, {"status": "Stopped", "title": "Song"}),
                          ("Lofoten", "A. Photog · Bing"))
-        self.assertEqual(homescreen.bottom_label(photo, None, ambient=True), ("", ""))
+        # ambient without music keeps the photo's caption (it used to go blank with the blurred photo)
+        self.assertEqual(homescreen.bottom_label(photo, None), ("Lofoten", "A. Photog · Bing"))
+
+    def test_idle_delay_is_shorter_while_youtube_plays(self):
+        self.assertEqual(homescreen.idle_delay(120, 30, {"status": "Playing", "title": "x"}), 30)
+        self.assertEqual(homescreen.idle_delay(120, 30, {"status": "Paused"}), 120)
+        self.assertEqual(homescreen.idle_delay(120, 30, None), 120)
+        self.assertEqual(homescreen.idle_delay(20, 30, {"status": "Playing"}), 20)   # never longer than idle
 
     def test_fade_step_is_linear_and_clamped(self):
         self.assertAlmostEqual(homescreen.fade_step(1.0, 0.0, 0.25, 1.0), 0.75)

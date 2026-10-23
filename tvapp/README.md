@@ -31,13 +31,19 @@ the physical power button is required to start the iMac again.
 
 ## Home and ambient mode
 
-Home keeps its rotating photo background, clock and launcher widgets during normal use. After
-the configured idle delay, the clock and other Home controls fade away and the photo remains as
-a soft, dark blur behind a centered geometric music visualizer. The visualizer follows audio
-from the speaker monitor, and the lower-left caption shows the current song and artist when
-playback metadata is available. The first remote or keyboard input wakes Home and is swallowed.
-Ambient geometry is independent of the photo; it does not trace the image or draw the bundled
-Quick, Draw! doodles.
+Home keeps its rotating photo background, clock and launcher widgets during normal use. After the
+idle delay (`ambient.idle`, 120 s; `ambient.idle_music`, 30 s, while YouTube plays in the background)
+the tiles fade away, the clock shrinks, and the sharp photo stays with its caption. The drifting dots
+glide onto the photo's traced sky-line and hold still (no timer runs).
+
+While music plays (YouTube's now-playing status, or sound on the speaker monitor) the photo dims a
+little and the dots become a generative visualizer: the sky-line starts to move, then every track
+(and every minute or so) the dots flow into another randomly chosen mode: a re-linking
+constellation, a turning wireframe sphere or torus, counter-rotating rings, orbits with streaks, a
+rolling low-poly terrain, or a Quick, Draw! animal. Beats send light along the edges; colours come
+from the photo. When the music stops it flows back onto the still sky-line. The caption shows the
+song and artist while playback metadata is available. The first remote or keyboard input wakes Home
+and is swallowed.
 
 ## Media
 
