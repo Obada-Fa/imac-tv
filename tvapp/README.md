@@ -29,6 +29,16 @@ can revoke other paired phones or disable the old `?k=` link after migration.
 Power Off is full shutdown;
 the physical power button is required to start the iMac again.
 
+## Home and ambient mode
+
+Home keeps its rotating photo background, clock and launcher widgets during normal use. After
+the configured idle delay, the clock and other Home controls fade away and the photo remains as
+a soft, dark blur behind a centered geometric music visualizer. The visualizer follows audio
+from the speaker monitor, and the lower-left caption shows the current song and artist when
+playback metadata is available. The first remote or keyboard input wakes Home and is swallowed.
+Ambient geometry is independent of the photo; it does not trace the image or draw the bundled
+Quick, Draw! doodles.
+
 ## Media
 
 TV Home is our own catalog UI: it browses Cinemeta, lists Torrentio sources and

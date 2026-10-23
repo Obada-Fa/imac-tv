@@ -55,6 +55,16 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(homescreen.photo_label({"caption": "x", "credit": "Wikimedia Commons", "source": "wikimedia"})[1],
                          "Wikimedia Commons")
 
+    def test_bottom_label_prefers_track_metadata_and_restores_photo(self):
+        photo = {"caption": "Lofoten", "credit": "A. Photog", "source": "bing"}
+        self.assertEqual(homescreen.bottom_label(photo, {"status": "Playing", "title": "Song", "artist": "Artist"}),
+                         ("Song", "Artist"))
+        self.assertEqual(homescreen.bottom_label(photo, {"status": "Paused", "title": "Song"}),
+                         ("Lofoten", "A. Photog · Bing"))
+        self.assertEqual(homescreen.bottom_label(photo, {"status": "Stopped", "title": "Song"}),
+                         ("Lofoten", "A. Photog · Bing"))
+        self.assertEqual(homescreen.bottom_label(photo, None, ambient=True), ("", ""))
+
     def test_fade_step_is_linear_and_clamped(self):
         self.assertAlmostEqual(homescreen.fade_step(1.0, 0.0, 0.25, 1.0), 0.75)
         self.assertEqual(homescreen.fade_step(0.1, 0.0, 0.5, 1.0), 0.0)

@@ -189,6 +189,26 @@ def wave_shape():
     return sh
 
 
+def constellation_shape(width, height, rings=3, sides=8):
+    """Centered, independent geometric mesh for music visualization: nested octagonal rings."""
+    cx, cy = width / 2.0, height / 2.0
+    radius = min(width, height) * 0.34
+    pts = []
+    links = []
+    for ring in range(rings):
+        r = radius * (ring + 1) / rings
+        phase = (ring % 2) * math.pi / sides
+        start = len(pts)
+        pts.extend((cx + r * math.cos(2 * math.pi * i / sides + phase),
+                    cy + r * math.sin(2 * math.pi * i / sides + phase)) for i in range(sides))
+        links.extend((start + i, start + (i + 1) % sides) for i in range(sides))
+        if ring:
+            prev = start - sides
+            links.extend((prev + i, start + i) for i in range(sides))
+            links.extend((prev + i, start + (i + 1) % sides) for i in range(sides))
+    return {"pts": pts, "links": links, "kind": "constellation"}
+
+
 # ---------------------------------------------------------------- doodles (Quick, Draw! slice)
 
 def load_doodles(path):

@@ -152,6 +152,17 @@ class MorphTests(unittest.TestCase):
 
 
 class VizTests(unittest.TestCase):
+    def test_constellation_is_centered_nested_geometry_independent_of_photos(self):
+        mesh = shapes.constellation_shape(1920, 1080)
+        self.assertEqual(mesh["kind"], "constellation")
+        self.assertEqual(len(mesh["pts"]), 24)
+        self.assertEqual(len(mesh["links"]), 8 * (1 + 3 + 3))
+        xs, ys = [x for x, _ in mesh["pts"]], [y for _, y in mesh["pts"]]
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2, 960)
+        self.assertAlmostEqual((min(ys) + max(ys)) / 2, 540)
+        self.assertTrue(all(0 <= a < len(mesh["pts"]) and 0 <= b < len(mesh["pts"])
+                            for a, b in mesh["links"]))
+
     def test_levels_rise_fast_and_settle_in_about_two_seconds(self):
         lv = shapes.ease_levels({}, {"bass": 1.0, "beat": 1.0}, 0.1)
         self.assertGreater(lv["bass"], 0.6)
