@@ -42,6 +42,7 @@ def parse(stream):
            "hdr": bool(re.search(r"\bhdr(10)?\b", text, re.I)),
            "dv": bool(re.search(r"\bdv\b|dolby.?vision", text, re.I)),
            "codec": codec, "source": source,
+           "ten_bit": bool(re.search(r"\b10[ -]?bit\b|hi10", text, re.I)),
            "size_bytes": int(float(size.group(1)) * UNITS[size.group(2).upper()]) if size else 0,
            "seeders": int(seeds.group(1)) if seeds else 0,
            "languages": languages,
@@ -66,13 +67,18 @@ def label(src):
 
 def rank(sources, cfg):
     order = cfg.get("quality_order", [])
+    codecs = cfg.get("codec_order", ["H264", "", "HEVC", "AV1"])
     limit = cfg.get("max_size_gb", 25) * 1e9
     good = [s for s in sources if len(s.get("info_hash") or "") == 40 and not BAD.search(s.get("title", ""))
             and s.get("quality") != "cam" and s.get("size_bytes", 0) <= limit]
 
     def key(s):
+        # Quality first: a live 1080p always beats better-seeded 4K/720p; dead torrents (<2 seeds) go last.
         q = order.index(s["quality"]) if s["quality"] in order else len(order)
-        return (s["seeders"] < 5, q, s["dv"], -s["seeders"])
+        # Old/weak CPUs decode H.264 in hardware; HEVC (esp. 10-bit/HDR) and AV1 fall back to the CPU and stutter.
+        c = codecs.index(s.get("codec", "")) if s.get("codec", "") in codecs else len(codecs)
+        heavy = bool(s.get("ten_bit") or s.get("hdr") or s.get("dv"))
+        return (s["seeders"] < 2, q, c, heavy, s["seeders"] < 5, -s["seeders"])
     return sorted(good, key=key)
 
 

@@ -76,6 +76,21 @@ class StreamTests(unittest.TestCase):
         b = dict(a, info_hash="b" * 40, quality="720p", seeders=200)
         self.assertEqual(streams.best([a, b], config.load())["info_hash"], "b" * 40)
 
+    def test_rank_always_prefers_live_1080p(self):
+        a = {"info_hash": "a" * 40, "title": "a", "quality": "1080p", "dv": False, "size_bytes": 2e9, "seeders": 3}
+        uhd = dict(a, info_hash="b" * 40, quality="2160p", seeders=900)
+        hd = dict(a, info_hash="c" * 40, quality="720p", seeders=900)
+        self.assertEqual(streams.best([uhd, hd, a], config.load())["info_hash"], "a" * 40)
+        self.assertEqual(streams.best([uhd, hd], config.load())["quality"], "720p")
+
+    def test_rank_prefers_h264_for_old_cpus(self):
+        base = {"title": "x", "quality": "1080p", "dv": False, "hdr": False, "size_bytes": 2e9}
+        x265 = dict(base, info_hash="a" * 40, codec="HEVC", seeders=800)
+        x264 = dict(base, info_hash="b" * 40, codec="H264", seeders=40)
+        x264_10 = dict(x264, info_hash="c" * 40, ten_bit=True, seeders=900)
+        self.assertEqual(streams.best([x265, x264_10, x264], config.load())["info_hash"], "b" * 40)
+        self.assertTrue(streams.parse({"title": "M 1080p x264 10bit\n\U0001f464 5", "infoHash": "d" * 40})["ten_bit"])
+
 
 class SubsTests(unittest.TestCase):
     def test_pick_normalises_and_limits(self):
@@ -94,7 +109,7 @@ class SubsTests(unittest.TestCase):
 class PlayerTests(unittest.TestCase):
     def test_argv(self):
         argv = player.mpv_argv("http://h/u", title="T", subs=[{"url": "https://s/1.srt"}], start=95.5)
-        for flag in ("--fs", "--ontop", "--input-ipc-server=/tmp/mpv.sock", "--force-window=no", "--keep-open=no",
+        for flag in ("--fs", "--ontop", "--hwdec=auto-safe", "--input-ipc-server=/tmp/mpv.sock", "--force-window=no", "--keep-open=no",
                      "--slang=ar,ara,nl,dut,nld,en,eng", "--sub-file=https://s/1.srt", "--start=95.5",
                      "--title=T", "--force-media-title=T", "--sub-font=Noto Sans", "--osd-font=Inter", "--cache=yes"):
             self.assertIn(flag, argv)

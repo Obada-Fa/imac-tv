@@ -1461,6 +1461,7 @@ window {{ font-family: "Inter", "Noto Sans", "Noto Sans Arabic", sans-serif; }}
 .badge-best {{ font-size: {p(16)}px; font-weight: 900; letter-spacing: 2px; color: #111; background: #facc15; border-radius: {p(8)}px; padding: {p(4)}px {p(10)}px; }}
 .badge-none {{ font-size: {p(16)}px; }}
 .buffer-overlay {{ background: rgba(0,0,0,0.93); }}
+.buffer-overlay spinner {{ color: #ffffff; min-width: {p(96)}px; min-height: {p(96)}px; -gtk-icon-transform: scale(3); }}
 .buffer-title {{ font-size: {p(52)}px; font-weight: 800; color: #fff; }}
 .buffer-line {{ font-size: {p(22)}px; color: #9aa1ad; }}
 .buffer-status {{ font-size: {p(28)}px; font-weight: 600; color: #e6e9ee; }}

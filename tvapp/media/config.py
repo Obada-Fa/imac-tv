@@ -14,7 +14,8 @@ DEFAULTS = {
     "engine": "http://127.0.0.1:11470",
     "cache_bytes": 3221225472,
     "max_size_gb": 25,
-    "quality_order": ["1080p", "2160p", "720p", "480p"],
+    "quality_order": ["1080p", "720p", "2160p", "480p"],
+    "codec_order": ["H264", "", "HEVC", "AV1"],  # "" = codec not named in the release title
 }
 
 
