@@ -1381,8 +1381,14 @@ class BufferingOverlay(Gtk.Box):
             name += f"  ·  S{media['season']} E{media.get('episode')}"
         self.title.set_text(name or "Starting playback")
         self.source.set_text(buf.get("source") or "")
-        speed = (buf.get("speed") or 0) / 1_000_000
-        self.status.set_text(f"Connecting  ·  {int(buf.get('peers') or 0)} peers  ·  {speed:.1f} MB/s")
+        stage = buf.get("stage") or "Connecting…"
+        if buf.get("source"):  # past source picking: peers and speed mean something now
+            speed = (buf.get("speed") or 0) / 1_000_000
+            got = (buf.get("downloaded") or 0) / 1_000_000
+            stage += f"  ·  {int(buf.get('peers') or 0)} peers  ·  {speed:.1f} MB/s"
+            if got >= 1:
+                stage += f"  ·  {got:.0f} MB"
+        self.status.set_text(stage)
         if not self.get_visible():
             self.show()
             for c in self.get_children():

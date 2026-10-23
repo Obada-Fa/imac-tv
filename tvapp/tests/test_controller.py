@@ -247,6 +247,16 @@ class PlayMediaTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 c.action("audio", {"id": "x"})
 
+    def test_volume_uses_mpv_while_playing(self):
+        c = self.controller()
+        with mock.patch.object(server, "playback", return_value={"active": True}), \
+                mock.patch.object(server, "mpv", return_value=85) as m, mock.patch.object(server, "command") as run:
+            self.assertEqual(c.action("volume", {"direction": 1}), {"volume": 85})
+            m.assert_any_call("osd-msg-bar", "add", "volume", 5)
+            c.action("mute", {})
+            m.assert_any_call("osd-msg", "cycle", "mute")
+            run.assert_not_called()
+
     def test_playback_reports_lang_and_audio(self):
         tracks = [{"type": "sub", "id": 1, "lang": "ara", "selected": True}, {"type": "audio", "id": 1, "lang": "eng", "title": "Stereo"}]
         answers = {"time-pos": 3, "duration": 9, "pause": False, "media-title": "T", "track-list": tracks}

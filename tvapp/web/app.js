@@ -135,8 +135,8 @@
     if (view === 'buffering') {
       const b = s.buffering || {};
       $('buf-name').textContent = name || 'Starting…';
-      $('buf-source').textContent = b.source || 'Finding the best source…';
-      $('buf-stats').textContent = b.peers != null ? `${b.peers} peers · ${((b.speed || 0) / 1048576).toFixed(1)} MB/s` : '';
+      $('buf-source').textContent = [b.stage || 'Finding the best source…', b.source].filter(Boolean).join(' · ');
+      $('buf-stats').textContent = b.source ? `${b.peers || 0} peers · ${((b.speed || 0) / 1048576).toFixed(1)} MB/s` : '';
     } else if (view === 'playing') {
       $('np-title').textContent = name || 'Video';
       $('np-play').textContent = pb.paused ? '▶' : '⏸';

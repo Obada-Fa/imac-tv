@@ -94,7 +94,7 @@ class SubsTests(unittest.TestCase):
 class PlayerTests(unittest.TestCase):
     def test_argv(self):
         argv = player.mpv_argv("http://h/u", title="T", subs=[{"url": "https://s/1.srt"}], start=95.5)
-        for flag in ("--fs", "--ontop", "--input-ipc-server=/tmp/mpv.sock", "--force-window=immediate", "--keep-open=no",
+        for flag in ("--fs", "--ontop", "--input-ipc-server=/tmp/mpv.sock", "--force-window=no", "--keep-open=no",
                      "--slang=ar,ara,nl,dut,nld,en,eng", "--sub-file=https://s/1.srt", "--start=95.5",
                      "--title=T", "--force-media-title=T", "--sub-font=Noto Sans", "--osd-font=Inter", "--cache=yes"):
             self.assertIn(flag, argv)

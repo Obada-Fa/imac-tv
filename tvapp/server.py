@@ -2,6 +2,7 @@
 """iMac TV controller. The HTTP process deliberately never opens X11."""
 import hashlib
 import hmac
+import concurrent.futures
 import json
 import logging
 import os
@@ -511,7 +512,7 @@ class Controller:
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = "player", "buffering", ""
-            self.buffering = {"peers": 0, "speed": 0.0, "source": ""}
+            self.buffering = {"peers": 0, "speed": 0.0, "downloaded": 0, "source": "", "stage": "Finding the best source…"}
             self.media = {"type": kind, "id": item, "video_id": video_id, "season": season,
                           "episode": episode, "name": item}
             self._save_json(self.media_path, self.media)
@@ -586,12 +587,23 @@ class Controller:
                     self._return_home("details")
                 return
 
+    def _set_stage(self, generation, stage, **extra):
+        with self.lock:
+            if generation == self.generation and self.buffering is not None:
+                self.buffering.update(stage=stage, **extra)
+
     def _play_worker(self, generation, stream, start):
         try:
             with self.lock:
                 kind, item, video_id = self.media["type"], self.media["id"], self.media["video_id"]
                 season, episode = self.media.get("season"), self.media.get("episode")
             cfg = media_config.load()
+            # Title, sources and subtitles are independent: fetch them while the engine is checked.
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+            meta_job = pool.submit(addons.meta, kind, item)
+            streams_job = None if stream else pool.submit(addons.streams, kind, video_id)
+            subs_job = pool.submit(addons.subtitles, kind, video_id)
+            pool.shutdown(wait=False)
             torrents = media_engine.Engine(cfg["engine"])
             if not torrents.healthy():
                 raise RuntimeError(f"Can't reach the Stremio server at {cfg['engine']}")
@@ -599,23 +611,29 @@ class Controller:
                 torrents.configure_cache(cfg["cache_bytes"])
                 self.cache_ready = True
             try:
-                meta = addons.meta(kind, item) or {}
+                meta = meta_job.result() or {}
             except addons.AddonError:
                 meta = {}
             base_name = meta.get("name") or item
             name = base_name + (f" S{season:02d}E{episode:02d}" if season else "")
+            with self.lock:
+                if generation == self.generation:
+                    self.media.update(name=name, poster=meta.get("poster"), background=meta.get("background"))
             if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
                 sources = []
             else:
-                found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
+                found = [media_streams.parse(s) for s in streams_job.result()]
                 chosen = media_streams.best(found, cfg)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
                 sources = chosen.get("sources") or []
+            self._set_stage(generation, "Connecting to peers…", source=label)
+            if not torrents.create(info_hash, sources):
+                LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
             try:
-                tracks = media_subs.pick(addons.subtitles(kind, video_id), cfg["sub_langs"])
+                tracks = media_subs.pick(subs_job.result(), cfg["sub_langs"])
             except addons.AddonError:
                 tracks = []
             if not self._current(generation):
@@ -627,8 +645,6 @@ class Controller:
                 self.session = {"engine": torrents, "info_hash": info_hash, "pos": 0.0, "dur": 0.0,
                                 "entry": {"type": kind, "id": item, "video_id": video_id, "season": season,
                                           "episode": episode, "name": base_name, "poster": meta.get("poster")}}
-            if not torrents.create(info_hash, sources):
-                LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
             try:
                 os.unlink("/tmp/mpv.sock")
             except OSError:
@@ -658,12 +674,10 @@ class Controller:
                 if stats:
                     with self.lock:
                         if generation == self.generation and self.buffering:
-                            self.buffering.update(peers=stats["peers"], speed=stats["speed"])
-                    # mpv's window covers TV Home's buffering overlay, so say it on the black screen too.
-                    try:
-                        mpv("show-text", f"Buffering…  {stats['peers']} peers  ·  {stats['speed'] / 1e6:.1f} MB/s", 1500)
-                    except (OSError, RuntimeError, ValueError, TimeoutError):
-                        pass
+                            self.buffering.update(peers=stats["peers"], speed=stats["speed"],
+                                                  downloaded=stats["downloaded"])
+                            if stats["downloaded"] > 0:
+                                self.buffering["stage"] = "Loading video…"
                 try:
                     if mpv("get_property", "time-pos") is not None:
                         with self.lock:
@@ -732,12 +746,15 @@ class Controller:
             buffering = dict(self.buffering) if self.buffering and phase == "buffering" else None
             current_media = dict(self.media) if self.media else None
             deadline = self.timer.get("deadline")
-        try:
-            volume = command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=1)
-            percent = int(volume.split("%", 1)[0].rsplit("/", 1)[-1].strip())
-            muted = command(["pactl", "get-sink-mute", "@DEFAULT_SINK@"], timeout=1).endswith("yes")
-        except Exception:
-            percent, muted = None, None
+        try:  # while mpv plays, the remote's volume is mpv's own
+            percent, muted = round(mpv("get_property", "volume")), bool(mpv("get_property", "mute"))
+        except (OSError, RuntimeError, ValueError, TimeoutError, TypeError):
+            try:
+                volume = command(["pactl", "get-sink-volume", "@DEFAULT_SINK@"], timeout=1)
+                percent = int(volume.split("%", 1)[0].rsplit("/", 1)[-1].strip())
+                muted = command(["pactl", "get-sink-mute", "@DEFAULT_SINK@"], timeout=1).endswith("yes")
+            except Exception:
+                percent, muted = None, None
         temps = []
         for sensor in Path("/sys/class/hwmon").glob("hwmon*/temp*_input"):
             try:
@@ -841,12 +858,19 @@ class Controller:
                 direction = params.get("direction")
                 if direction not in (-1, 1):
                     raise ValueError("Invalid volume direction")
+                if playback()["active"]:
+                    # mpv's own volume works whatever sink HDMI audio uses, and shows a bar on the TV.
+                    mpv("osd-msg-bar", "add", "volume", direction * 5)
+                    return {"volume": round(mpv("get_property", "volume") or 0)}
                 volume = self.status()["volume"]
                 if volume is None:
                     raise RuntimeError("Audio output is unavailable")
                 command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{max(0, min(100, volume + direction * 5))}%"])
                 return {"volume": max(0, min(100, volume + direction * 5))}
             if action == "mute":
+                if playback()["active"]:
+                    mpv("osd-msg", "cycle", "mute")
+                    return {"ok": True}
                 command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
                 return {"ok": True}
             if action == "brightness":

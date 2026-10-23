@@ -15,8 +15,9 @@ def slang_arg(langs, default=None):
 
 
 def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_file=None):
-    # --ontop: the TV Home window is fullscreen too, and GNOME opens new windows behind the focused one.
-    argv = ["mpv", "--fs", "--ontop", f"--input-ipc-server={ipc}", "--force-window=immediate", "--keep-open=no",
+    # --force-window=no: the window maps with the first video frame, so TV Home's loading screen
+    # shows until then. --ontop: GNOME opens new windows behind the focused fullscreen Home.
+    argv = ["mpv", "--fs", "--ontop", f"--input-ipc-server={ipc}", "--force-window=no", "--keep-open=no",
             "--idle=no", "--no-terminal", f"--title={title}", f"--force-media-title={title}",
             f"--slang={slang or DEFAULT_SLANG}",
             "--cache=yes", "--demuxer-max-bytes=200MiB", "--demuxer-readahead-secs=90",
