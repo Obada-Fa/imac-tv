@@ -824,33 +824,6 @@ class RailsScreen(Screen):
             r.start()
 
 
-class HomeScreen(RailsScreen):
-    sname = "home"
-
-    def __init__(self, shell):
-        super().__init__(shell)
-        self.cont = self.make_rail("Continue watching", continue_items, "wide", quiet=True)
-        self.make_rail("Popular movies", lambda: catalog_items("movie"))
-        self.make_rail("Popular series", lambda: catalog_items("series"))
-        apps = self.make_rail("Apps", None, "app")
-        apps.set_items([{"app": "youtube", "name": "YouTube", "icon": "vacuumtube.svg",
-                         "kicker": "APP", "tagline": "Watch YouTube on the big screen with VacuumTube."}])
-        apps.state = "ready"
-        for title, kind, genre in (("Action movies", "movie", "Action"), ("Comedy movies", "movie", "Comedy"),
-                                   ("Drama series", "series", "Drama"), ("Animated series", "series", "Animation")):
-            self.make_rail(title, lambda k=kind, g=genre: catalog_items(k, g))
-        self.cont.start()
-
-    def on_enter(self, returning):
-        if returning and self.cont.state != "idle":
-            self.cont.reload()
-        super().on_enter(returning)
-
-    def first_focus(self, flat):
-        groups = self.focus_groups()
-        return groups[0][0] if groups else None
-
-
 GENRES = {"movie": ["Action", "Comedy", "Drama", "Thriller", "Sci-Fi", "Horror", "Animation", "Documentary"],
           "series": ["Drama", "Comedy", "Crime", "Animation", "Sci-Fi", "Mystery", "Documentary", "Reality-TV"]}
 
@@ -870,6 +843,15 @@ class BrowseScreen(RailsScreen):
         return groups[0][0] if groups else None
 
 
+SEARCH_SCOPES = {None: ("movie", "series"), "movie": ("movie",), "series": ("series",)}
+SEARCH_SCOPE_LABEL = {None: "movies and series", "movie": "Movies", "series": "Series"}
+
+
+def search_kinds(scope):
+    """Kinds a SearchScreen scoped to `scope` searches (None = both)."""
+    return SEARCH_SCOPES.get(scope, SEARCH_SCOPES[None])
+
+
 class SearchScreen(Screen):
     header = True
     sname = "search"
@@ -879,6 +861,7 @@ class SearchScreen(Screen):
         px = shell.px
         self.token = 0
         self.timer = 0
+        self.scope = None
         self.set_margin_top(px(130))
         self.set_margin_start(px(68))
         self.set_margin_end(px(68))
@@ -889,6 +872,11 @@ class SearchScreen(Screen):
         self.entry.connect("changed", self.on_changed)
         self.entry.connect("activate", lambda *_: self.run())
         self.pack_start(self.entry, False, False, 0)
+        self.chip = text_label("", "section-note")
+        self.chip.set_halign(Gtk.Align.START)
+        self.chip.set_margin_top(px(10))
+        self.chip.set_no_show_all(True)
+        self.pack_start(self.chip, False, False, 0)
         self.info = text_label("Type on your phone to search", "section-note")
         self.info.set_margin_top(px(14))
         self.info.set_margin_bottom(px(10))
@@ -920,6 +908,20 @@ class SearchScreen(Screen):
         self.entry.set_text(text)
         self.run()
 
+    def set_scope(self, kind):
+        """Limit search to "movie" or "series" (None = both); re-runs the current query."""
+        kind = kind if kind in ("movie", "series") else None
+        changed = kind != self.scope
+        self.scope = kind
+        self.entry.set_placeholder_text(f"Search {SEARCH_SCOPE_LABEL[kind]}" if kind else "Search movies and series")
+        self.chip.set_text(f"in {SEARCH_SCOPE_LABEL[kind]}" if kind else "")
+        self.chip.set_visible(bool(kind))
+        for k, rail in (("movie", self.movies), ("series", self.series)):
+            if k not in search_kinds(kind):
+                rail.hide()  # in-scope rails show themselves when results load
+        if changed and self.entry.get_text().strip():
+            self.run()
+
     def on_changed(self, entry):
         if self.timer:
             GLib.source_remove(self.timer)
@@ -933,6 +935,8 @@ class SearchScreen(Screen):
         self.token += 1
         tok = self.token
         self.counts = {}
+        rails = {"movie": self.movies, "series": self.series}
+        active = [(k, rails[k]) for k in search_kinds(self.scope)]
         if not q:
             for r in (self.movies, self.series):
                 r.token += 1
@@ -940,7 +944,11 @@ class SearchScreen(Screen):
             self.info.set_text("Type on your phone to search")
             return False
         self.info.set_text(f"Searching for “{q}”…")
-        for kind, rail in (("movie", self.movies), ("series", self.series)):
+        for kind, rail in rails.items():
+            if kind not in search_kinds(self.scope):
+                rail.token += 1
+                rail.set_items([])
+        for kind, rail in active:
             rail.hide_empty = True
             rail.load(lambda k=kind: search_items(k, q))
             self.watch(rail, tok, q)
@@ -953,7 +961,7 @@ class SearchScreen(Screen):
             if rail.state in ("loading", "idle"):
                 return True
             self.counts[id(rail)] = (rail.state, len(rail.items))
-            if len(self.counts) == 2:
+            if len(self.counts) == len(search_kinds(self.scope)):
                 total = sum(n for _s, n in self.counts.values())
                 failed = all(s == "error" for s, _n in self.counts.values())
                 if failed:

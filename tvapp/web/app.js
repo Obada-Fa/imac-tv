@@ -133,6 +133,36 @@
     return tracks.map(t => { const n = langName(t); seen[n] = (seen[n] || 0) + 1; return [t, seen[n] > 1 ? `${n} ${seen[n]}` : n]; });
   }
 
+  // Mini bar for YouTube running behind TV Home. Hidden while our own mpv card is showing.
+  let ytPending = 0;
+  function renderYoutube(yt, view) {
+    const bar = $('yt');
+    bar.hidden = !yt || view === 'playing';
+    if (bar.hidden) return;
+    const open = yt.status === 'Open';
+    $('yt-title').textContent = open ? 'YouTube is open' : (yt.title || 'YouTube');
+    $('yt-artist').textContent = open ? '' : (yt.artist || '');
+    $('yt-artist').hidden = open || !yt.artist;
+    const art = $('yt-art');
+    if (yt.art && !open) { if (art.getAttribute('src') !== yt.art) art.src = yt.art; art.hidden = false; art.onerror = () => { art.hidden = true; }; }
+    else { art.hidden = true; art.removeAttribute('src'); }
+    document.querySelector('#yt .yt-ctl').hidden = open;
+    $('yt-show').hidden = !open;
+    $('yt-prev').hidden = yt.can_prev === false;
+    $('yt-next').hidden = yt.can_next === false;
+    $('yt-play').hidden = yt.can_pause === false;
+    if (Date.now() > ytPending) { $('yt-play').textContent = yt.status === 'Playing' ? '⏸' : '▶'; }
+  }
+  document.querySelectorAll('#yt [data-yt]').forEach(b => b.onclick = async () => {
+    buzz(8);
+    const play = $('yt-play'), before = play.textContent;
+    if (b === play) { play.textContent = before === '⏸' ? '▶' : '⏸'; ytPending = Date.now() + 2500; }
+    try { await send('youtube_media', {cmd: b.dataset.yt}); }
+    catch (e) { if (b === play) play.textContent = before; }
+    ytPending = 0;
+  });
+  [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { buzz(8); send('select', {app: 'youtube'}).catch(() => {}); });
+
   function renderView(s, pb, name) {
     const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
     const c = $('controls');
@@ -141,6 +171,7 @@
       if (view !== 'browse') { closeSearch(); showTab('remote'); }
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
+    renderYoutube(s.youtube_now, view);
     $('nowcard').hidden = view === 'playing';
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
@@ -290,7 +321,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       buzz(8);
-      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
@@ -660,7 +691,16 @@
     applyTab();
     window.scrollTo(0, 0);
   }
-  tabbar.querySelectorAll('button').forEach(b => b.onclick = () => { buzz(8); showTab(b.dataset.tab); });
+  // A tap on Movies/Series also puts the matching screen on the TV (fire-and-forget; the server ignores it while something is playing).
+  const tvScreen = {movie: 'movies', series: 'series'};
+  tabbar.querySelectorAll('button').forEach(b => b.onclick = () => {
+    buzz(8);
+    const changed = b.dataset.tab !== tab;
+    showTab(b.dataset.tab);
+    if (changed && tvScreen[b.dataset.tab]) {
+      try { Promise.resolve(send('show', {screen: tvScreen[b.dataset.tab]})).catch(() => {}); } catch (e) {}
+    }
+  });
 
   const data = r => (r && r.result) || {};
   function posterEl(item) {
@@ -808,6 +848,43 @@
   const results = $('find-results');
   // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.
   results.addEventListener('touchstart', () => fi.blur(), {passive: true});
+
+  // ---- Movies / Series panes: search scoped to that kind ----
+  document.querySelectorAll('.pane[data-type]').forEach(pane => {
+    const type = pane.dataset.type, input = pane.querySelector('.pfind input'), clear = pane.querySelector('.pclear');
+    const res = pane.querySelector('.presults'), browse = pane.querySelector('.pbrowse');
+    const spin = pane.querySelector('.rspin'), empty = pane.querySelector('.pempty'), grid = res.querySelector('.grid');
+    let timer = null, seq = 0;
+    function show(list, searching) {
+      res.hidden = !searching; browse.hidden = searching;
+    }
+    function reset() { seq++; clearTimeout(timer); spin.hidden = true; empty.textContent = ''; grid.replaceChildren(); show(null, false); }
+    async function run() {
+      clearTimeout(timer);
+      const q = input.value.trim(), mine = ++seq;
+      if (q.length < 2) { reset(); return; }
+      show(null, true); spin.hidden = false; empty.textContent = '';
+      try {
+        const r = data(await send('find', {query: q}));
+        if (mine !== seq) return;
+        const list = (type === 'movie' ? r.movies : r.series) || [];
+        spin.hidden = true; fill(grid, list, false);
+        empty.textContent = list.length ? '' : 'No results';
+      } catch (e) { if (mine === seq) { spin.hidden = true; grid.replaceChildren(); } }
+    }
+    input.addEventListener('focus', () => { findFocused = true; updateTabbar(); });
+    input.addEventListener('blur', () => { findFocused = false; updateTabbar(); });
+    input.addEventListener('input', () => {
+      clear.hidden = !input.value;
+      clearTimeout(timer);
+      if (input.value.trim().length < 2) { reset(); return; }
+      timer = setTimeout(run, 450);
+    });
+    pane.querySelector('.pfind').onsubmit = e => { e.preventDefault(); input.blur(); run(); };
+    clear.onclick = () => { input.value = ''; clear.hidden = true; reset(); };
+    // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.
+    res.addEventListener('touchstart', () => input.blur(), {passive: true});
+  });
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   checkAutoPair();

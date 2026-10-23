@@ -14,6 +14,15 @@ except Exception as exc:  # no PyGObject / GTK typelibs
 
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
+class SearchScopeTests(unittest.TestCase):
+    def test_kinds_per_scope(self):
+        self.assertEqual(screens.search_kinds(None), ("movie", "series"))
+        self.assertEqual(screens.search_kinds("movie"), ("movie",))
+        self.assertEqual(screens.search_kinds("series"), ("series",))
+        self.assertEqual(screens.search_kinds("bogus"), ("movie", "series"))
+
+
+@unittest.skipIf(screens is None, "GTK bindings unavailable")
 class GridMoveTests(unittest.TestCase):
     xs = [[100, 300, 500, 700], [], [120, 420]]
 

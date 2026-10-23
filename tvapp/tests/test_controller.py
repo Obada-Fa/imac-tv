@@ -11,6 +11,22 @@ spec = importlib.util.spec_from_file_location("imactv_server", Path(__file__).re
 server = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(server)
 
+_guards = []
+
+
+def setUpModule():
+    # Controller() starts a real _watch thread and select()/stop_playback() spawn _show_home threads;
+    # without these guards a test run launches TV Home (and other apps) on the user's display.
+    for target in (mock.patch.object(server.subprocess, "Popen"), mock.patch.object(server.Controller, "_show_home"),
+                   mock.patch.object(server.Controller, "_watch")):
+        target.start()
+        _guards.append(target)
+
+
+def tearDownModule():
+    while _guards:
+        _guards.pop().stop()
+
 
 class ControllerTests(unittest.TestCase):
     def test_window_uses_class_and_title_columns(self):
@@ -430,6 +446,73 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(c.action("open_search", {}), {"ok": True, "target": "home"})
         self.assertEqual((c.app, self.ui()["screen"]), ("home", "search"))
         self.assertIn("ts", self.ui())
+
+    def test_show_writes_ui_request_for_valid_screens(self):
+        c = self.controller()
+        c.app, c.phase, c.buffering = "home", "ready", None
+        with mock.patch.object(server, "playback", return_value={"active": False}):
+            for screen in ("movies", "series", "home"):
+                self.assertEqual(c.action("show", {"screen": screen}), {"ok": True})
+                self.assertEqual(self.ui()["screen"], screen)
+            with self.assertRaises(ValueError):
+                c.action("show", {"screen": "settings"})
+            with self.assertRaises(ValueError):
+                c.action("show", {})
+
+    def test_show_ignored_unless_home_idle(self):
+        c = self.controller()
+        with mock.patch.object(c, "_ui_request") as ui, mock.patch.object(server, "playback", return_value={"active": False}):
+            c.app, c.phase, c.buffering = "youtube", "ready", None
+            self.assertEqual(c.action("show", {"screen": "movies"}), {"ok": True, "ignored": True})
+            c.app, c.phase = "player", "buffering"
+            self.assertEqual(c.action("show", {"screen": "series"}), {"ok": True, "ignored": True})
+            c.app, c.phase, c.buffering = "home", "ready", None
+        with mock.patch.object(c, "_ui_request") as ui, mock.patch.object(server, "playback", return_value={"active": True}):
+            self.assertEqual(c.action("show", {"screen": "movies"}), {"ok": True, "ignored": True})
+        ui.assert_not_called()
+        self.assertEqual(c.app, "home")
+
+    def test_youtube_media_validates_and_invalidates_cache(self):
+        c = self.controller()
+        with self.assertRaises(ValueError):
+            c.action("youtube_media", {"cmd": "volume_up"})
+        state = {"status": "Paused", "title": "t", "artist": "", "art": None, "source": "youtube"}
+        with mock.patch.object(server.nowplaying, "control") as ctl, mock.patch.object(server.nowplaying, "current", return_value=state), \
+                mock.patch.object(server.time, "sleep"):
+            c._yt_cache = (server.time.monotonic(), None)
+            self.assertEqual(c.action("youtube_media", {"cmd": "play_pause"}), {"youtube_now": state})
+        ctl.assert_called_once_with("play_pause")
+
+    def test_youtube_now_is_cached_and_survives_errors(self):
+        c = self.controller()
+        c._yt_cache = None
+        with mock.patch.object(server.nowplaying, "current", side_effect=RuntimeError("bus")) as cur:
+            self.assertIsNone(c.youtube_now())
+            self.assertIsNone(c.youtube_now())
+        self.assertEqual(cur.call_count, 1)
+        c._yt_cache = None
+        with mock.patch.object(server.nowplaying, "current", return_value={"status": "Open"}):
+            self.assertEqual(c.youtube_now(), {"status": "Open"})
+
+    def test_status_includes_youtube_now(self):
+        c = self.controller()
+        c._yt_cache = (server.time.monotonic(), {"status": "Open"})
+        with mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(server, "command", side_effect=OSError), \
+                mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "brightness", return_value={}), \
+                mock.patch.object(server, "screen_blanked", return_value=False):
+            self.assertEqual(c.status()["youtube_now"], {"status": "Open"})
+
+    def test_display_env_override(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("IMACTV_DISPLAY", "IMACTV_XAUTHORITY"):
+                os.environ.pop(k, None)
+            self.assertEqual(server._display_env()["DISPLAY"], ":0")
+            os.environ["IMACTV_DISPLAY"] = ":97"
+            os.environ["XAUTHORITY"] = "/tmp/xa"
+            env = server._display_env()
+            self.assertEqual((env["DISPLAY"], env["XAUTHORITY"]), (":97", "/tmp/xa"))
+            os.environ["IMACTV_XAUTHORITY"] = "/tmp/other"
+            self.assertEqual(server._display_env()["XAUTHORITY"], "/tmp/other")
 
     def test_open_search_stays_on_youtube(self):
         c = self.controller()

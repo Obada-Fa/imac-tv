@@ -25,14 +25,26 @@ import urllib.request
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
+import nowplaying
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
 WEB = BASE / "web"
 PORT = int(os.environ.get("IMACTV_PORT", "8765"))
 BOOT_ID = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-DISPLAY_ENV = dict(os.environ, DISPLAY=":0", XAUTHORITY=str(Path.home() / ".Xauthority"),
-                   DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus")
+
+
+def _display_env():
+    """The TV's X display. IMACTV_DISPLAY (+ IMACTV_XAUTHORITY, else the inherited XAUTHORITY) points smoke runs at a private Xvfb."""
+    override = os.environ.get("IMACTV_DISPLAY")
+    default_auth = os.environ.get("XAUTHORITY", "") if override else ""
+    auth = os.environ.get("IMACTV_XAUTHORITY") or default_auth or str(Path.home() / ".Xauthority")
+    return dict(os.environ, DISPLAY=override or ":0", XAUTHORITY=auth,
+                DBUS_SESSION_BUS_ADDRESS=f"unix:path=/run/user/{os.getuid()}/bus")
+
+
+DISPLAY_ENV = _display_env()
+
 def resolve_app_command(app):
     if app == "youtube":
         bin_path = shutil.which("vacuumtube") or shutil.which("VacuumTube")
@@ -939,6 +951,20 @@ class Controller:
             with self.lock:
                 self.error = "Could not turn off: " + str(exc)
 
+    def youtube_now(self):
+        """Background YouTube state for the phone, cached ~2 s so polling doesn't hammer D-Bus."""
+        with self.lock:
+            cached = getattr(self, "_yt_cache", None)
+            if cached and time.monotonic() - cached[0] < 2:
+                return cached[1]
+        try:
+            value = nowplaying.current()
+        except Exception:
+            value = None
+        with self.lock:
+            self._yt_cache = (time.monotonic(), value)
+        return value
+
     def status(self):
         with self.lock:
             app, phase, error = self.app, self.phase, self.error
@@ -990,7 +1016,7 @@ class Controller:
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
                 "torbox": {"configured": bool(media_config.read_key())},
-                "playback": player, "temperature": cpu_temp, "gpu_temperature": gpu_temp,
+                "playback": player, "youtube_now": self.youtube_now(), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
                 "brightness": brightness(), "screen_off": screen_blanked(),
                 "fullscreen": bool(win) and fullscreen_state(win["id"]),
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
@@ -1107,6 +1133,22 @@ class Controller:
                     self.select("home")
                 self._ui_request("search")
                 return {"ok": True, "target": "home"}
+            if action == "show":
+                screen = params.get("screen")
+                if screen not in ("home", "movies", "series"):
+                    raise ValueError("Screen must be home, movies or series")
+                if self.app != "home" or self.phase == "buffering" or self.buffering or playback()["active"]:
+                    return {"ok": True, "ignored": True}
+                self._ui_request(screen)
+                return {"ok": True}
+            if action == "youtube_media":
+                cmd = params.get("cmd")
+                if cmd not in nowplaying.COMMANDS:
+                    raise ValueError("Command must be play_pause, next or previous")
+                nowplaying.control(cmd)
+                self._yt_cache = None
+                time.sleep(0.25)  # let the player publish its new state
+                return {"youtube_now": self.youtube_now()}
             if action == "sources":
                 kind, _, _, _, video_id = media_target(params)
                 try:

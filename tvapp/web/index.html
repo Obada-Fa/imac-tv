@@ -7,6 +7,11 @@
 <main id="remote" class="shell" hidden>
   <header><div><small>LIVING ROOM</small><h1>iMac TV</h1></div><div id="connection" class="connection" role="status">Connecting…</div></header>
   <div id="nowcard" class="now"><div class="nowtext"><span id="app-name">Home</span><small id="phase">Ready</small></div><span id="temperature"></span></div>
+  <div id="yt" class="yt" hidden>
+    <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
+    <div class="yt-ctl"><button id="yt-prev" type="button" data-yt="previous" aria-label="Previous">⏮</button><button id="yt-play" type="button" data-yt="play_pause" aria-label="Play or pause">⏯</button><button id="yt-next" type="button" data-yt="next" aria-label="Next">⏭</button></div>
+    <button id="yt-show" type="button" class="yt-show" hidden>Open</button>
+  </div>
   <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
   <div class="topbar">
     <div class="brightness">
@@ -64,17 +69,25 @@
 <main id="browser" class="shell" hidden>
   <section id="tab-movie" class="pane" data-type="movie" hidden>
     <h2 class="ptitle">Movies</h2>
+    <form class="findbox pfind" autocomplete="off"><input type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies" aria-label="Search movies"><button type="button" class="pclear" aria-label="Clear" hidden>✕</button></form>
+    <div class="presults" hidden><div class="spin rspin" hidden><div class="spinner" aria-hidden="true"></div></div><p class="muted pempty"></p><div class="grid"></div></div>
+    <div class="pbrowse">
     <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
     <div class="grid"></div>
     <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
     <button class="more" type="button" hidden>Load more</button>
+      </div>
   </section>
   <section id="tab-series" class="pane" data-type="series" hidden>
     <h2 class="ptitle">Series</h2>
+    <form class="findbox pfind" autocomplete="off"><input type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search series" aria-label="Search series"><button type="button" class="pclear" aria-label="Clear" hidden>✕</button></form>
+    <div class="presults" hidden><div class="spin rspin" hidden><div class="spinner" aria-hidden="true"></div></div><p class="muted pempty"></p><div class="grid"></div></div>
+    <div class="pbrowse">
     <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
     <div class="grid"></div>
     <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
     <button class="more" type="button" hidden>Load more</button>
+      </div>
   </section>
   <section id="tab-search" class="pane" hidden>
     <form id="find-form" class="findbox" autocomplete="off"><input id="find-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies and series" aria-label="Search titles"><button type="button" id="find-clear" aria-label="Clear" hidden>✕</button></form>

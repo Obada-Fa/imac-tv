@@ -84,3 +84,11 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .np .stop{min-height:46px}
 .tracklist{display:flex;flex-direction:column;gap:7px}.tracklist button{width:100%;text-align:left;border-radius:14px;justify-content:flex-start;padding:0 16px;font-size:16px}.tracklist h3{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#9dacbd;margin:12px 0 2px}
 .sheet .delay{margin-top:16px}
+
+/* ---- YouTube mini bar ---- */
+.yt{display:flex;align-items:center;gap:6px;background:#1b2430;border:1px solid #303d4f;border-radius:14px;padding:3px 5px 3px 6px;min-height:52px}
+.yt[hidden],.yt [hidden]{display:none!important}
+.yt-main{flex:1;min-width:0;display:flex;align-items:center;gap:9px;background:none;border:0;padding:0;text-align:left;color:inherit;min-height:44px}
+.yt-main img{width:34px;height:34px;object-fit:cover;border-radius:8px;background:#222c39;flex:none}
+.yt-text{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.yt-text b{font-weight:700}.yt-text small{font-size:12px;color:#9dacbd;letter-spacing:normal;margin-left:6px}
+.yt-ctl{display:flex;gap:3px}.yt-ctl button,.yt-show{min-height:44px;min-width:40px;font-size:16px;padding:0 4px;background:#1f2a37;border-radius:12px}.yt-show{padding:0 14px;font-size:14px;font-weight:700}
