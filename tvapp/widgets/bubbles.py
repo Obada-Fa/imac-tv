@@ -96,6 +96,16 @@ def _icon(cr, kind, cx, cy, s):
         cr.move_to(cx + s * 0.27, cy + s * 0.27)
         cr.line_to(cx + s * 0.52, cy + s * 0.52)
         cr.stroke()
+    elif kind == "settings":     # a gear: ring plus eight teeth
+        cr.arc(cx, cy, s * 0.24, 0, 2 * math.pi)
+        cr.stroke()
+        for i in range(8):
+            a = i * math.pi / 4
+            cr.move_to(cx + math.cos(a) * s * 0.42, cy + math.sin(a) * s * 0.42)
+            cr.line_to(cx + math.cos(a) * s * 0.62, cy + math.sin(a) * s * 0.62)
+            cr.stroke()
+        cr.arc(cx, cy, s * 0.43, 0, 2 * math.pi)
+        cr.stroke()
     elif kind == "series":
         for i, dy in enumerate((-0.42, 0.0, 0.42)):
             cr.set_source_rgba(1, 1, 1, 0.92 - i * 0.25)
@@ -126,7 +136,8 @@ def _icon(cr, kind, cx, cy, s):
 
 
 TINTS = {"movies": (0.36, 0.52, 0.86), "series": (0.62, 0.42, 0.84),
-         "youtube": (0.82, 0.30, 0.32), "search": (0.28, 0.66, 0.62)}
+         "youtube": (0.82, 0.30, 0.32), "search": (0.28, 0.66, 0.62),
+         "settings": (0.50, 0.56, 0.66)}
 
 
 def _fit_cover(cr, pb, d):

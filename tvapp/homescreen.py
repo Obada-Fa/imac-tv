@@ -42,6 +42,10 @@ try:
     import ambient
 except Exception:  # pragma: no cover - data service missing: gradient only
     ambient = None
+try:
+    import display
+except Exception:  # pragma: no cover
+    display = None
 
 ANIM_MS = 50            # 20 fps ceiling
 CHROME_FADE = 1.0       # seconds, bubbles+widgets fading out/in
@@ -435,6 +439,7 @@ class AmbientHomeScreen(Screen):
         self.fake_from = time.monotonic() + float(os.environ.get("IMACTV_FAKE_LEVELS_AFTER") or 0)  # perf runs
         self.rng = random.Random()
         self.extra_origin = []
+        self.disposed = False
 
         overlay = Gtk.Overlay()
         self.pack_start(overlay, True, True, 0)
@@ -508,6 +513,8 @@ class AmbientHomeScreen(Screen):
                         type(c).__name__ for c in getattr(kid, "get_children", lambda: [])()[:2])))
 
         GLib.timeout_add(1000, self.supervise)
+        if display:
+            display.subscribe(self.on_screen)
         if self.library:
             self.library.refresh_async(on_done=lambda added: GLib.idle_add(self.photos_changed))
             self.refresh_due = time.monotonic() + REFRESH_PHOTOS
@@ -621,14 +628,44 @@ class AmbientHomeScreen(Screen):
 
     # ---- timers
     def active(self):
-        """Home is what the user is looking at: mapped, not minimised, no other app in front."""
-        if not self.get_mapped() or self.shell.prev_app not in (None, "home"):
+        """Home is what the user is looking at: mapped, not minimised, no other app in front, and some screen is
+        on to show it (display.screen_live)."""
+        if getattr(self, "disposed", False) or not self.get_mapped() or self.shell.prev_app not in (None, "home"):
+            return False
+        if display and not display.screen_live():
             return False
         win = self.shell.get_window()
         return not (win and win.get_state() & Gdk.WindowState.ICONIFIED)
 
+    def on_screen(self, live):
+        """display.screen_live() changed. Off: supervise() sees active() False and stops every timer, the audio
+        capture, photo rotation and widget (weather) polling. On: one photo + widget refresh right away."""
+        if self.disposed:
+            return
+        if live:
+            for k in self.due:
+                self.due[k] = 0.0
+            self.photo_due = 0.0
+            self.now_due = 0.0
+            self.poke()                             # coming back is like a key press: show the chrome
+        self.supervise()
+
+    def dispose(self):
+        """The shell is rebuilding (resolution change): stop everything this screen started."""
+        self.disposed = True
+        if display:
+            display.unsubscribe(self.on_screen)
+        self.stop_anim()
+        self.stop_audio()
+        for attr in ("shape_id", "field_id"):
+            if getattr(self, attr):
+                GLib.source_remove(getattr(self, attr))
+                setattr(self, attr, 0)
+
     def supervise(self):
         now = time.monotonic()
+        if getattr(self, "disposed", False):
+            return False
         if not self.active():
             self.stop_anim()
             if self.audio:

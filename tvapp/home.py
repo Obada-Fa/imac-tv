@@ -25,9 +25,16 @@ BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
 from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 from widgets import pairing as pairing_ui  # noqa: E402
+from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
+import display  # noqa: E402
 
 BASE = Path(__file__).resolve().parent
 DATA = screens.DATA
+
+
+def ui_scale(height):
+    """Everything is drawn for 1080 rows; other heights scale it (720p gets 2/3-size text, 4K double)."""
+    return max(0.5, height / 1080.0)
 
 
 def build_css(scale=1.0):
@@ -80,7 +87,7 @@ window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "
 .progress progress {{ min-height: {round(6 * scale)}px; background: #fff; }}
 .tv-scrollbar {{ opacity: 0; }}
 button {{ outline: none; }}
-""".encode() + screens.build_css(scale).encode() + home_css(scale).encode()
+""".encode() + screens.build_css(scale).encode() + home_css(scale).encode() + settings_css(scale).encode()
 
 
 
@@ -99,13 +106,19 @@ class Home(Gtk.Window):
         self.connect("motion-notify-event", self.on_pointer)
         self.connect("button-press-event", self.on_pointer)
         screen = Gdk.Screen.get_default()
-        self.sw = screen.get_width()
-        self.sh = screen.get_height()
+        if not display.trial_state()["active"]:
+            display.restore_saved()               # the resolution confirmed in Settings, if that output is here
+        self.sw, self.sh = self.target_size()
         self.set_default_size(self.sw, self.sh)
-        self.scale = max(1.0, self.sh / 1080.0)
-        provider = Gtk.CssProvider()
-        provider.load_from_data(build_css(self.scale))
-        Gtk.StyleContext.add_provider_for_screen(screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.scale = ui_scale(self.sh)
+        self.css = None
+        self.load_css()
+        self.geom_id = 0
+        self.trial_key = None
+        screen.connect("size-changed", lambda *_: self.geometry_soon())
+        screen.connect("monitors-changed", lambda *_: self.geometry_soon())
+        display.start_watch()
+        display.subscribe(self.on_screen_live)
 
         self.last_qr_text = ""
         self.last_net_check = 0
@@ -152,6 +165,110 @@ class Home(Gtk.Window):
         self.push(self.top_screen("home"))
         GLib.timeout_add(500, self.tick)
 
+    # ---- geometry / resolution
+    def load_css(self):
+        screen = Gdk.Screen.get_default()
+        if self.css:
+            Gtk.StyleContext.remove_provider_for_screen(screen, self.css)
+        self.css = Gtk.CssProvider()
+        self.css.load_from_data(build_css(self.scale))
+        Gtk.StyleContext.add_provider_for_screen(screen, self.css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def target_size(self):
+        """Size of the monitor we are (or will be) fullscreen on."""
+        fake = display.fake_geometry()
+        if fake:
+            return fake
+        disp = Gdk.Display.get_default()
+        win = self.get_window()
+        mon = disp.get_monitor_at_window(win) if win else None
+        mon = mon or disp.get_primary_monitor() or (disp.get_monitor(0) if disp.get_n_monitors() else None)
+        if mon:
+            g = mon.get_geometry()
+            if g.width > 0 and g.height > 0:
+                return g.width, g.height
+        screen = Gdk.Screen.get_default()
+        return screen.get_width(), screen.get_height()
+
+    def geometry_soon(self, ms=400):
+        if self.geom_id:
+            GLib.source_remove(self.geom_id)
+        self.geom_id = GLib.timeout_add(ms, self.check_geometry)
+
+    def check_geometry(self):
+        self.geom_id = 0
+        w, h = self.target_size()
+        if (w, h) != (self.sw, self.sh):
+            self.relayout(w, h)
+        return False
+
+    def display_changed(self):
+        """A mode was applied, kept or reverted (here or from the phone): re-measure, refresh Settings."""
+        for ms in (300, 1500, 4000):              # X / the WM settle at their own pace
+            GLib.timeout_add(ms, lambda: self.check_geometry() and False)
+        cur = self.current()
+        if isinstance(cur, SettingsScreen):
+            cur.load()
+        self.sync_trial()
+        return False
+
+    def relayout(self, w, h):
+        """New monitor size: rebuild CSS, header and screens at the new size; reopen Settings if it was open.
+        Ephemeral screens (Details, Sources) close; the trial sheet comes back from the next tick."""
+        top = self.current().sname if self.current() else "home"
+        self.sw, self.sh = w, h
+        self.scale = ui_scale(h)
+        self.close_sheet()
+        self.load_css()
+        for child in list(self.stack.get_children()):
+            if hasattr(child, "dispose"):
+                child.dispose()
+            self.stack.remove(child)
+            child.destroy()
+        self.back, self.tops, self.pair_listeners = [], {}, []
+        self.root.remove(self.header)
+        self.header.destroy()
+        self.header = self.make_header()
+        self.header.set_valign(Gtk.Align.START)
+        self.root.add_overlay(self.header)
+        self.root.reorder_overlay(self.header, 0)     # under the buffering overlay and toasts
+        self.header.show_all()
+        self.last_qr_text = ""
+        self.trigger_network_refresh()
+        self.push(self.top_screen("home"))
+        if top in ("movies", "series", "search", "settings"):
+            self.push(self.top_screen(top))
+        self.set_default_size(w, h)               # after the old, larger screens are gone (they'd clamp it)
+        self.resize(w, h)
+        self.fullscreen()                         # ask the WM to re-fit us to the new monitor size
+        self.sync_trial()
+
+    def sync_trial(self):
+        """Show / update / close the "Keep this resolution?" sheet from display.trial_state(); time it out."""
+        if display.check_trial():
+            self.display_changed()
+            return False
+        st = display.trial_state()
+        key = (st.get("output"), st.get("mode"), st.get("rate")) if st["active"] else None
+        if key != self.trial_key:                 # started / ended, maybe by the phone: re-measure
+            self.trial_key = key
+            self.display_changed()
+            return False
+        sh = self.sheet
+        if st["active"]:
+            if sh and sh["kind"] == "trial":
+                sh["countdown"](st)
+            else:
+                show_trial_sheet(self, st)
+        elif sh and sh["kind"] == "trial":
+            self.close_sheet("trial")
+        return False
+
+    def on_screen_live(self, live):
+        if live:                                  # back from screen-off: catch up now
+            self.last_state_poll = 0
+            self.last_net_check = 0
+
     # ---- helpers used by screens
     def px(self, n):
         return round(n * self.scale)
@@ -169,7 +286,8 @@ class Home(Gtk.Window):
         bar.pack_start(text_label("IMAC TV", "brand"), False, False, 0)
         nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(18))
         self.nav_buttons = {}
-        for label, name in (("Home", "home"), ("Movies", "movies"), ("Series", "series"), ("Search", "search")):
+        for label, name in (("Home", "home"), ("Movies", "movies"), ("Series", "series"), ("Search", "search"),
+                            ("Settings", "settings")):
             b = Gtk.Button(label=label)
             b.set_relief(Gtk.ReliefStyle.NONE)
             b.get_style_context().add_class("nav-button")
@@ -218,7 +336,7 @@ class Home(Gtk.Window):
     # ---- screens / back stack
     def top_screen(self, name):
         if name not in self.tops:
-            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen,
+            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
                                "series": lambda s: BrowseScreen(s, "series")}[name](self)
         return self.tops[name]
@@ -391,6 +509,7 @@ class Home(Gtk.Window):
         self.focus_screen(screen)
 
     def on_pointer(self, *_):
+        display.poke()
         screen = self.current()
         if hasattr(screen, "poke"):
             screen.poke()
@@ -398,6 +517,7 @@ class Home(Gtk.Window):
 
     def on_key_press(self, _window, event):
         key = Gdk.keyval_name(event.keyval)
+        display.poke()                  # someone is pressing keys: the screen is probably on
         screen = self.current()
         if hasattr(screen, "poke") and screen.poke(True):
             return True  # first key only wakes the ambient screen
@@ -407,7 +527,12 @@ class Home(Gtk.Window):
                 self.last_state_poll = 0
                 threading.Thread(target=lambda: cmd("back"), daemon=True).start()
             return True
+        if self.sheet and self.sheet["kind"] == "trial" and key in BACK_KEYS:
+            self.sheet["revert"]()
+            return True
         if self.sheet:
+            if key in ("p", "P") and self.sheet["kind"] == "trial":
+                return True
             if key in BACK_KEYS or key in ("p", "P"):
                 self.close_sheet()
                 return True
@@ -464,7 +589,7 @@ class Home(Gtk.Window):
                 self.tops["search"].set_query(req["query"])
         elif name == "details" and isinstance(req.get("media"), dict) and req["media"].get("id"):
             self.show_media(req["media"])
-        elif name in ("home", "movies", "series"):
+        elif name in ("home", "movies", "series", "settings"):
             self.goto_top(name)
         else:
             return
@@ -581,14 +706,18 @@ class Home(Gtk.Window):
     def tick(self):
         self.tick_n += 1
         self.check_ui_request()
+        self.sync_trial()
+        live = display.screen_live()
         if self.tick_n % 2 == 0:
-            self.clock.set_text(datetime.datetime.now().strftime("%a, %b %-d   %H:%M"))
             now = time.monotonic()
-            if now - self.last_net_check >= 4:
-                self.last_net_check = now
-                self.trigger_network_refresh()
+            if live:                    # screen off: no clock, no Wi-Fi label, /api/state every 30 s
+                self.clock.set_text(datetime.datetime.now().strftime("%a, %b %-d   %H:%M"))
+                if now - self.last_net_check >= 4:
+                    self.last_net_check = now
+                    self.trigger_network_refresh()
             busy = self.buffering.get_visible() or now < self.fast_until or self.prev_app == "player"
-            if not self.state_loading and now - self.last_state_poll >= (1 if busy else 3):
+            every = (1 if busy else 3) if live else 30
+            if not self.state_loading and now - self.last_state_poll >= every:
                 self.last_state_poll = now
                 self.state_loading = True
                 threading.Thread(target=self.poll_state, daemon=True).start()
