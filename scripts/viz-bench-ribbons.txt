@@ -1,0 +1,21 @@
+# 2026-10-24: corrected harness, main checkout, Xvfb 1920x1080x24.
+# Command: SHOT_DIR=tvapp/previews scripts/viz-bench.sh tvapp 10 edgeflow aurora prism
+# 10 seconds per mode after 5 seconds warm-up; synthetic audio.
+# CPU percentages are fractions of ONE core (Python + Xvfb).
+# Short local samples, different ambient photos; not a hardware performance guarantee.
+mode           | python % | Xvfb %  | total % | draw ms | area % | fps
+---------------|----------|---------|---------|---------|--------|------
+edgeflow       |      6.2 |     4.7 |    10.9 |    3.14 |   39.1 |  16.2
+aurora         |      7.7 |     4.9 |    12.6 |    3.76 |   54.8 |  16.1
+prism          |      8.5 |     2.3 |    10.8 |    4.12 |   37.3 |  15.5
+
+The former baseline did not select its named modes: VIZ_EVERY=100000 delayed
+leaving the initial ridge. The corrected harness uses a 1-second first switch,
+waits for the requested mode in the perf log, then warms up beyond the morph.
+With a single requested mode it stays there for the rest of the sample.
+
+Both additions use 64 dots (or the existing base shape's larger slot count),
+fixed O(n) topology, and O(n) geometry. Aurora has 84 links; Prism has 124.
+They reuse the existing palette, sparse glow sprite, quantized stroke batches,
+framebuffer, dirty cells, onset pulses, treble sparkles and morph pipeline.
+No new full-screen rendering passes, neighbour searches, or growing histories.

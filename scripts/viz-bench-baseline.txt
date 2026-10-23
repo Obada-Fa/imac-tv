@@ -1,3 +1,5 @@
+# INVALID mode comparison: the original harness held the initial ridge for 100000 s.
+# These historical rows all measured ridge, regardless of their labels. Fixed in viz-bench.sh.
 # viz-bench baseline: clean HEAD b342856 (git archive), Xvfb 1920x1080x24, 30 s/mode after 5 s warm-up, 2026-10-23
 # command: scripts/viz-bench.sh <HEAD export>/tvapp 30   (CPU % = share of ONE core; draw ms/area % from the perf log, phase-agnostic window)
 mode           | python % | Xvfb %  | total % | draw ms | area % | fps

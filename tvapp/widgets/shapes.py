@@ -438,8 +438,8 @@ def twinkle(i, t, treble):
 # flows across instead of scrambling. All positions are screen pixels; nothing here touches cairo.
 
 VIZ_N = 64
-VIZ_MODES = ("edgeflow", "ridge", "constellation", "terrain")      # no animal doodles in the rotation
-MODE_WEIGHTS = {"edgeflow": 6, "ridge": 2, "constellation": 2, "terrain": 2}   # random rotation
+VIZ_MODES = ("edgeflow", "ridge", "constellation", "terrain", "aurora", "prism")
+MODE_WEIGHTS = {"edgeflow": 6, "ridge": 2, "constellation": 2, "terrain": 2, "aurora": 2, "prism": 2}   # random rotation
 MODE_MORPH = 2.8                 # seconds for one mode to flow into the next
 MODE_EVERY = (45.0, 100.0)       # seconds between random mode changes within a track
 FIRST_CHANGE = (10.0, 18.0)      # the photo's ridge plays first, then the first random mode
@@ -766,6 +766,89 @@ class TerrainMode(_Mode):
         return out
 
 
+class AuroraMode(_Mode):
+    """Four pleated light curtains; a kick launches a crest across the whole fabric.
+
+    Fixed neighbouring seams keep the work linear and let the shared beat lights
+    travel through the folds. No per-frame neighbour search or extra paint pass.
+    """
+    name = "aurora"
+    trail = 0.35
+
+    def __init__(self, n, sw, sh, rng):
+        super().__init__(n, sw, sh, rng)
+        self.cols = max(2, n // 4)
+        used = self.cols * 4
+        self.grid = [(c / (self.cols - 1), r) for r in range(4) for c in range(self.cols)]
+        self.grid += [self.grid[-1]] * (n - used)
+        self.alpha = [1.0] * used + [0.0] * (n - used)
+        self.edges = [(r * self.cols + c, r * self.cols + c + 1)
+                      for r in range(4) for c in range(self.cols - 1)]
+        self.edges += [(r * self.cols + c, (r + 1) * self.cols + c)
+                       for r in range(3) for c in range(0, self.cols, 2)]
+
+    def points(self, t, lv):
+        bass, mid = lv.get("bass", 0.0), lv.get("mid", 0.0)
+        hit = lv.get("bass_hit", 0.0)
+        front = (1.0 - self.kick) * 1.4 - 0.2
+        out, depth = [], []
+        for u, r in self.grid:
+            fold = math.sin(u * 8.5 - self.ph * 0.65 + r * 0.55)
+            pleat = math.sin(u * 17.0 + self.ph * 0.4 + r * 0.3)
+            crest = self.kick * math.exp(-((u - front) / 0.16) ** 2)
+            x = 0.05 + 0.9 * u + 0.012 * math.sin(self.ph + r + u * 5)
+            y = (0.29 + r * 0.12 + (0.055 + 0.045 * mid) * fold
+                 + 0.025 * pleat - (0.04 * bass + 0.065 * hit) * (0.4 + 0.6 * u)
+                 - 0.11 * crest)
+            out.append((x * self.sw, y * self.sh))
+            depth.append(0.4 + 0.5 * (fold + 1) / 2)
+        self.depth = depth
+        return out
+
+
+class PrismMode(_Mode):
+    """A wide, rotating crystal ribbon: four rails wind around a curved axis.
+
+    Bass opens its cross-section, mids turn it, and beats travel down the spine.
+    Perspective and fading rear rails give depth using the existing line renderer.
+    """
+    name = "prism"
+    trail = 0.45
+
+    def __init__(self, n, sw, sh, rng):
+        super().__init__(n, sw, sh, rng)
+        self.cols = max(2, n // 4)
+        used = self.cols * 4
+        self.grid = [(c / (self.cols - 1), r * math.pi / 2)
+                     for c in range(self.cols) for r in range(4)]
+        self.grid += [self.grid[-1]] * (n - used)
+        self.used = used
+        self.edges = [(c * 4 + r, c * 4 + (r + 1) % 4)
+                      for c in range(self.cols) for r in range(4)]
+        self.edges += [(c * 4 + r, (c + 1) * 4 + r)
+                       for c in range(self.cols - 1) for r in range(4)]
+
+    def points(self, t, lv):
+        bass, hit = lv.get("bass", 0.0), lv.get("bass_hit", 0.0)
+        front = (1.0 - self.kick) * 1.4 - 0.2
+        out, depth, alpha = [], [], []
+        for k, (u, rail) in enumerate(self.grid):
+            a = rail + u * math.pi * 2.2 + self.ph * 0.55
+            z = math.cos(a)
+            envelope = 0.45 + 0.55 * math.sin(math.pi * u)
+            crest = self.kick * math.exp(-((u - front) / 0.19) ** 2)
+            radius = envelope * (0.12 + 0.05 * bass + 0.065 * hit + 0.06 * crest)
+            perspective = 1.0 / (1.0 - 0.14 * z)
+            x = 0.07 + 0.86 * u + 0.018 * z * envelope
+            axis = 0.5 + 0.10 * math.sin(u * math.pi * 1.4 + self.ph * 0.18)
+            y = axis + radius * math.sin(a) * perspective
+            out.append((x * self.sw, y * self.sh))
+            depth.append(0.25 + 0.75 * (z + 1) / 2)
+            alpha.append((0.45 + 0.55 * (z + 1) / 2) if k < self.used else 0.0)
+        self.depth, self.alpha = depth, alpha
+        return out
+
+
 class DoodleMode(_Mode):
     """A Quick, Draw! animal traced by the dots; it breathes with the bass and hops on beats."""
     name = "doodle"
@@ -844,7 +927,7 @@ class Viz:
         if name == "doodle" and self.doodles:
             return DoodleMode(n, sw, sh, rng, rng.choice(self.doodles))
         cls = {"constellation": ConstellationMode, "terrain": TerrainMode,
-               "edgeflow": EdgeFlowMode}.get(name, EdgeFlowMode)
+               "edgeflow": EdgeFlowMode, "aurora": AuroraMode, "prism": PrismMode}.get(name, EdgeFlowMode)
         return cls(n, sw, sh, rng)
 
     @property

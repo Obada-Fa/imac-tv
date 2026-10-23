@@ -73,7 +73,7 @@ class OnsetTest(unittest.TestCase):
 
 class HitsMoveEveryModeTest(unittest.TestCase):
     def test_bass_hit_moves_the_dots(self):
-        for name in ("edgeflow", "ridge", "constellation", "terrain"):
+        for name in shapes.VIZ_MODES:
             v = viz_of(name)
             calm = v.cur.points(4.0, CALM)
             hit = v.cur.points(4.0, dict(CALM, bass_hit=1.0))
@@ -81,7 +81,7 @@ class HitsMoveEveryModeTest(unittest.TestCase):
             self.assertGreater(moved, 12.0, name)            # px at 1080p: a visible punch
 
     def test_treble_hit_sparkles_some_dots(self):
-        for name in ("edgeflow", "constellation", "terrain"):
+        for name in ("edgeflow", "constellation", "terrain", "aurora", "prism"):
             v = viz_of(name)
             v.step(1 / 15, CALM, t=5.0)
             self.assertIsNone(v.frame(5.0, CALM)["spark"])
@@ -103,6 +103,54 @@ class HitsMoveEveryModeTest(unittest.TestCase):
         rest = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "beat": 0.0, "bass_hit": 0.0, "mid_hit": 0.0,
                 "treble_hit": 0.0}
         self.assertEqual(v.cur.points(1.0, rest)[:len(base_shape()["pts"])], base_shape()["pts"])
+
+
+class RibbonTests(unittest.TestCase):
+    def test_bounded_geometry_and_cost_over_a_song(self):
+        import math
+        for cls in (shapes.AuroraMode, shapes.PrismMode):
+            for n, w, h in ((64, 1920, 1080), (69, 1280, 720), (64, 3440, 1440)):
+                mode = cls(n, w, h, random.Random(9))
+                edges = list(mode.edges)
+                self.assertLessEqual(len(edges), 2 * n)
+                for f in range(600):
+                    lv = {"bass": (1 + math.sin(f * 0.3)) / 2, "mid": 0.8,
+                          "bass_hit": float(f % 8 == 0), "mid_hit": float(f % 5 == 0)}
+                    mode.step(1 / 15, lv)
+                    if f % 8 == 0:
+                        mode.beat()
+                    pts = mode.points(f / 15, lv)
+                    self.assertEqual(len(pts), n)
+                    self.assertEqual(len(mode.alpha), n)
+                    self.assertEqual(len(mode.depth), n)
+                    self.assertTrue(all(0 <= x <= w and 0 <= y <= h for x, y in pts))
+                    self.assertTrue(all(0 <= d <= 1 for d in mode.depth))
+                self.assertEqual(mode.edges, edges)  # topology/storage cannot grow with beats
+
+    def test_beat_crest_travels_across_both_fabrics(self):
+        for cls in (shapes.AuroraMode, shapes.PrismMode):
+            mode = cls(64, 1920, 1080, random.Random(7))
+            rest = mode.points(0, CALM)
+            peaks = []
+            for kick in (0.7, 0.4):
+                mode.kick = kick
+                pts = mode.points(0, CALM)
+                moved = [abs(p[1] - q[1]) for p, q in zip(pts, rest)]
+                peak = moved.index(max(moved))
+                peaks.append(mode.grid[peak][0])
+                self.assertGreater(max(moved), 5)
+            self.assertGreater(peaks[1], peaks[0], cls.name)
+
+    def test_new_modes_morph_without_a_first_frame_jump(self):
+        v = viz_of("aurora")
+        for name in ("prism", "aurora", "ridge"):
+            before = v.frame(4, CALM)["pts"]
+            v.switch(name, t=4, lv=CALM)
+            self.assertEqual(v.frame(4, CALM)["pts"], before)
+            for f in range(45):
+                v.step(1 / 15, CALM, t=4 + f / 15, auto=False)
+                v.frame(4 + f / 15, CALM)
+            self.assertTrue(v.settled)
 
 
 class CostTest(unittest.TestCase):
