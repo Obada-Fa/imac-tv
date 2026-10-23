@@ -94,8 +94,9 @@ def fresh_request(req, handled_ts, now, max_age=30):
 
 def stream_ref(source):
     """Stream selector for play_media; file_idx only when it is a real int."""
-    if source.get("url"):  # debrid (TorBox) direct link
-        return {"url": source["url"]}
+    ref = source.get("ref")
+    if isinstance(ref, int) and not isinstance(ref, bool):  # debrid (TorBox) link kept on the controller
+        return {"ref": ref}
     ref = {"info_hash": source.get("info_hash")}
     idx = source.get("file_idx")
     if isinstance(idx, int) and not isinstance(idx, bool):

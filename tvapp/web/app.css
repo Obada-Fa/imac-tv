@@ -48,3 +48,6 @@ header{display:flex;justify-content:space-between;align-items:center;gap:14px}.c
 .tsheet .playbtn{width:100%;min-height:56px;font-size:18px;font-weight:800;background:#2f5a96;border-color:#a8cfff;margin-top:6px}
 .tsheet .playbtn+.playbtn{background:#222c39;border-color:#3c4b5d;font-size:15px;font-weight:650;min-height:48px}
 .eps{display:flex;flex-direction:column;gap:6px;margin-top:10px}.eps button{display:flex;gap:10px;align-items:center;text-align:left;padding:8px 12px;min-height:48px;border-radius:12px;font-size:14px}.eps b{color:#add4ff;min-width:26px}.eps span{flex:1;overflow-wrap:anywhere}.eps small{letter-spacing:normal;white-space:nowrap}
+
+.keyrow{display:flex;gap:8px}.keyrow input{flex:1;min-width:0}.keyrow button{flex:none;width:48px}
+.tb-error{color:#ff8a8a;min-height:1.2em}

@@ -43,15 +43,34 @@ torrent is removed when playback ends. Continue Watching comes from
 ### TorBox
 
 With a TorBox key, Torrentio returns TorBox direct links. Cached ones play at once
-and are tried before torrents; torrents remain the fallback. On the TV machine run:
+and are tried before torrents; torrents remain the fallback.
+
+**From the phone:** tap Play with no key set and a popup asks for it (or use the
+TorBox setting to change or remove it). The controller checks the key against
+`api.torbox.app` over HTTPS, stores it as `~/.local/share/imactv/torbox.key`
+(mode 600, written atomically), clears the cached source lists and uses it from
+then on. Only paired phones can do this, and key entry is limited to 5 tries per
+10 minutes. Phone actions: `torbox_key {key}`, `torbox_remove {}`;
+`/api/state` only reports `torbox.configured`.
+
+**From a shell** on the TV machine:
 
 ```bash
-scripts/set-torbox-key.sh
+scripts/set-torbox-key.sh            # prompts, key not echoed
+scripts/set-torbox-key.sh --remove
 ```
 
-It prompts for the key (not echoed), stores it as `torbox_key` in
-`~/.local/share/imactv/media.json` (mode 600), clears the cached source lists and
-restarts the controller. `scripts/set-torbox-key.sh --remove` turns it off.
+It writes the same `torbox.key` file (and drops any old `torbox_key` from
+`media.json`, which is still read as a fallback; the file wins), clears the cached
+source lists and restarts the controller.
+
+**Where the key can and can't appear.** It never goes to the phone: `sources`
+returns an opaque `ref` instead of the direct link, which stays on the TV, and
+logs and error text are passed through `media.config.redact()`. It is in
+`torbox.key`, in the `mpv.log` (created mode 600) and in mpv's command line
+(visible in the process list to local users; this is a single-user machine).
+Remaining risk: the phone-to-TV link is plain HTTP on the LAN, so anyone who can
+sniff the Wi-Fi can read the key while it is typed.
 
 ### Using an existing Stremio server
 

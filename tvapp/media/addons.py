@@ -1,6 +1,7 @@
 """Stremio add-on protocol over HTTP with a small TTL cache."""
 import hashlib
 import json
+import shutil
 import time
 import urllib.error
 import urllib.request
@@ -14,6 +15,11 @@ TYPES = ("movie", "series")
 
 class AddonError(Exception):
     pass
+
+
+def clear_cache():
+    """Drop cached add-on responses; stream lists embed the TorBox key (or its absence)."""
+    shutil.rmtree(config.data_dir() / "cache" / "addons", ignore_errors=True)
 
 
 def _check_type(kind):
@@ -34,7 +40,7 @@ def _fetch(url, ttl):
         with urllib.request.urlopen(request, timeout=8) as response:
             data = json.loads(response.read(8_000_000))
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        raise AddonError(f"Add-on request failed: {exc}") from exc
+        raise AddonError(config.redact(f"Add-on request failed: {exc}")) from None
     try:
         cache.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(".tmp")

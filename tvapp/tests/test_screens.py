@@ -53,7 +53,9 @@ class LogicTests(unittest.TestCase):
         self.assertEqual(screens.stream_ref({"info_hash": "h", "file_idx": None}), {"info_hash": "h"})
         self.assertEqual(screens.stream_ref({"info_hash": "h", "file_idx": "3"}), {"info_hash": "h"})
         self.assertEqual(screens.stream_ref({"info_hash": "h", "file_idx": True}), {"info_hash": "h"})
-        self.assertEqual(screens.stream_ref({"info_hash": "", "url": "https://tb/x.mkv"}), {"url": "https://tb/x.mkv"})
+        self.assertEqual(screens.stream_ref({"info_hash": "", "ref": 3}), {"ref": 3})
+        self.assertEqual(screens.stream_ref({"info_hash": "h", "ref": True}), {"info_hash": "h"})
+        self.assertNotIn("url", screens.stream_ref({"info_hash": "", "url": "https://tb/x.mkv", "ref": 0}))
 
     def test_fmt_time(self):
         self.assertEqual(screens.fmt_time(754), "12:34")

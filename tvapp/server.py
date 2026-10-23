@@ -19,6 +19,8 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
+import urllib.error
+import urllib.request
 
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
@@ -208,6 +210,40 @@ def media_stream(value):
             "file_idx": None if idx is None else _count(idx, "file index", 0)}
 
 
+TORBOX_ME = "https://api.torbox.app/v1/api/user/me"
+TORBOX_TRIES, TORBOX_WINDOW = 5, 600
+SOURCE_REF_TTL = 1800
+
+
+class _RedactFilter(logging.Filter):
+    """Last line of defence: no log record may carry a TorBox key, whatever formatted it."""
+
+    def filter(self, record):
+        record.msg = media_config.redact(record.getMessage())
+        record.args = None
+        if record.exc_info:
+            record.exc_text = media_config.redact(logging.Formatter().formatException(record.exc_info))
+            record.exc_info = None
+        return True
+
+
+def check_torbox_key(key):
+    """Verify a key against TorBox. ValueError: rejected; RuntimeError: TorBox unreachable."""
+    request = urllib.request.Request(TORBOX_ME, headers={"Authorization": "Bearer " + key, "Accept": "application/json",
+                                                         "User-Agent": "imactv/1.0"})
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            body = json.loads(response.read(200_000))
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            raise ValueError("TorBox rejected this key") from None
+        raise RuntimeError("Couldn't reach TorBox to check the key") from None
+    except (urllib.error.URLError, OSError, ValueError):
+        raise RuntimeError("Couldn't reach TorBox to check the key") from None
+    if not isinstance(body, dict) or body.get("success") is False:
+        raise ValueError("TorBox rejected this key")
+
+
 def _card(meta):
     year = str(meta.get("releaseInfo") or meta.get("year") or "")[:4]
     return {"id": meta.get("id"), "type": meta.get("type"), "name": meta.get("name"),
@@ -218,7 +254,7 @@ def _addon(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except addons.AddonError as exc:
-        raise RuntimeError(str(exc)) from exc
+        raise RuntimeError(media_config.redact(exc)) from None
 
 
 def _season_list(videos):
@@ -254,6 +290,8 @@ class Controller:
         self.pair_code = ""
         self.pair_expiry = 0
         self.pair_attempts = {}
+        self.torbox_tries = []
+        self.source_refs = {"time": 0.0, "urls": []}
         self.sessions_path = DATA / "devices.json"
         self.sessions = self._read_json(self.sessions_path, {})
         previous_home_token = DATA / "home_token"
@@ -529,7 +567,7 @@ class Controller:
 
     def play_media(self, params):
         kind, item, season, episode, video_id = media_target(params)
-        stream = media_stream(params.get("stream"))
+        stream = self._resolve_stream(params.get("stream"))
         start = params.get("start")
         if start is None:
             start = history.resume_position(video_id)
@@ -549,12 +587,28 @@ class Controller:
         threading.Thread(target=self._play_worker, args=(generation, stream, float(start)), daemon=True).start()
         return {"ok": True, "source": "Selected source" if stream else ""}
 
+    def _resolve_stream(self, value):
+        """Phone-supplied stream selector. Direct URLs never come from the phone, only {"ref": n}
+        from the last sources call; they are resolved here so the key stays on the TV."""
+        if isinstance(value, dict) and "ref" in value:
+            ref = value["ref"]
+            with self.lock:
+                fresh = time.monotonic() - self.source_refs["time"] <= SOURCE_REF_TTL
+                urls = self.source_refs["urls"] if fresh else []
+            if isinstance(ref, bool) or not isinstance(ref, int) or not 0 <= ref < len(urls):
+                raise ValueError("That source expired, pick one again")
+            return media_stream({"url": urls[ref]})
+        if isinstance(value, dict) and "url" in value:
+            raise ValueError("Invalid stream")
+        return media_stream(value)
+
     def _play_fail(self, generation, exc):
-        LOG.warning("Playback failed: %s", exc)
+        message = media_config.redact(exc)
+        LOG.warning("Playback failed: %s", message)
         with self.lock:
             if generation != self.generation:
                 return
-            self.app, self.phase, self.error, self.buffering = "home", "ready", str(exc)[:300], None
+            self.app, self.phase, self.error, self.buffering = "home", "ready", message[:300], None
             session, self.session = self.session, None
         self._stop_proc()
         if session and session["engine"] and session["info_hash"]:
@@ -695,8 +749,13 @@ class Controller:
             except OSError:
                 pass
             slang = player.slang_arg(cfg["sub_langs"], media_subs.normalize(cfg.get("sub_default", "eng")))
+            # mpv.log records the stream URL (TorBox key included): create it 0600 before mpv opens it.
+            # The URL is also visible in the process list to local users; this is a single-user machine.
+            log_path = DATA / "mpv.log"
+            os.close(os.open(log_path, os.O_WRONLY | os.O_CREAT, 0o600))
+            os.chmod(log_path, 0o600)
             argv = player.mpv_argv(direct or torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
-                                  log_file=str(DATA / "mpv.log"))
+                                  log_file=str(log_path))
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
             with self.lock:
@@ -709,7 +768,7 @@ class Controller:
                 if not self._current(generation):
                     return
                 if proc.poll() is not None:
-                    raise RuntimeError(f"The player stopped before playback began (see {DATA / 'mpv.log'})")
+                    raise RuntimeError("The player stopped before playback began")
                 if not raised:
                     win = window_for("player")
                     if win:
@@ -738,6 +797,21 @@ class Controller:
             self._playback_loop(generation)
         except Exception as exc:
             self._play_fail(generation, exc)
+
+    def set_torbox_key(self, key):
+        now = time.monotonic()
+        with self.lock:
+            self.torbox_tries = [t for t in self.torbox_tries if now - t < TORBOX_WINDOW]
+            if len(self.torbox_tries) >= TORBOX_TRIES:
+                raise RuntimeError("Too many tries, wait a few minutes")
+            self.torbox_tries.append(now)
+        key = key.strip() if isinstance(key, str) else ""
+        if not media_config.KEY_RE.match(key):
+            raise ValueError("That doesn't look like a TorBox API key")
+        check_torbox_key(key)
+        media_config.write_key(key)
+        addons.clear_cache()
+        return {"configured": True}
 
     def set_brightness(self, level):
         if isinstance(level, bool) or not isinstance(level, int) or not 5 <= level <= 100:
@@ -830,6 +904,7 @@ class Controller:
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
+                "torbox": {"configured": bool(media_config.read_key())},
                 "playback": player, "temperature": cpu_temp, "gpu_temperature": gpu_temp,
                 "brightness": brightness(), "screen_off": screen_blanked(),
                 "fullscreen": bool(win) and fullscreen_state(win["id"]),
@@ -944,8 +1019,22 @@ class Controller:
                 try:
                     found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
                 except addons.AddonError as exc:
-                    raise RuntimeError(str(exc)) from exc
-                return {"sources": media_streams.rank(found, media_config.load())}
+                    raise RuntimeError(media_config.redact(exc)) from None
+                ranked, urls = media_streams.rank(found, media_config.load()), []
+                for src in ranked:  # direct links embed the TorBox key: keep them here, hand out an opaque ref
+                    url = src.pop("url", None)
+                    if url:
+                        src["ref"] = len(urls)
+                        urls.append(url)
+                with self.lock:
+                    self.source_refs = {"time": time.monotonic(), "urls": urls}
+                return {"sources": ranked}
+            if action == "torbox_key":
+                return self.set_torbox_key(params.get("key"))
+            if action == "torbox_remove":
+                media_config.remove_key()
+                addons.clear_cache()
+                return {"configured": False}
             if action == "browse":
                 kind, skip = params.get("type"), params.get("skip", 0)
                 if kind not in ("movie", "series"):
@@ -1190,16 +1279,18 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.respond(404, {"error": "Not found"})
         except (ValueError, TypeError) as exc:
-            LOG.info("Rejected request: %s", exc)
-            self.respond(400, {"error": str(exc)})
+            LOG.info("Rejected request: %s", media_config.redact(exc))
+            self.respond(400, {"error": media_config.redact(exc)})
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             LOG.exception("Command failed")
-            self.respond(503, {"error": str(exc)[:300]})
+            self.respond(503, {"error": media_config.redact(exc)[:300]})
 
 
 def serve():
     global CONTROL
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(_RedactFilter())
     CONTROL = Controller()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True

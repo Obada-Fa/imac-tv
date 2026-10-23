@@ -250,7 +250,7 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off', torbox: 'Connect TorBox'}[name];
     const content = $('sheet-content');
     if (name === 'type') {
       content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
@@ -261,12 +261,14 @@
           .catch(err => {$('sheet-feedback').textContent = err.message;});
       };
       $('text-input').focus();
+    } else if (name === 'torbox') {
+      renderTorbox(content);
     } else if (name === 'off') {
       content.innerHTML = `<p>Full shutdown keeps the iMac cool. To start it again, press the physical power button.</p><div class="sheet-row"><button id="off-confirm" class="danger">Turn off iMac</button><button id="off-cancel">Cancel</button></div>`;
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
       $('off-cancel').onclick = closeSheet;
     } else {
-      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div id="subtitles"></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><label>Recovery</label><div class="sheet-row"><button data-action="restart_app">Restart app</button><button data-action="recover">Recover TV Home</button></div><div class="sheet-row"><button id="restart-desktop">Restart desktop session</button></div><label>Phone access</label><div class="sheet-row"><button id="revoke-others">Disconnect other phones</button><button id="retire-link">Disable old link</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div><p id="heat-info"></p>`;
+      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div id="subtitles"></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><label>Recovery</label><div class="sheet-row"><button data-action="restart_app">Restart app</button><button data-action="recover">Recover TV Home</button></div><div class="sheet-row"><button id="restart-desktop">Restart desktop session</button></div><label>TorBox</label><div id="torbox-row"></div><label>Phone access</label><div class="sheet-row"><button id="revoke-others">Disconnect other phones</button><button id="retire-link">Disable old link</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div><p id="heat-info"></p>`;
       $('turn-off').onclick = () => openSheet('off');
       $('restart-desktop').onclick = () => {
         if (confirm('Restart the TV desktop? This stops the current video.')) fire('restart_session', {confirm: true});
@@ -295,6 +297,7 @@
     $('heat-info').textContent = state.thermal_warning ? 'The iMac is running hot. Stop playback and let it cool.' :
       `CPU: ${state.temperature == null ? 'unknown' : Math.round(state.temperature) + '°C'} · GPU: ${state.gpu_temperature == null ? 'unknown' : Math.round(state.gpu_temperature) + '°C'}`;
     $('retire-link').hidden = !state.old_link_active;
+    renderTorboxRow();
     const sub = $('subtitles'); sub.replaceChildren();
     if (!state.capabilities.subtitles) {
       sub.textContent = 'Subtitle tracks appear while MPV plays a video.';
@@ -309,6 +312,78 @@
     const off = document.createElement('button'); off.textContent = 'Off';
     off.onclick = () => fire('subtitle', {id: 'no'}); row.append(off);
     sub.append(row);
+  }
+
+  // ---- TorBox key: the value lives only in a local variable, for as long as the request takes ----
+  let torboxDone = null;
+  const skipGet = () => { try { return localStorage.getItem('torbox-skip') === '1'; } catch (e) { return false; } };
+  const skipSet = on => { try { on ? localStorage.setItem('torbox-skip', '1') : localStorage.removeItem('torbox-skip'); } catch (e) {} };
+  const needsTorbox = () => !!(state && state.torbox && state.torbox.configured === false && !skipGet());
+
+  function openTorbox(done) {
+    torboxDone = done || null;
+    openSheet('torbox');
+  }
+
+  function renderTorbox(content) {
+    const done = torboxDone; torboxDone = null;
+    content.innerHTML = `<p>Cached movies start instantly. Find your key at torbox.app → Settings → API.</p><form id="tb-form" autocomplete="off"><div class="keyrow"><input type="password" id="tb-key" name="tb-key" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" maxlength="128" placeholder="Paste your TorBox API key" aria-label="TorBox API key"><button type="button" id="tb-eye" aria-label="Show key" aria-pressed="false">👁</button></div><div class="sheet-row"><button type="submit" id="tb-save" class="primary">${done ? 'Save &amp; play' : 'Save'}</button>${done ? '<button type="button" id="tb-skip">Use torrents instead</button>' : ''}</div></form><p id="tb-error" class="tb-error" role="alert"></p><p class="muted">Sent only to your TV, which checks it with TorBox and keeps it there. It's never shown again.</p>`;
+    const input = $('tb-key'), err = $('tb-error'), save = $('tb-save'), skip = $('tb-skip');
+    $('tb-eye').onclick = () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      $('tb-eye').setAttribute('aria-pressed', String(show));
+      $('tb-eye').setAttribute('aria-label', show ? 'Hide key' : 'Show key');
+    };
+    if (skip) skip.onclick = () => { skipSet(true); closeSheet(); if (done) done(); };
+    $('tb-form').onsubmit = async e => {
+      e.preventDefault();
+      if (save.disabled) return;
+      const key = input.value.trim();
+      input.value = ''; input.type = 'password'; input.blur();
+      $('tb-eye').setAttribute('aria-pressed', 'false');
+      if (!key) { err.textContent = 'Paste your TorBox API key first'; return; }
+      err.textContent = '';
+      const label = save.textContent;
+      save.disabled = true; if (skip) skip.disabled = true; $('tb-eye').disabled = true;
+      save.textContent = 'Checking with TorBox…';
+      try {
+        await send('torbox_key', {key});
+      } catch (ex) {
+        if (sheetName !== 'torbox') return;
+        err.textContent = ex.message || 'Could not save the key';
+        save.textContent = label; save.disabled = false; if (skip) skip.disabled = false; $('tb-eye').disabled = false;
+        return;
+      }
+      skipSet(false);
+      if (state) state.torbox = {configured: true};
+      if (sheetName === 'torbox') closeSheet();
+      if (done) done();
+      refresh();
+    };
+  }
+
+  function renderTorboxRow() {
+    const row = $('torbox-row');
+    if (!row || !state || !state.torbox) { if (row) row.replaceChildren(); return; }
+    const on = !!state.torbox.configured;
+    if (row.dataset.on === String(on)) return;
+    row.dataset.on = String(on);
+    const p = document.createElement('p'); p.textContent = on ? 'TorBox: connected' : 'TorBox: not connected';
+    const r = document.createElement('div'); r.className = 'sheet-row';
+    const b = document.createElement('button'); b.type = 'button';
+    if (on) {
+      b.textContent = 'Remove key';
+      b.onclick = async () => {
+        if (!confirm('Remove the TorBox key from the TV?')) return;
+        try { await send('torbox_remove'); if (state) state.torbox = {configured: false}; renderTorboxRow(); }
+        catch (e) { message(e.message); }
+      };
+    } else {
+      b.textContent = 'Connect TorBox';
+      b.onclick = () => { skipSet(false); openTorbox(null); };
+    }
+    r.append(b); row.replaceChildren(p, r);
   }
 
   function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
@@ -547,6 +622,7 @@
     }
     const type = t.type || item.type, id = t.id || item.id;
     const play = async params => {
+      if (needsTorbox()) { openTorbox(() => play(params)); return; }
       buzz(12);
       try { await send('play_media', Object.assign({type, id}, params)); } catch (e) { return; }
       closeSheet(); showTab('remote'); refresh();
