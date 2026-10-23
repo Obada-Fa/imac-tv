@@ -397,6 +397,9 @@ class Controller:
         home_token = self.new_device()
         previous_home_token.write_text(home_token)
         previous_home_token.chmod(0o600)
+        self.home_digest = hashlib.sha256(home_token.encode()).hexdigest()
+        self.presence = {}      # session digest -> epoch of its last authenticated request (memory only)
+        self._own_ips = (0.0, set())
         self.timer_path = DATA / "timer.json"
         saved = self._read_json(self.timer_path, {})
         self.timer = saved if saved.get("boot_id") == BOOT_ID else {"boot_id": BOOT_ID, "deadline": None}
@@ -477,6 +480,41 @@ class Controller:
             self.sessions[hashlib.sha256(token.encode()).hexdigest()] = {"created": now, "last": now}
             self._save_json(self.sessions_path, self.sessions)
             return token
+
+    PRESENCE_TTL = 45
+
+    def _is_local(self, address):
+        if address in ("127.0.0.1", "::1", "localhost") or str(address).startswith("127."):
+            return True
+        now = time.monotonic()
+        if now - self._own_ips[0] > 60:
+            try:
+                found = set(command(["hostname", "-I"], timeout=1, check=False).split())
+            except Exception:
+                found = set()
+            self._own_ips = (now, found)
+        return address in self._own_ips[1]
+
+    def seen(self, cookie, address):
+        """Note a request from a paired phone. The TV's own session and local callers don't count."""
+        try:
+            token = cookie.get("imactv")
+            if not token:
+                return
+            digest = hashlib.sha256(token.value.encode()).hexdigest()
+            if digest == self.home_digest or digest not in self.sessions or self._is_local(address):
+                return
+            self.presence[digest] = time.time()
+        except Exception:
+            pass
+
+    def remote_state(self):
+        now = time.time()
+        with self.lock:
+            live = [t for d, t in self.presence.items() if d in self.sessions and d != self.home_digest]
+            devices = len([d for d in self.sessions if d != self.home_digest])
+        last = max(live) if live else None
+        return {"connected": last is not None and now - last <= self.PRESENCE_TTL, "last_seen": last, "devices": devices}
 
     def authenticated(self, cookie, query):
         if cookie:
@@ -1202,7 +1240,7 @@ class Controller:
                 "gui": gui, "volume": percent, "muted": muted,
                 "old_link_active": bool(self.legacy_secret),
                 "torbox": {"configured": bool(media_config.read_key())},
-                "playback": player, "youtube_now": self.youtube_now(), **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
+                "playback": player, "remote": self.remote_state(), "youtube_now": self.youtube_now(), **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
                 "brightness": brightness(), "screen_off": screen_blanked(),
                 "fullscreen": bool(win) and fullscreen_state(win["id"]),
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
@@ -1542,6 +1580,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _note_presence(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return
+        CONTROL.seen(cookie, self.client_address[0])
+
     def authorised(self, query):
         cookie = SimpleCookie()
         try:
@@ -1582,6 +1628,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.authorised(parsed.query):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
+            self._note_presence()
             self.respond(200, CONTROL.status())
             return
         if parsed.path == "/api/pair-status":
@@ -1633,6 +1680,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 # Log the action only. The journal is a plain text file, and Type
                 # carries whatever was typed into the TV search box.
+                self._note_presence()
                 action = body.get("action")
                 LOG.info("Command from %s: %r", self.client_address[0], action)
                 result = CONTROL.action(action, body.get("params") or {})

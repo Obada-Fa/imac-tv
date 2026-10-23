@@ -19,10 +19,12 @@ DEFAULT_CONFIG = {
     "tile_shape": "rounded",
     "shapes": "photo",
     "visualizer": True,
+    "qr_style": "glass",
 }
 STYLES = ("network", "bubbles")
 NODE_SHAPES = ("hexagon", "octagon")
 TILE_SHAPES = ("rounded", "chamfer")
+QR_STYLES = ("glass", "light")
 SHAPE_MODES = ("photo", "photo+animals", "off")
 
 REGISTRY = {}
@@ -84,13 +86,16 @@ def parse_config(raw):
     cfg = {"widgets": list(DEFAULT_CONFIG["widgets"]), "weather": {},
            "ambient": dict(DEFAULT_CONFIG["ambient"]), "style": DEFAULT_CONFIG["style"],
            "node_shape": DEFAULT_CONFIG["node_shape"], "tile_shape": DEFAULT_CONFIG["tile_shape"],
-           "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"]}
+           "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
+           "qr_style": DEFAULT_CONFIG["qr_style"]}
     if not isinstance(raw, dict):
         return cfg
     if raw.get("style") in STYLES:
         cfg["style"] = raw["style"]
     if raw.get("node_shape") in NODE_SHAPES:
         cfg["node_shape"] = raw["node_shape"]
+    if raw.get("qr_style") in QR_STYLES:
+        cfg["qr_style"] = raw["qr_style"]
     if raw.get("shapes") in SHAPE_MODES:
         cfg["shapes"] = raw["shapes"]
     if isinstance(raw.get("visualizer"), bool):

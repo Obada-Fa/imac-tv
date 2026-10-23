@@ -19,9 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, DetailsScreen, SourcesScreen,
-                     BufferingOverlay, Toast, BACK_KEYS, ARROWS)
+                     BufferingOverlay, Toast, BACK_KEYS as _BACK, ARROWS)
+
+BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
 from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
-from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code  # noqa: E402,F401
+from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 from widgets import pairing as pairing_ui  # noqa: E402
 
 BASE = Path(__file__).resolve().parent
@@ -113,7 +115,14 @@ class Home(Gtk.Window):
         self.prev_app = None
         self.last_error = None
         self.state_seen = False
-        self.modal_open = False
+        self.modal_open = False     # legacy flag, no longer set: overlays use self.sheet
+        self.sheet = None
+        self.net = None
+        self.code = None
+        self.remote = None
+        self.pair_listeners = []
+        self.home_cfg = {}
+        self.avoid_rect = None
         self.ui_handled = 0.0
         self.ui_mtime = None
         self.tick_n = 0
@@ -122,6 +131,7 @@ class Home(Gtk.Window):
         self.seq = 0
 
         root = Gtk.Overlay()
+        self.root = root
         self.add(root)
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
@@ -266,6 +276,11 @@ class Home(Gtk.Window):
         self.toast("Opening " + app.title() + "…", 3)
         threading.Thread(target=lambda: cmd("select", {"app": app}), daemon=True).start()
 
+    def notify_pair(self):
+        for fn in list(self.pair_listeners):
+            fn()
+        return False
+
     def play(self, params, name=None):
         self.toast("Starting " + (name or "playback") + "…", 5)
         self.fast_until = time.monotonic() + 30
@@ -282,7 +297,35 @@ class Home(Gtk.Window):
         threading.Thread(target=run, daemon=True).start()
 
     # ---- focus
+    # ---- in-window sheets (pairing view, power confirm): no separate windows, so remote keys always reach us
+    def open_sheet(self, kind, content, rows, default=None, refresh=None):
+        self.close_sheet()
+        scrim = Gtk.EventBox()
+        scrim.get_style_context().add_class("ah-scrim")
+        holder = Gtk.Box()
+        holder.set_halign(Gtk.Align.CENTER)
+        holder.set_valign(Gtk.Align.CENTER)
+        holder.pack_start(content, False, False, 0)
+        scrim.add(holder)
+        self.root.add_overlay(scrim)
+        scrim.show_all()
+        self.sheet = {"kind": kind, "widget": scrim, "rows": rows, "default": default or rows[0][0],
+                      "refresh": refresh}
+        self.sheet["default"].grab_focus()
+
+    def close_sheet(self, kind=None):
+        sh = self.sheet
+        if not sh or (kind and sh["kind"] != kind):
+            return False
+        self.sheet = None
+        self.root.remove(sh["widget"])
+        sh["widget"].destroy()
+        GLib.idle_add(self.focus_screen)
+        return True
+
     def groups(self):
+        if self.sheet:
+            return [[w for w in row if w.get_visible()] for row in self.sheet["rows"]]
         screen = self.current()
         rows = [self.header_row] if screen and screen.header else []
         rows += screen.focus_groups() if screen else []
@@ -293,6 +336,9 @@ class Home(Gtk.Window):
         return pos[0] + w.get_allocated_width() / 2 if pos and w.get_allocated_width() > 1 else i * 100
 
     def focus_screen(self, screen=None):
+        if self.sheet:
+            self.sheet["default"].grab_focus()
+            return False
         screen = screen or self.current()
         if not screen:
             return False
@@ -307,9 +353,11 @@ class Home(Gtk.Window):
         return False
 
     def ensure_focus(self):
-        if self.modal_open:
-            return False
         f = self.get_focus()
+        if self.sheet:
+            if f is None or not any(f is w for row in self.sheet["rows"] for w in row):
+                self.sheet["default"].grab_focus()
+            return False
         if f is None or not f.get_mapped() or not f.get_sensitive():
             GLib.idle_add(self.focus_screen)
         return False
@@ -351,7 +399,7 @@ class Home(Gtk.Window):
     def on_key_press(self, _window, event):
         key = Gdk.keyval_name(event.keyval)
         screen = self.current()
-        if hasattr(screen, "poke") and screen.poke(True) and not self.modal_open:
+        if hasattr(screen, "poke") and screen.poke(True):
             return True  # first key only wakes the ambient screen
         if self.buffering.get_visible():
             if key in BACK_KEYS:
@@ -359,6 +407,14 @@ class Home(Gtk.Window):
                 self.last_state_poll = 0
                 threading.Thread(target=lambda: cmd("back"), daemon=True).start()
             return True
+        if self.sheet:
+            if key in BACK_KEYS or key in ("p", "P"):
+                self.close_sheet()
+                return True
+            if key in ARROWS:
+                self.navigate(key)
+                return True
+            return False        # Enter / space reach the focused sheet button
         focus = self.get_focus()
         in_entry = isinstance(focus, Gtk.Entry)
         if key in BACK_KEYS:
@@ -398,6 +454,7 @@ class Home(Gtk.Window):
 
     def handle_ui_request(self, req):
         name = req.get("screen")
+        self.close_sheet()
         if name == "search":
             scope = search_scope(getattr(self.current(), "sname", ""))
             self.goto_top("search")
@@ -442,6 +499,11 @@ class Home(Gtk.Window):
         threading.Thread(target=worker, daemon=True).start()
 
     def update_network_ui(self, net, code):
+        self.net, self.code = net, code
+        for fn in list(self.pair_listeners):
+            fn()
+        if self.sheet and self.sheet["refresh"]:
+            self.sheet["refresh"]()
         if net.get("type") == "wifi" and net.get("connected"):
             ssid = net.get("ssid", "Wi-Fi")
             signal = net.get("signal", 0)
@@ -480,10 +542,22 @@ class Home(Gtk.Window):
         state = local_api("/api/state")
         GLib.idle_add(self.apply_state, state)
 
+    def set_remote(self, remote):
+        """state["remote"] from /api/state: {"connected", "last_seen", "devices"}. Toast + close the pairing view when a
+        phone connects."""
+        was = None if self.remote is None else remote_connected(self.remote, lambda: False)
+        self.remote = remote if isinstance(remote, dict) else None
+        now = remote_connected(self.remote, lambda: False)
+        if self.remote is not None and now and was is False:
+            self.close_sheet("pairing")
+            GLib.idle_add(self.toast, "Phone connected", 3)
+
     def apply_state(self, state):
         self.state_loading = False
         if not state:
             return False
+        self.set_remote(state.get("remote"))
+        GLib.idle_add(self.notify_pair)
         app, phase = state.get("app"), state.get("phase")
         if phase == "buffering":
             self.buffering.show_for(state)

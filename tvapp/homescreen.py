@@ -115,6 +115,10 @@ def home_css(scale=1.0):
 .ah-wline {{ font-size: {p(23)}px; color: rgba(255,255,255,0.72); {sh} }}
 .ah-card {{ background-color: rgba(18,22,32,0.50); border: 1px solid rgba(255,255,255,0.20); border-radius: {p(30)}px; padding: {p(10)}px {p(14)}px {p(10)}px {p(14)}px; }}
 .ah-chip {{ border-radius: {p(40)}px; padding: {p(2)}px {p(8)}px; background-color: rgba(18,22,32,0.38); }}
+.ah-drop {{ padding: {p(18)}px {p(22)}px; border-radius: {p(26)}px; background-color: rgba(16,20,32,0.80); }}
+.ah-scrim {{ background-color: rgba(4,6,12,0.62); }}
+.ah-sheet {{ background-image: linear-gradient(160deg, rgba(34,42,62,0.88), rgba(12,15,24,0.92)); border: 1px solid rgba(255,255,255,0.24); border-radius: {p(34)}px; padding: {p(44)}px {p(70)}px; }}
+.ah-dbtn-hot {{ background: rgba(255,255,255,0.16); }}
 .ah-cardbtn {{ background: transparent; border: {p(2)}px solid transparent; border-radius: {p(22)}px; padding: {p(8)}px {p(12)}px; box-shadow: none; }}
 .ah-cardbtn:hover {{ background: rgba(255,255,255,0.07); }}
 .ah-cardbtn:focus {{ background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.85); }}
@@ -127,7 +131,6 @@ def home_css(scale=1.0):
 .ah-qr-frame {{ background: #fff; border-radius: {p(14)}px; padding: {p(6)}px; }}
 .ah-cap {{ font-size: {p(22)}px; color: rgba(255,255,255,0.72); text-shadow: 0 1px 3px rgba(0,0,0,0.8); }}
 .ah-credit {{ font-size: {p(17)}px; color: rgba(255,255,255,0.55); text-shadow: 0 1px 3px rgba(0,0,0,0.8); }}
-.ah-dialog {{ background-image: linear-gradient(160deg, #1b2236, #0d1019); border: 1px solid rgba(255,255,255,0.22); border-radius: {p(34)}px; color: #fff; }}
 .ah-dtitle {{ font-size: {p(42)}px; font-weight: 300; color: #fff; }}
 .ah-dsub {{ font-size: {p(22)}px; color: rgba(255,255,255,0.62); }}
 .ah-dcode {{ font-size: {p(64)}px; font-weight: 200; letter-spacing: {p(8)}px; color: #fff; }}
@@ -282,6 +285,7 @@ class AmbientHomeScreen(Screen):
         super().__init__(shell)
         px = shell.px
         self.cfg = widgets.load_config(screens.DATA)
+        shell.home_cfg = self.cfg
         amb = self.cfg["ambient"]
         self.interval = amb["interval"]
         self.idle = IdleTracker(amb["idle"], time.monotonic())
@@ -351,7 +355,6 @@ class AmbientHomeScreen(Screen):
         right.set_margin_end(px(72))
         right.set_margin_top(px(64))
         overlay.add_overlay(left)
-        overlay.add_overlay(right)
         for w in sorted(self.items, key=lambda i: i.order):
             if w.slot == "topleft":
                 left.pack_start(w.widget, False, False, 0)
@@ -366,6 +369,7 @@ class AmbientHomeScreen(Screen):
                 self.chrome_widgets.append(w.widget)
             self.due[w.id] = 0.0
 
+        overlay.add_overlay(right)      # after the rows: the pairing drop-down floats above the tiles
         cap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         cap.set_halign(Gtk.Align.START)
         cap.set_valign(Gtk.Align.END)
@@ -496,6 +500,8 @@ class AmbientHomeScreen(Screen):
         if not self.active():
             self.stop_anim()
             return True
+        if self.shell.sheet:
+            self.idle.touch(now)          # an open pairing/power sheet counts as use
         if self.idle.check(now):
             self.enter_ambient()
         for w in self.items:
@@ -829,6 +835,8 @@ class AmbientHomeScreen(Screen):
         if self.style == "network":
             hold = self.idle.ambient and self.shape_candidate()
             self.dust_amt = fade_step(self.dust_amt, 1.0 if hold else target, dt, 2.2)
+        pw = next((w for w in self.items if hasattr(w, "drop_rect")), None)
+        self.shell.avoid_rect = pw.drop_rect() if pw else None
         if self.chrome > 0.0:
             for w in self.items:
                 w.animate(dt, now)

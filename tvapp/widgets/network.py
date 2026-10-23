@@ -196,6 +196,12 @@ class Node(Gtk.DrawingArea):
         self.connect("focus-out-event", lambda *_: self.queue_draw() or False)
         self.connect("key-press-event", self.on_key)
 
+    def centre(self):
+        return self.cx, self.cy
+
+    def half_extent(self):
+        return self.w0 * 0.58, self.h0 * 0.58
+
     def on_key(self, _w, ev):
         if Gdk.keyval_name(ev.keyval) in ("Return", "KP_Enter", "space"):
             self.on_activate()
@@ -407,8 +413,7 @@ class NodeRow(RowBase):
                                 kicker=("YOUTUBE · " + ("PLAYING" if now == "Playing" else "PAUSED" if now == "Paused"
                                                         else "OPEN")) if now else "",
                                 on_activate=spec["on_activate"], seed=seed * 17 + i, chamfer=chamfer)
-            self.fixed.put(node, round(p["cx"] - node.cx), round(p["cy"] - node.cy))
-            self.bubbles.append(node)
+            self.add_node(node, round(p["cx"] - node.cx), round(p["cy"] - node.cy))
 
 
 # ---------------------------------------------------------------- the line layer

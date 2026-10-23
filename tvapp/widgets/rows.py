@@ -91,6 +91,7 @@ class RowWidget(Widget):
 
     def animate(self, dt, now):
         if self.row:
+            self.row.avoid = getattr(self.shell, "avoid_rect", None)
             self.row.animate(dt, now)
 
 

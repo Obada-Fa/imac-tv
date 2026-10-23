@@ -528,6 +528,42 @@ class LifecycleTests(unittest.TestCase):
             os.environ["IMACTV_XAUTHORITY"] = "/tmp/other"
             self.assertEqual(server._display_env()["XAUTHORITY"], "/tmp/other")
 
+    def test_remote_presence(self):
+        c = self.controller()
+        phone, other = c.new_device(), c.new_device()
+        home = (server.DATA / "home_token").read_text().strip()
+        jar = lambda t: {"imactv": mock.Mock(value=t)}
+        self.assertEqual(c.remote_state(), {"connected": False, "last_seen": None, "devices": c.remote_state()["devices"]})
+        base = c.remote_state()["devices"]
+        with mock.patch.object(server, "command", return_value="192.168.68.5"), mock.patch.object(server.time, "time", return_value=1000.0):
+            c.seen(jar(home), "192.168.68.20")      # the TV's own session
+            c.seen(jar(phone), "127.0.0.1")         # local caller
+            c.seen(jar(phone), "192.168.68.5")      # this machine's own address
+            c.seen({}, "192.168.68.20")             # no cookie
+            c.seen(jar("unpaired"), "192.168.68.20")
+            self.assertFalse(c.remote_state()["connected"])
+            c.seen(jar(phone), "192.168.68.20")
+        with mock.patch.object(server.time, "time", return_value=1044.0):
+            self.assertEqual(c.remote_state(), {"connected": True, "last_seen": 1000.0, "devices": base})
+        with mock.patch.object(server.time, "time", return_value=1046.0):
+            self.assertFalse(c.remote_state()["connected"])
+            self.assertEqual(c.remote_state()["last_seen"], 1000.0)
+        with mock.patch.object(server.time, "time", return_value=1100.0):
+            c.seen(jar(other), "192.168.68.21")
+            self.assertTrue(c.remote_state()["connected"])
+        c.sessions.pop(server.hashlib.sha256(other.encode()).hexdigest())
+        c.sessions.pop(server.hashlib.sha256(phone.encode()).hexdigest())
+        with mock.patch.object(server.time, "time", return_value=1101.0):
+            self.assertFalse(c.remote_state()["connected"])
+            self.assertEqual(c.remote_state()["devices"], base - 2)
+
+    def test_status_has_remote_block(self):
+        c = self.controller()
+        with mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(server, "command", side_effect=OSError), \
+                mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "brightness", return_value={}), \
+                mock.patch.object(server, "screen_blanked", return_value=False):
+            self.assertEqual(set(c.status()["remote"]), {"connected", "last_seen", "devices"})
+
     def test_open_search_stays_on_youtube(self):
         c = self.controller()
         c.app = "youtube"

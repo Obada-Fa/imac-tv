@@ -136,3 +136,24 @@ def net_line(net):
     if net.get("type") == "ethernet" and net.get("connected"):
         return "🖧 Wired"
     return "🌐 Online" if net.get("connected") else "⚠ Offline"
+
+
+def qr_matrix(text):
+    """QR code as rows of booleans (True = dark module), no border; None when qrcode is unavailable."""
+    if not qrcode:
+        return None
+    try:
+        qr = qrcode.QRCode(border=0, error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(text)
+        qr.make(fit=True)
+        return [list(r) for r in qr.get_matrix()]
+    except Exception:
+        return None
+
+
+def remote_connected(remote, fallback):
+    """Is a phone remote connected? `remote` is state["remote"] from /api/state (None on an old server), in which
+    case fall back to `fallback()` (whether any phone was ever paired)."""
+    if isinstance(remote, dict) and "connected" in remote:
+        return bool(remote["connected"])
+    return bool(fallback())

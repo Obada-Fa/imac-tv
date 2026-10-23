@@ -184,6 +184,9 @@ class Bubble(Gtk.DrawingArea):
     def centre(self):
         return self.side / 2, self.side / 2
 
+    def half_extent(self):
+        return self.r * 1.25, self.r * 1.25
+
     def update_now(self, state):
         self.now = state.get("status")
         self.title = state.get("title") or self.title
@@ -392,6 +395,7 @@ class RowBase(Gtk.EventBox):
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
         self.shell = shell
         self.bubbles = []
+        self.home, self.shift, self.avoid = {}, {}, None
         self.fixed = Gtk.Fixed()
         self.add(self.fixed)
         self.set_size_request(shell.sw, height)
@@ -426,7 +430,41 @@ class RowBase(Gtk.EventBox):
     def focus_items(self):
         return list(self.bubbles)
 
+    def add_node(self, node, x, y):
+        """Place a node in the row; remembers its home position so it can glide aside and back."""
+        self.fixed.put(node, x, y)
+        self.home[node] = (x, y)
+        self.shift[node] = [0.0, 0.0]
+        self.bubbles.append(node)
+
+    def apply_avoid(self, dt):
+        """Keep nodes out of self.avoid (a window-coordinate rect, or None): they glide left or down, and back."""
+        origin = self.translate_coordinates(self.shell, 0, 0) or (0, 0)
+        m = self.shell.px(28)
+        for b in self.bubbles:
+            hx, hy = self.home[b]
+            cx, cy = b.centre()
+            hw, hh = b.half_extent()
+            tx = ty = 0.0
+            if self.avoid:
+                ax, ay, aw, ah = self.avoid
+                l, r = origin[0] + hx + cx - hw, origin[0] + hx + cx + hw
+                t, bt = origin[1] + hy + cy - hh, origin[1] + hy + cy + hh
+                if r > ax - m and l < ax + aw + m and bt > ay - m and t < ay + ah + m:
+                    left = r - (ax - m)
+                    down = (ay + ah + m) - t
+                    if left <= down * 1.4:
+                        tx = -left
+                    else:
+                        ty = down
+            s = self.shift[b]
+            nx, ny = ease(s[0], tx, dt, 5.0), ease(s[1], ty, dt, 5.0)
+            if abs(nx - s[0]) > 0.4 or abs(ny - s[1]) > 0.4 or (not self.avoid and (abs(nx) < 0.5) != (abs(s[0]) < 0.5)):
+                self.fixed.move(b, round(hx + nx), round(hy + ny))
+                s[0], s[1] = nx, ny
+
     def animate(self, dt, now):
+        self.apply_avoid(dt)
         idx = next((i for i, b in enumerate(self.bubbles) if b.has_focus()), None)
         for b, off in zip(self.bubbles, lean_offsets(len(self.bubbles), idx, self.lean_strength * self.shell.scale)):
             b.lean_target = off
@@ -450,5 +488,4 @@ class BubbleRow(RowBase):
             spec = dict(spec)
             r = p["r"] * spec.pop("big", 1.0)
             b = Bubble(shell, r, seed=seed * 13 + i, **spec)
-            self.fixed.put(b, round(p["cx"] - b.side / 2), round(p["cy"] - b.side / 2))
-            self.bubbles.append(b)
+            self.add_node(b, round(p["cx"] - b.side / 2), round(p["cy"] - b.side / 2))
