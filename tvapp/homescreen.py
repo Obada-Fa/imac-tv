@@ -113,18 +113,17 @@ def home_css(scale=1.0):
 .ah-wicon {{ font-size: {p(34)}px; }}
 .ah-wtemp {{ font-size: {p(34)}px; font-weight: 500; color: #fff; {sh} }}
 .ah-wline {{ font-size: {p(23)}px; color: rgba(255,255,255,0.72); {sh} }}
-.ah-card {{ background-color: rgba(18,22,32,0.50); border: 1px solid rgba(255,255,255,0.20); border-radius: {p(30)}px; padding: {p(10)}px {p(14)}px {p(10)}px {p(14)}px; }}
-.ah-chip {{ border-radius: {p(40)}px; padding: {p(2)}px {p(8)}px; background-color: rgba(18,22,32,0.38); }}
-.ah-drop {{ padding: {p(18)}px {p(22)}px; border-radius: {p(26)}px; background-color: rgba(16,20,32,0.80); }}
+.ah-line {{ padding: {p(2)}px {p(8)}px; }}
+.ah-drop {{ padding: {p(10)}px {p(26)}px {p(22)}px; }}
 .ah-scrim {{ background-color: rgba(4,6,12,0.62); }}
 .ah-sheet {{ background-image: linear-gradient(160deg, rgba(34,42,62,0.88), rgba(12,15,24,0.92)); border: 1px solid rgba(255,255,255,0.24); border-radius: {p(34)}px; padding: {p(44)}px {p(70)}px; }}
 .ah-dbtn-hot {{ background: rgba(255,255,255,0.16); }}
 .ah-cardbtn {{ background: transparent; border: {p(2)}px solid transparent; border-radius: {p(22)}px; padding: {p(8)}px {p(12)}px; box-shadow: none; }}
 .ah-cardbtn:hover {{ background: rgba(255,255,255,0.07); }}
 .ah-cardbtn:focus {{ background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.85); }}
-.ah-kicker {{ font-size: {p(20)}px; color: rgba(255,255,255,0.75); font-weight: 500; }}
-.ah-code {{ font-size: {p(44)}px; font-weight: 300; letter-spacing: {p(4)}px; color: #fff; }}
-.ah-net {{ font-size: {p(18)}px; color: rgba(255,255,255,0.62); }}
+.ah-kicker {{ font-size: {p(20)}px; color: rgba(255,255,255,0.88); font-weight: 400; text-shadow: 0 1px 3px rgba(0,0,0,0.65); }}
+.ah-code {{ font-size: {p(44)}px; font-weight: 300; letter-spacing: {p(4)}px; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,0.6); }}
+.ah-net {{ font-size: {p(18)}px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 3px rgba(0,0,0,0.65); }}
 .ah-power {{ background: transparent; border: {p(2)}px solid transparent; border-radius: {p(40)}px; color: rgba(255,255,255,0.8); font-size: {p(26)}px; padding: {p(6)}px {p(14)}px; box-shadow: none; }}
 .ah-power:hover {{ background: rgba(255,255,255,0.08); }}
 .ah-power:focus {{ background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.85); color: #fff; }}

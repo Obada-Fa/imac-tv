@@ -27,70 +27,171 @@ except Exception:  # pragma: no cover
 QUIET = 4        # quiet-zone width in modules
 
 
+TINT = 0.11          # white tint of the frosted glass
+TARGET_BG = 0.30     # background luminance (0..1) the QR area is darkened down to, at most
+MAX_DARK = 0.8
+
+
+def lum(r, g, b):
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+
+
+def region_luminance(surf, x, y, w, h):
+    """Mean luminance (0..1) of a rectangle of an RGB24 cairo surface (clamped to its bounds)."""
+    sw, sh = surf.get_width(), surf.get_height()
+    x0, y0 = max(0, int(x)), max(0, int(y))
+    x1, y1 = min(sw, int(x + w) + 1), min(sh, int(y + h) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return 0.3
+    surf.flush()
+    data, stride = surf.get_data(), surf.get_stride()
+    tot = n = 0
+    for yy in range(y0, y1):
+        row = yy * stride
+        for xx in range(x0, x1):
+            o = row + xx * 4
+            tot += lum(data[o + 2], data[o + 1], data[o])
+            n += 1
+    return tot / n if n else 0.3
+
+
+def darkening_for(bg_lum, tint=TINT, target=TARGET_BG):
+    """Least black overlay (alpha) that brings the glass behind the QR down to `target` luminance. Dark photos
+    need almost none, bright ones more."""
+    seen = bg_lum * (1 - tint) + tint          # what the white glass tint does to the blurred photo
+    if seen <= target:
+        return 0.0
+    return min(MAX_DARK, 1.0 - target / seen)
+
+
+def rrect_path(cr, x, y, w, h, r):
+    r = min(r, w / 2, h / 2)
+    cr.new_sub_path()
+    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+    cr.arc(x + r, y + r, r, math.pi, 1.5 * math.pi)
+    cr.close_path()
+
+
+def paint_glass(cr, widget, photo, w, h, radius, base=None):
+    """Frosted glass with a light tint: blurred-photo crop + white tint + hairline border."""
+    from .network import paint_frost
+    rrect_path(cr, 0.5, 0.5, w - 1, h - 1, radius)
+    cr.save()
+    cr.clip_preserve()
+    paint_frost(cr, base or cr.get_matrix(), widget, photo)
+    cr.set_source_rgba(1, 1, 1, TINT)
+    cr.paint()
+    cr.restore()
+    cr.set_source_rgba(1, 1, 1, 0.28)
+    cr.set_line_width(1)
+    cr.stroke()
+
+
+def paint_feathered_dark(cr, x, y, w, h, alpha, feather):
+    """A soft-edged dark patch (no hard box): nested rounded rects, each adding a little, so the darkness ramps up
+    smoothly from `feather` px outside the area to full `alpha` just inside it."""
+    if alpha <= 0.004:
+        return
+    steps = 16
+    per = 1.0 - (1.0 - alpha) ** (1.0 / steps)
+    inset = feather * 0.35
+    for i in range(steps):
+        g = feather * (1 - i / (steps - 1)) - inset
+        rrect_path(cr, x - g, y - g, w + 2 * g, h + 2 * g, max(4.0, feather * 0.9 + g))
+        cr.set_source_rgba(0, 0, 0, per)
+        cr.fill()
+
+
 class QRTile(Gtk.DrawingArea):
-    """A QR code on glass. style "glass": frosted dark tile with white modules (~90 %), crisp, never blurred.
-    style "light": frosted light tile with dark modules (the fallback if a phone camera can't read inverted codes)."""
+    """A QR code sitting directly on the glass: white modules (~92 %), crisp, never blurred. Behind the code
+    and its quiet zone only, the glass is darkened just enough (measured per photo) to keep it scannable.
+    style "light" instead draws dark modules on a frosted light tile (fallback for cameras that can't read
+    inverted codes)."""
 
     def __init__(self, shell, module_px, style="glass"):
         super().__init__()
         self.shell, self.style = shell, style
         self.module = max(2, module_px)
         self.matrix = None
+        self.dark_cache = (None, 0.0)
+        self.pad = 0
         self.set_halign(Gtk.Align.CENTER)
+        self.set_has_window(False)
         self.connect("draw", self.on_draw)
 
     def set_text(self, text):
         self.matrix = qr_matrix(text)
         n = len(self.matrix) + 2 * QUIET if self.matrix else 29
         side = n * self.module
-        self.set_size_request(side, side)
+        self.pad = self.shell.px(24)          # room for the feathered contrast patch (a widget clips its drawing)
+        self.set_size_request(side + 2 * self.pad, side + 2 * self.pad)
         self.queue_draw()
 
-    def draw_tile(self, cr, side, matrix, style, module, frost=None):
-        """Pure drawing, also used to render test images."""
-        r = side * 0.06
-        cr.new_sub_path()
-        for cx, cy, a in ((side - r, r, -90), (side - r, side - r, 0), (r, side - r, 90), (r, r, 180)):
-            cr.arc(cx, cy, r, math.radians(a), math.radians(a + 90))
-        cr.close_path()
-        cr.save()
-        cr.clip_preserve()
-        if frost:
-            frost(cr)
-        if style == "light":
-            cr.set_source_rgba(1, 1, 1, 0.86)
-        else:
-            cr.set_source_rgba(0.04, 0.06, 0.11, 0.62)
-        cr.paint()
-        cr.restore()
-        cr.set_source_rgba(1, 1, 1, 0.30)
-        cr.set_line_width(1)
-        cr.stroke()
-        if not matrix:
-            return
-        cr.set_antialias(cairo.ANTIALIAS_NONE)       # modules stay hard-edged: no blur or smoothing on them
-        if style == "light":
+    def darkening(self, photo, ox, oy, side):
+        """Alpha of the contrast patch for the photo currently under the QR (cached per photo + position)."""
+        layers = photo.blur_layers() if photo else []
+        if not layers:
+            return 0.25
+        key = (tuple(id(s) for s, _ in layers), round(ox), round(oy))
+        if self.dark_cache[0] == key:
+            return self.dark_cache[1]
+        k = photo.blur_k
+        m = 10
+        worst = max(region_luminance(s, (ox - m) / k, (oy - m) / k, (side + 2 * m) / k, (side + 2 * m) / k)
+                    for s, _ in layers)
+        a = darkening_for(worst)
+        self.dark_cache = (key, a)
+        return a
+
+    def paint_qr(self, cr, side, photo, origin):
+        """Drawing shared with the test renderer. origin = QR top-left in photo (screen) coordinates."""
+        matrix, module = self.matrix, self.module
+        if self.style == "light":
+            rrect_path(cr, 0, 0, side, side, side * 0.06)
+            cr.set_source_rgba(1, 1, 1, 0.80)
+            cr.fill()
             cr.set_source_rgba(0.04, 0.06, 0.1, 0.95)
         else:
-            cr.set_source_rgba(1, 1, 1, 0.92)
+            paint_feathered_dark(cr, 0, 0, side, side, self.darkening(photo, origin[0], origin[1], side),
+                                 self.shell.px(30))
+            cr.set_source_rgba(1, 1, 1, 0.93)
+        if not matrix:
+            return
+        cr.set_antialias(cairo.ANTIALIAS_NONE)
         for y, row in enumerate(matrix):
             for x, dark in enumerate(row):
                 if dark:
                     cr.rectangle((x + QUIET) * module, (y + QUIET) * module, module, module)
         cr.fill()
+        cr.set_antialias(cairo.ANTIALIAS_DEFAULT)
 
     def on_draw(self, _w, cr):
         if cairo is None:
             return False
         photo = getattr(self.shell, "photo_canvas", None)
-        base = cr.get_matrix()
-        side = self.get_allocated_width()
-
-        def frost(c):
-            from .network import paint_frost
-            paint_frost(c, base, self, photo)
-        self.draw_tile(cr, side, self.matrix, self.style, self.module, frost)
+        pad = getattr(self, "pad", 0)
+        pos = self.translate_coordinates(photo, pad, pad) if photo else None
+        cr.translate(pad, pad)
+        self.paint_qr(cr, self.get_allocated_width() - 2 * pad, photo, pos or (0, 0))
         return False
+
+
+class GlassBox(Gtk.Box):
+    """A box that paints frosted light glass (blurred photo crop + faint white tint + hairline) behind its children."""
+
+    def __init__(self, shell, *a, **kw):
+        super().__init__(*a, **kw)
+        self.shell = shell
+        self.set_has_window(False)
+
+    def do_draw(self, cr):
+        if cairo is not None:
+            w, h = self.get_allocated_width(), self.get_allocated_height()
+            paint_glass(cr, self, getattr(self.shell, "photo_canvas", None), w, h,
+                        min(self.shell.px(30), h / 2))
+        return Gtk.Box.do_draw(self, cr)
 
 
 def qr_style(shell):
@@ -186,12 +287,11 @@ class PairingWidget(Widget):
         shell = self.shell
         self.last_url = ""
         self.panel_on = False
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=p(10))
+        outer = GlassBox(shell, orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.set_halign(Gtk.Align.END)
         # compact status line
         card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=p(4))
-        card.get_style_context().add_class("ah-card")
-        card.get_style_context().add_class("ah-chip")
+        card.get_style_context().add_class("ah-line")
         card.set_halign(Gtk.Align.END)
         self.pair_btn = Gtk.Button()
         self.pair_btn.set_relief(Gtk.ReliefStyle.NONE)
@@ -211,9 +311,8 @@ class PairingWidget(Widget):
         self.rev.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.rev.set_transition_duration(300)
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=p(8))
-        panel.get_style_context().add_class("ah-card")
         panel.get_style_context().add_class("ah-drop")
-        panel.set_halign(Gtk.Align.END)
+        panel.set_halign(Gtk.Align.CENTER)
         self.drop_title = text_label("Scan to connect your phone", "ah-kicker")
         panel.set_size_request(p(320), -1)
         self.qr = QRTile(shell, p(5), qr_style(shell))
@@ -255,7 +354,7 @@ class PairingWidget(Widget):
         pw = self.panel.get_preferred_width()[1]
         ph = self.panel.get_preferred_height()[1]
         ch = self.card.get_allocated_height()
-        return (pos[0] + ow - pw, pos[1], pw, ch + self.shell.px(10) + ph)
+        return (pos[0] + ow - pw, pos[1], pw, ch + ph)
 
     def refresh(self):
         self.shell.trigger_network_refresh()
