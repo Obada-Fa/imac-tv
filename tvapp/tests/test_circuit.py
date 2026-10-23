@@ -188,6 +188,21 @@ class CacheTests(unittest.TestCase):
                 homescreen.traced_paths(source, 1920, 1080)
                 self.assertEqual(detect.call_count, 3)
 
+    def test_detection_runs_in_a_child_and_matches_in_process_trace(self):
+        """The tracer must not run on the app's GIL (it froze the animation), yet give the same tracks."""
+        import homescreen
+        from gi.repository import GLib, GdkPixbuf
+        w, h = contours.TRACE_WIDTH, 216
+        rgb = [[(200, 0, 0) if int(((x - w / 2) / (1 + max(0, y - 120) / 80) + w / 2) // 30) % 2 else (0, 102, 0)
+                for x in range(w)] for y in range(h)]
+        pb = GdkPixbuf.Pixbuf.new_from_bytes(GLib.Bytes.new(bytes(c for row in rgb for p in row for c in p)),
+                                             GdkPixbuf.Colorspace.RGB, False, 8, w, h, w * 3)
+        with mock.patch.object(homescreen.subprocess, 'run', wraps=homescreen.subprocess.run) as run:
+            paths = homescreen.paths_from_pixbuf(pb)
+        self.assertEqual(run.call_count, 1)
+        self.assertGreaterEqual(len(paths), 3)
+        self.assertEqual(paths, contours.valid_paths([[list(q) for q in p] for p in contours.trace(rgb)]))
+
 
 if __name__ == '__main__':
     unittest.main()

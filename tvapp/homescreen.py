@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import random
+import subprocess
+import sys
 
 import screens
 from screens import Screen, text_label, cover_pixbuf
@@ -213,9 +215,19 @@ def paths_from_pixbuf(pb):
     h = max(16, round(w * pb.get_height() / pb.get_width()))
     sm = pb.scale_simple(w, h, GdkPixbuf.InterpType.BILINEAR)
     data, stride, channels = sm.get_pixels(), sm.get_rowstride(), sm.get_n_channels()
-    rgb = [[tuple(data[y * stride + x * channels:y * stride + x * channels + 3])
-            for x in range(w)] for y in range(h)]
-    return contours.trace(rgb)
+    if channels == 3:
+        px = b"".join(data[y * stride:y * stride + w * 3] for y in range(h))
+    else:
+        px = bytes(b for y in range(h) for x in range(w) for b in data[y * stride + x * channels:y * stride + x * channels + 3])
+    # Traced in a low-priority child: in this process its Python loops would hold the GIL and stall frames.
+    try:
+        out = subprocess.run(["nice", "-n", "10", sys.executable, "-m", "widgets.contours"],
+                             input=b"%d %d\n" % (w, h) + px, capture_output=True, timeout=120,
+                             cwd=os.path.dirname(os.path.abspath(__file__)), check=True)
+        return contours.valid_paths(json.loads(out.stdout))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        print("home contours (child):", exc)
+        return []
 
 
 def traced_paths(path, w, h):

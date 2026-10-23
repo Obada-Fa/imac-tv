@@ -301,7 +301,15 @@ def fetch_file(url):
 
 def cover_pixbuf(path, width, height):
     """Scale artwork to fill width x height and crop the overflow without distorting it."""
-    source = GdkPixbuf.Pixbuf.new_from_file(str(path))
+    info = GdkPixbuf.Pixbuf.get_file_info(str(path))
+    if info and info[1] > 0 and info[2] > 0 and max(width / info[1], height / info[2]) <= 0.5:
+        # Big originals (4K/33 MP backgrounds): the JPEG decoder shrinks while loading (1/2..1/8)
+        # straight to the cover size, instead of materialising every full-size pixel first.
+        k = max(width / info[1], height / info[2])
+        source = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), max(width, round(info[1] * k)),
+                                                         max(height, round(info[2] * k)), False)
+    else:
+        source = GdkPixbuf.Pixbuf.new_from_file(str(path))
     k = max(width / source.get_width(), height / source.get_height())
     sw, sh = max(width, round(source.get_width() * k)), max(height, round(source.get_height() * k))
     scaled = source.scale_simple(sw, sh, GdkPixbuf.InterpType.BILINEAR)

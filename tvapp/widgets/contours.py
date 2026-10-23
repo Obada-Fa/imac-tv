@@ -118,3 +118,24 @@ def trace(rgb):
     if len(selected) < 3 or sum(length for length, _ in selected) < w:
         return []
     return [[(x / (w - 1), y / (h - 1)) for x, y in path] for _, path in selected]
+
+
+def main():
+    """`python3 -m widgets.contours` (cwd tvapp): "<w> <h>\\n" + packed RGB bytes on stdin -> JSON paths.
+
+    The app runs trace() in this child process, so its pure-Python pixel loops never hold the
+    app's GIL (that froze the animation for ~0.5-2 s on every new background).
+    """
+    import json
+    import sys
+    data = sys.stdin.buffer.read()
+    head, _, px = data.partition(b"\n")
+    w, h = (int(v) for v in head.split())
+    if len(px) != w * h * 3:
+        raise SystemExit("contours: expected %d bytes, got %d" % (w * h * 3, len(px)))
+    rgb = [[tuple(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) for x in range(w)] for y in range(h)]
+    json.dump(trace(rgb), sys.stdout)
+
+
+if __name__ == "__main__":
+    main()
