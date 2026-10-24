@@ -53,6 +53,9 @@ colours come from the photo. When the music
 stops the particle field fades back in within about a second (no waiting for the next photo). The caption
 shows the song and artist while playback metadata is available. The first remote or keyboard input wakes
 Home and is swallowed.
+While a visualizer effect is showing, the phone remote shows a **Next effect** button (with the current
+effect's name) that steps to the next mode in rotation; Home reports this through `viz.json` in the data
+directory, and the phone action is `viz_next {}`.
 
 Render a repeatable preview over an image with
 `python3 scripts/circuit-preview.py /path/to/image.jpg tvapp/previews/circuit-demo`.
