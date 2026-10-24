@@ -138,6 +138,7 @@ class Home(Gtk.Window):
         self.avoid_rect = None
         self.ui_handled = 0.0
         self.ui_mtime = None
+        self.viz_written = (None, 0.0)          # last viz.json payload and when it was written
         self.tick_n = 0
         self.tops = {}
         self.back = []
@@ -579,6 +580,11 @@ class Home(Gtk.Window):
 
     def handle_ui_request(self, req):
         name = req.get("screen")
+        if name == "viz_next":                  # phone remote: next visualizer effect, Home stays as it is
+            home = self.tops.get("home")
+            if home is not None and hasattr(home, "next_viz") and home.next_viz():
+                self.write_viz_state(force=True)
+            return
         self.close_sheet()
         if name == "search":
             scope = search_scope(getattr(self.current(), "sname", ""))
@@ -594,6 +600,24 @@ class Home(Gtk.Window):
         else:
             return
         self.present()
+
+    # ---- viz.json: tells the controller (and so the phone) whether a visualizer effect is showing
+    def write_viz_state(self, force=False):
+        home = self.tops.get("home")
+        state = home.viz_status() if home is not None and hasattr(home, "viz_status") else {"active": False, "mode": None}
+        now = time.monotonic()
+        last, at = self.viz_written
+        # rewritten every 5 s while active: the controller treats an old file as Home gone
+        if not force and state == last and not (state["active"] and now - at >= 5):
+            return
+        self.viz_written = (state, now)
+        path = DATA / "viz.json"
+        try:
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state))
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     def show_media(self, media):
         """Details for media {type,id,season?,episode?}: refresh the open one or push a new one."""
@@ -706,6 +730,7 @@ class Home(Gtk.Window):
     def tick(self):
         self.tick_n += 1
         self.check_ui_request()
+        self.write_viz_state()
         self.sync_trial()
         live = display.screen_live()
         if self.tick_n % 2 == 0:

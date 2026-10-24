@@ -167,5 +167,26 @@ class SheetRoutingTests(unittest.TestCase):
         self.assertFalse(remote_connected({}, lambda: False))
 
 
+@unittest.skipIf(homescreen is None, "GTK bindings unavailable")
+class VizRemoteTests(unittest.TestCase):
+    def screen(self, mode="edgeflow", names=("edgeflow", "ridge", "prism"), stop=False):
+        viz = mock.Mock(mode=mode, names=list(names))
+        return mock.Mock(viz=viz, viz_stop=stop, lv={})
+
+    def test_next_viz_steps_through_modes_in_order(self):
+        s = self.screen(mode="prism")
+        self.assertTrue(homescreen.AmbientHomeScreen.next_viz(s))
+        self.assertEqual(s.viz.switch.call_args[0][0], "edgeflow")       # wraps around
+        self.assertEqual(homescreen.AmbientHomeScreen.viz_status(s), {"active": True, "mode": "prism"})
+
+    def test_next_viz_ignored_without_a_running_visualizer(self):
+        s = self.screen(stop=True)
+        self.assertFalse(homescreen.AmbientHomeScreen.next_viz(s))
+        s.viz.switch.assert_not_called()
+        self.assertEqual(homescreen.AmbientHomeScreen.viz_status(s), {"active": False, "mode": None})
+        s.viz = None
+        self.assertFalse(homescreen.AmbientHomeScreen.next_viz(s))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -462,6 +462,28 @@ class LifecycleTests(unittest.TestCase):
         ui.assert_not_called()
         self.assertEqual(c.app, "home")
 
+    def test_visualizer_state_reads_fresh_viz_json_only(self):
+        c = self.controller()
+        path = server.DATA / "viz.json"
+        path.unlink(missing_ok=True)
+        self.assertEqual(c.visualizer_state(), {"active": False, "mode": None})
+        path.write_text('{"active": true, "mode": "prism"}')
+        self.assertEqual(c.visualizer_state(), {"active": True, "mode": "prism"})
+        old = server.time.time() - 60
+        os.utime(path, (old, old))                      # Home stopped writing it
+        self.assertEqual(c.visualizer_state(), {"active": False, "mode": None})
+        path.unlink()
+
+    def test_viz_next_requests_home_only_while_visualizer_runs(self):
+        c = self.controller()
+        with mock.patch.object(c, "visualizer_state", return_value={"active": False, "mode": None}), \
+                mock.patch.object(c, "_ui_request") as ui:
+            self.assertEqual(c.action("viz_next", {}), {"ok": True, "ignored": True})
+        ui.assert_not_called()
+        with mock.patch.object(c, "visualizer_state", return_value={"active": True, "mode": "ridge"}):
+            self.assertEqual(c.action("viz_next", {}), {"ok": True})
+        self.assertEqual(self.ui()["screen"], "viz_next")
+
     def test_youtube_media_validates_and_invalidates_cache(self):
         c = self.controller()
         with self.assertRaises(ValueError):

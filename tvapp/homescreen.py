@@ -1190,6 +1190,27 @@ class AmbientHomeScreen(Screen):
         self.still = base
         self.start_shape_timer()
 
+    def viz_status(self):
+        """What the phone remote sees: is a visualizer effect showing, and which one."""
+        v = self.viz
+        if v is None or self.viz_stop:
+            return {"active": False, "mode": None}
+        return {"active": True, "mode": v.mode}
+
+    def next_viz(self):
+        """Phone remote's Next effect: step to the following mode in rotation order. False when none runs."""
+        v = self.viz
+        if v is None or self.viz_stop:
+            return False
+        names = v.names
+        k = names.index(v.mode) + 1 if v.mode in names else 0
+        name = names[k % len(names)] if names else None
+        if name == v.mode and len(names) < 2:
+            name = None                         # only one mode allowed: let switch() fall back to its own choice
+        v.switch(name, t=time.monotonic(), lv=self.lv)
+        self.start_shape_timer()
+        return True
+
     def sync_shapes(self, now):
         """1 s housekeeping: start shapes after the fade, run the visualizer while music plays, ease back
         to the still sky-line when it stops, rotate doodles, and run audio capture."""

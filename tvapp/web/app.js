@@ -209,6 +209,15 @@
    ['st-continue', 'still_watching', {choice: 'continue'}], ['st-stop', 'still_watching', {choice: 'stop'}]]
     .forEach(([id, action, params]) => $(id).onclick = () => { buzz(8); send(action, params).then(() => refresh()).catch(() => {}); });
 
+  const VIZ_NAMES = {edgeflow: 'Edge flow', ridge: 'Ridge', constellation: 'Constellation', terrain: 'Terrain',
+    prism: 'Prism', circuit: 'Circuit', aurora: 'Aurora'};
+  function renderViz(viz, view) {
+    const on = Boolean(viz && viz.active) && view !== 'playing';
+    $('viz-next').hidden = !on;
+    if (on) $('viz-mode').textContent = VIZ_NAMES[viz.mode] || viz.mode || '';
+  }
+  $('viz-next').onclick = () => { buzz(8); send('viz_next').then(() => setTimeout(refresh, 600)).catch(() => {}); };
+
   function renderView(s, pb, name) {
     const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
     const c = $('controls');
@@ -218,6 +227,7 @@
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
     renderYoutube(s.youtube_now, view);
+    renderViz(s.visualizer, view);
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
     $('buffer').hidden = view !== 'buffering';

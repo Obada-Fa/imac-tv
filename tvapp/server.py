@@ -1427,6 +1427,18 @@ class Controller:
             self._yt_cache = (time.monotonic(), value)
         return value
 
+    def visualizer_state(self):
+        """Home's viz.json: {"active", "mode"}. Older than 15 s means Home stopped writing it (gone or hung)."""
+        path = DATA / "viz.json"
+        try:
+            fresh = time.time() - path.stat().st_mtime <= 15
+        except OSError:
+            fresh = False
+        data = self._read_json(path, {}) if fresh else {}
+        active = isinstance(data, dict) and data.get("active") is True
+        mode = data.get("mode") if active and isinstance(data.get("mode"), str) else None
+        return {"active": active, "mode": mode}
+
     def status(self):
         with self.lock:
             app, phase, error = self.app, self.phase, self.error
@@ -1480,6 +1492,7 @@ class Controller:
                 "thermal_warning": (cpu_temp is not None and cpu_temp >= 80) or
                                    (gpu_temp is not None and gpu_temp >= 85),
                 "timer": {"active": bool(deadline), "deadline": deadline},
+                "visualizer": self.visualizer_state(),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
@@ -1698,6 +1711,11 @@ class Controller:
                 if self.app != "home" or self.phase == "buffering" or self.buffering or playback()["active"]:
                     return {"ok": True, "ignored": True}
                 self._ui_request(screen)
+                return {"ok": True}
+            if action == "viz_next":
+                if not self.visualizer_state()["active"]:
+                    return {"ok": True, "ignored": True}
+                self._ui_request("viz_next")
                 return {"ok": True}
             if action == "youtube_mode":
                 return self.set_youtube_mode(params.get("mode"))

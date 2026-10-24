@@ -102,6 +102,9 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .yt.open .yt-main{flex:1 1 0}
 .yt-mode{flex:1 1 100%;min-height:36px;margin-top:4px;font-size:13px;font-weight:600;background:#1f2a37;border-radius:12px;color:#cfe2ff}
 .yt-mode small{font-weight:400;color:#9dacbd;margin-left:6px}
+.viz-next{width:100%;min-height:44px;font-size:14px;font-weight:700;background:#1f2a37;border-radius:12px;color:#cfe2ff}
+.viz-next[hidden]{display:none!important}
+.viz-next small{font-weight:400;color:#9dacbd;margin-left:8px}
 
 /* ---- Playback prompts: skip intro, up next, still watching ---- */
 .skipbtn{min-height:54px;font-size:17px;font-weight:800;background:#e9f1fb;color:#10233a;border-color:#fff;border-radius:16px}.skipbtn:active{background:#c9dcf3}
