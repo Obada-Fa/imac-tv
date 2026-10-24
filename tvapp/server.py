@@ -541,9 +541,11 @@ class Controller:
         now = time.time()
         with self.lock:
             live = [t for d, t in self.presence.items() if d in self.sessions and d != self.home_digest]
-            devices = len([d for d in self.sessions if d != self.home_digest])
+            phones = [v for d, v in self.sessions.items() if d != self.home_digest]
+            devices = len(phones)
+            paired_at = max((v.get("created", 0) for v in phones), default=0)
         last = max(live) if live else None
-        return {"connected": last is not None and now - last <= self.PRESENCE_TTL, "last_seen": last, "devices": devices}
+        return {"connected": last is not None and now - last <= self.PRESENCE_TTL, "last_seen": last, "devices": devices, "paired_at": paired_at}
 
     def authenticated(self, cookie, query):
         if cookie:

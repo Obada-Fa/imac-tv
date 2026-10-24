@@ -168,6 +168,40 @@ class SheetRoutingTests(unittest.TestCase):
 
 
 @unittest.skipIf(homescreen is None, "GTK bindings unavailable")
+class PhoneConnectionToastTests(unittest.TestCase):
+    def setUp(self):
+        self.shell = mock.Mock(remote=None, remote_paired_at=None)
+        self.idle = mock.patch.object(shell_module.GLib, "idle_add")
+        self.schedule = self.idle.start()
+        self.addCleanup(self.idle.stop)
+
+    def update(self, connected, paired_at=100):
+        shell_module.Home.set_remote(self.shell, {"connected": connected, "paired_at": paired_at})
+
+    def test_reconnects_and_startup_do_not_toast(self):
+        for connected in (True, False, True, False, True):
+            self.update(connected)
+        shell_module.Home.set_remote(self.shell, None)
+        self.update(True)
+        self.schedule.assert_not_called()
+
+    def test_new_phone_toasts_once_even_when_another_phone_is_connected(self):
+        self.update(True)
+        self.update(True, 200)
+        self.schedule.assert_called_once_with(self.shell.toast, "Phone connected", 3)
+        self.shell.close_sheet.assert_called_with("pairing")
+        self.update(False, 200)
+        self.update(True, 200)
+        self.assertEqual(self.schedule.call_count, 1)
+
+    def test_revoking_a_phone_does_not_reset_notification_baseline(self):
+        self.update(False, 200)
+        self.update(False, 100)
+        self.update(True, 200)
+        self.schedule.assert_not_called()
+
+
+@unittest.skipIf(homescreen is None, "GTK bindings unavailable")
 class VizRemoteTests(unittest.TestCase):
     def screen(self, mode="edgeflow", names=("edgeflow", "ridge", "prism"), stop=False):
         viz = mock.Mock(mode=mode, names=list(names))

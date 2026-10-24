@@ -133,6 +133,7 @@ class Home(Gtk.Window):
         self.net = None
         self.code = None
         self.remote = None
+        self.remote_paired_at = None
         self.pair_listeners = []
         self.home_cfg = {}
         self.avoid_rect = None
@@ -692,13 +693,21 @@ class Home(Gtk.Window):
         GLib.idle_add(self.apply_state, state)
 
     def set_remote(self, remote):
-        """state["remote"] from /api/state: {"connected", "last_seen", "devices"}. Toast + close the pairing view when a
-        phone connects."""
+        """Presence controls pairing UI; only a newly paired device gets a connected toast."""
         was = None if self.remote is None else remote_connected(self.remote, lambda: False)
         self.remote = remote if isinstance(remote, dict) else None
         now = remote_connected(self.remote, lambda: False)
-        if self.remote is not None and now and was is False:
+        paired_at = (self.remote or {}).get("paired_at")
+        newly_paired = False
+        if isinstance(paired_at, (int, float)):
+            if self.remote_paired_at is not None:
+                newly_paired = paired_at > self.remote_paired_at
+                self.remote_paired_at = max(self.remote_paired_at, paired_at)
+            else:
+                self.remote_paired_at = paired_at       # startup baseline: existing phones stay quiet
+        if newly_paired or (now and was is False):
             self.close_sheet("pairing")
+        if newly_paired:
             GLib.idle_add(self.toast, "Phone connected", 3)
 
     def apply_state(self, state):
