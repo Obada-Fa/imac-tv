@@ -88,11 +88,11 @@ class IdleTracker:
         return False
 
 
-MUSIC_IDLE = 15.0       # seconds before the visualizer when YouTube plays music behind Home
+MUSIC_IDLE = 30.0       # seconds before the visualizer when YouTube plays music behind Home
 
 
 def idle_delay(quiet, music, state, audio=MUSIC_IDLE):
-    """Seconds of no input before ambient: shorter while YouTube plays in the background, shortest for music
+    """Seconds of no input before ambient: shorter while YouTube plays in the background, 30 seconds for music
     (the server's youtube_mode). Never longer than the quiet delay."""
     if not (state and state.get("status") == "Playing"):
         return quiet

@@ -555,14 +555,14 @@ class LifecycleTests(unittest.TestCase):
                 mock.patch.object(server, "screen_blanked", return_value=False):
             self.assertEqual(set(c.status()["remote"]), {"connected", "last_seen", "devices"})
 
-    def test_select_home_minimizes_youtube_and_select_youtube_restores_it(self):
+    def test_select_home_keeps_youtube_running_and_select_youtube_restores_it(self):
         c = self.controller()
         yt, home = {"id": "0x9", "class": "vacuumtube", "title": "YouTube"}, {"id": "0x1", "class": "x", "title": "iMac TV"}
         with mock.patch.object(server, "window_for", side_effect=lambda a: {"youtube": yt, "home": home}.get(a)), \
                 mock.patch.object(server, "minimize") as mini, mock.patch.object(c, "_show_home"), mock.patch.object(c, "_end_playback"), \
                 mock.patch.object(server.threading, "Thread"):
             c.select("home")
-        mini.assert_called_once_with(yt)
+        mini.assert_not_called()
         with mock.patch.object(server, "window_for", return_value=yt), mock.patch.object(server, "activate") as act, \
                 mock.patch.object(server.time, "sleep"):
             c.generation += 1
@@ -572,25 +572,14 @@ class LifecycleTests(unittest.TestCase):
             server.minimize(yt)
         run.assert_called_once_with(["xdotool", "windowminimize", "0x9"], check=False)
 
-    def minimize_with(self, before, after):
-        c = self.controller()
-        yt, home = {"id": "0x9"}, {"id": "0x1"}
-        states = iter([before, after])
-        with mock.patch.object(server, "window_for", side_effect=lambda a: {"youtube": yt, "home": home}.get(a)), mock.patch.object(server, "minimize"), \
-                mock.patch.object(server.nowplaying, "current", side_effect=lambda: next(states)), \
-                mock.patch.object(server.nowplaying, "control") as ctl, mock.patch.object(server.time, "sleep"), \
-                mock.patch.object(server.threading, "Thread", side_effect=lambda target, **kw: mock.Mock(start=target)):
-            c._minimize_youtube()
-        return ctl
-
-    def test_music_resumed_if_minimize_paused_it(self):
-        self.minimize_with({"status": "Playing"}, {"status": "Paused"}).assert_called_once_with("play_pause")
-
-    def test_music_left_alone_otherwise(self):
-        self.minimize_with({"status": "Paused"}, {"status": "Paused"}).assert_not_called()   # user paused it
-        self.minimize_with({"status": "Playing"}, {"status": "Playing"}).assert_not_called()
-        self.minimize_with(None, None).assert_not_called()                                    # no MPRIS
-        self.minimize_with({"status": "Open"}, {"status": "Open"}).assert_not_called()
+    def test_activate_restores_iconified_window_before_fullscreen(self):
+        with mock.patch.object(server, "command") as run:
+            server.activate({"id": "0x9"})
+        self.assertEqual(run.call_args_list, [
+            mock.call(["xdotool", "windowmap", "0x9"], check=False),
+            mock.call(["wmctrl", "-i", "-R", "0x9"]),
+            mock.call(["wmctrl", "-i", "-r", "0x9", "-b", "add,fullscreen"], check=False),
+        ])
 
     def test_select_home_without_windows_is_safe(self):
         c = self.controller()

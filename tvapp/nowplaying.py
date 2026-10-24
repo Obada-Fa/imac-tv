@@ -268,6 +268,8 @@ def track_key(state):
     """Identity of the current track; a change means classify again."""
     if not state or state.get("status") not in ("Playing", "Paused"):
         return None
+    if (not state.get("title") or state.get("title") == "YouTube") and not (state.get("artist") or video_id(state)):
+        return None
     return "\x1f".join((str(state.get("title") or ""), str(state.get("artist") or ""), video_id(state) or ""))
 
 
@@ -296,7 +298,7 @@ def classify(meta, art_size=None, category=None, overrides=None):
     channel beats every heuristic; anything without a music signal is a video."""
     meta = meta or {}
     artist, title = str(meta.get("artist") or "").strip(), str(meta.get("title") or "")
-    forced = (overrides or {}).get(artist_key(artist))
+    forced = (overrides or {}).get(artist_key(artist or title))
     if forced in MODES:
         return forced, "override"
     if artist.lower().endswith(" - topic"):

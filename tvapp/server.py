@@ -106,8 +106,8 @@ def window_for(app):
 
 
 def activate(win):
-    command(["xdotool", "windowactivate", "--sync", win["id"]], check=False)
-    command(["wmctrl", "-i", "-a", win["id"]])
+    command(["xdotool", "windowmap", win["id"]], check=False)
+    command(["wmctrl", "-i", "-R", win["id"]])
     command(["wmctrl", "-i", "-r", win["id"], "-b", "add,fullscreen"], check=False)
 
 
@@ -432,6 +432,8 @@ class Controller:
         self._yt_decided = (None, None, False)
         self._yt_popped = None          # track VacuumTube was brought up for
         self._yt_dismissed = None       # track the user sent back to Home
+        self._yt_home_until = 0.0       # absorb a metadata gap when Home was pressed
+        self._yt_pending_mode = None    # (deadline, mode) while MPRIS changes tracks
         self._yt_busy = False
         self._yt_tick_at = 0.0
         threading.Thread(target=self._watch, daemon=True).start()
@@ -678,10 +680,11 @@ class Controller:
                         return
                 win = window_for(app)
                 if win:
-                    activate(win)
                     with self.lock:
-                        if generation == self.generation:
-                            self.phase, self.error = "ready", ""
+                        if generation != self.generation:
+                            return
+                        activate(win)
+                        self.phase, self.error = "ready", ""
                     return
                 time.sleep(0.5)
             raise RuntimeError(f"{app.title()} did not open")
@@ -695,21 +698,24 @@ class Controller:
         if app != "home" and app not in APPS:
             raise ValueError("Unknown app")
         self._end_playback()
+        if app == "home":
+            with self.lock:
+                self._yt_cache = None
+            home_key = nowplaying.track_key(self.youtube_now())
         with self.lock:
-            previous = self.app
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
             self.buffering = None
+            if app == "home":
+                self._yt_dismissed = home_key or self._yt_key
+                self._yt_home_until = time.monotonic() + 6 if not home_key else 0.0
+                self._yt_pending_mode = None
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
         self._stop_proc()
         if app == "home":
-            with self.lock:
-                if previous == "youtube":     # the user left YouTube: don't bring this track back up
-                    self._yt_dismissed = self._yt_key
             self._ui_request("home")
             self._show_home()
-            self._minimize_youtube()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
@@ -760,7 +766,22 @@ class Controller:
     def _youtube_tick(self):
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
         try:
+            with self.lock:
+                generation = self.generation
             state = self.youtube_now()
+            key = nowplaying.track_key(state)
+            with self.lock:
+                if generation != self.generation:
+                    return
+                queued = self._yt_pending_mode
+                if queued and (key or time.monotonic() > queued[0]):
+                    self._yt_pending_mode = None
+                if key and time.monotonic() < self._yt_home_until:
+                    self._yt_dismissed = key
+                    self._yt_home_until = 0.0
+            if queued and key and time.monotonic() <= queued[0]:
+                self._apply_youtube_mode(state, queued[1])
+                return
             mode, _reason, pending = self._youtube_classify(state)
             key = nowplaying.track_key(state)
             with self.lock:
@@ -769,27 +790,27 @@ class Controller:
                 return
             if nowplaying.pop_up(mode, key, app=app, status=(state or {}).get("status"), movie=self._movie_active(),
                                  screen_live=self._screen_live(), dismissed=dismissed, popped=popped, pending=pending):
-                self._pop_youtube(key)
+                self._pop_youtube(key, generation=generation)
         except Exception:
             LOG.exception("YouTube mode check failed")
         finally:
             self._yt_busy = False
 
-    def _pop_youtube(self, key):
+    def _pop_youtube(self, key, generation=None, force=False):
         """A video is playing behind Home: bring VacuumTube up, un-minimized and fullscreen."""
         win = window_for("youtube")
         if not win:
             return False
         with self.lock:
-            if self.app != "home":
+            if (self.app != "home" or (generation is not None and generation != self.generation)
+                    or (not force and (key != self._yt_key or key in (self._yt_dismissed, self._yt_popped)))):
                 return False
             self.generation += 1
             self.app, self.phase, self.error = "youtube", "ready", ""
             self._yt_popped = key
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "youtube"})
-        LOG.info("YouTube is playing a video; showing it")
-        command(["wmctrl", "-i", "-r", win["id"], "-b", "remove,hidden"], check=False)
-        activate(win)
+            LOG.info("YouTube is playing a video; showing it")
+            activate(win)
         return True
 
     def set_youtube_mode(self, mode):
@@ -801,7 +822,15 @@ class Controller:
         state = self.youtube_now()
         key = nowplaying.track_key(state)
         if not key:
-            raise RuntimeError("Nothing is playing on YouTube")
+            with self.lock:
+                self._yt_pending_mode = (time.monotonic() + 15, mode)
+            return {"youtube_now": state, "app": self.app, "pending": True}
+        with self.lock:
+            self._yt_pending_mode = None
+        return self._apply_youtube_mode(state, mode)
+
+    def _apply_youtube_mode(self, state, mode):
+        key = nowplaying.track_key(state)
         artist = (state or {}).get("artist") or (state or {}).get("title")
         self._yt_modes = (None, nowplaying.save_mode(DATA, artist, mode))
         self._youtube_classify(state)
@@ -810,7 +839,7 @@ class Controller:
                 self._yt_dismissed = None
                 app = self.app
             if app == "home" and not self._movie_active():
-                self._pop_youtube(key)
+                self._pop_youtube(key, force=True)
         else:
             with self.lock:
                 app = self.app
@@ -819,33 +848,6 @@ class Controller:
         with self.lock:
             self._yt_cache = None
         return {"youtube_now": self.youtube_now(), "app": self.app}
-
-    def _minimize_youtube(self):
-        """YouTube keeps playing behind Home: minimize it (only once Home is up) so the video isn't rendered.
-        Music must go on, so a worker resumes it once if the minimize paused something that was playing."""
-        try:
-            win = window_for("youtube")
-            if not (win and window_for("home")):
-                return
-            try:
-                before = nowplaying.current()
-            except Exception:
-                before = None
-            minimize(win)
-            if before and before.get("status") == "Playing":
-                threading.Thread(target=self._resume_if_paused, daemon=True).start()
-        except Exception:
-            LOG.exception("Could not minimize YouTube")
-
-    def _resume_if_paused(self, delay=2.0):
-        time.sleep(delay)
-        try:
-            now = nowplaying.current()
-            if now and now.get("status") == "Paused":
-                nowplaying.control("play_pause")
-                LOG.info("YouTube paused when minimized; resumed it")
-        except Exception:
-            LOG.exception("Could not resume YouTube after minimizing")
 
     def _stop_proc(self):
         proc, self.proc = self.proc, None

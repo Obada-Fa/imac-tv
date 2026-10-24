@@ -235,7 +235,7 @@ class ServerPopUpTests(unittest.TestCase):
     def setUp(self):
         s = self.server
         self.patches = [mock.patch.object(s.subprocess, "Popen"), mock.patch.object(s.Controller, "_show_home"),
-                        mock.patch.object(s.Controller, "_minimize_youtube"), mock.patch.object(s.threading, "Thread"),
+                        mock.patch.object(s.threading, "Thread"),
                         mock.patch.object(s, "command", return_value=""),
                         mock.patch.object(s, "window_for", return_value={"id": "0x1", "pid": "5"}),
                         mock.patch.object(s, "activate")]
@@ -300,6 +300,68 @@ class ServerPopUpTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.c.app, "youtube")
 
+    def test_home_dismisses_fresh_track_even_while_already_home(self):
+        self.c.youtube_now()                          # cache the old track
+        self.now = track("Just started", "Some Tech")
+        self.c.select("home")
+        self.tick()
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
+    def test_home_during_metadata_gap_dismisses_recovered_track(self):
+        self.now = None
+        self.c.select("home")
+        self.now = track("Recovered video", "Some Tech")
+        self.tick()
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
+    def test_inflight_pop_cannot_override_new_home_selection(self):
+        self.c.youtube_now()
+        key, generation = self.c._yt_key, self.c.generation
+        self.c.select("home")
+        self.assertFalse(self.c._pop_youtube(key, generation=generation))
+        self.activate.assert_not_called()
+
+    def test_pop_rechecks_dismissal_after_window_lookup(self):
+        self.c.youtube_now()
+        def home_during_lookup(app):
+            self.c._yt_dismissed = self.c._yt_key
+            return {"id": "0x1"}
+        with mock.patch.object(self.server, "window_for", side_effect=home_during_lookup):
+            self.assertFalse(self.c._pop_youtube(self.c._yt_key))
+        self.activate.assert_not_called()
+
+    def test_mode_toggle_waits_for_metadata_and_applies_before_pop(self):
+        self.now = None
+        out = self.c.set_youtube_mode("music")
+        self.assertTrue(out["pending"])
+        self.now = track("Unlabelled song", "Gap Test Artist")
+        self.tick()
+        self.assertEqual(self.c._yt_decided[0], "music")
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
+    def test_queued_mode_expires_instead_of_changing_unrelated_track(self):
+        self.now = None
+        self.c.set_youtube_mode("music")
+        self.c._yt_pending_mode = (0, "music")
+        self.now = track("Later video", "Unrelated Channel")
+        self.tick()
+        self.assertEqual(self.c.app, "youtube")
+        self.assertIsNone(self.c._yt_pending_mode)
+
+    def test_mode_toggle_without_channel_uses_title_override(self):
+        self.now = track("Song with no channel")
+        out = self.c.set_youtube_mode("music")
+        self.assertEqual(out["youtube_now"]["youtube_mode"], "music")
+
+    def test_empty_chromium_metadata_does_not_pop(self):
+        self.now = track("YouTube")
+        self.tick()
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
     def test_mode_in_state_json_and_phone_override(self):
         self.now = track("Talk", "Podcast Chan")
         self.c._movie_active.return_value = True      # keep it from popping while we look
@@ -328,7 +390,7 @@ class ServerPopUpTests(unittest.TestCase):
 class AmbientDelayTests(unittest.TestCase):
     def test_delay_choice(self):
         d = homescreen.idle_delay
-        self.assertEqual(d(120, 30, {"status": "Playing", "youtube_mode": "music"}), 15)
+        self.assertEqual(d(120, 30, {"status": "Playing", "youtube_mode": "music"}), 30)
         self.assertEqual(d(120, 30, {"status": "Playing", "youtube_mode": "video"}), 30)
         self.assertEqual(d(120, 30, {"status": "Playing"}), 30)
         self.assertEqual(d(120, 30, {"status": "Paused", "youtube_mode": "music"}), 120)

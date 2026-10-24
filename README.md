@@ -30,6 +30,8 @@
   - **No video stays on disk**: the engine cache is capped (3 GB by default) and the torrent is removed when playback stops.
   - **Add-ons** are configurable in `~/.local/share/imactv/media.json` (`addons`, `sub_langs`, `cache_bytes`, `max_size_gb`, `quality_order`).
   - **VacuumTube**: the YouTube Leanback TV UI with ad-blocking and remote navigation.
+  - **YouTube video/music mode**: a playing video comes forward fullscreen once per track. Pressing Home keeps that track in the background without minimizing or resuming it; the next video can come forward again. Music stays behind Home, with the visualizer after 30 seconds without input (or the quiet idle setting if shorter).
+  - Music detection uses channel/title, artwork and available YouTube category metadata. For unlabelled songs, choose Music on the phone remote; the choice is remembered for the channel, or the title when no channel is available. If media metadata briefly disappears, a mode choice waits up to 15 seconds for it to return.
 
 ---
 
