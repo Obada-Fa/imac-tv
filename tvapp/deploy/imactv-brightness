@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Root helper for the iMac TV remote: set the panel backlight to a percentage.
+# Installed by setup-privileges.sh. The sudo rule allows this fixed path, so
+# every argument is validated here before anything is written.
+set -euo pipefail
+
+arg="${1:-}"
+if [[ "$arg" == "off" ]]; then
+  # Zero is reachable only by asking for it by name, so a stray slider value can
+  # never leave the TV fully black with no way to recover it from the phone.
+  level=0
+elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+  level=$((10#$arg))
+  if ((level < 5)); then level=5; fi
+  if ((level > 100)); then level=100; fi
+else
+  echo "Usage: imactv-brightness 5-100 | imactv-brightness off" >&2
+  exit 2
+fi
+
+device=""
+for candidate in /sys/class/backlight/*; do
+  test -e "$candidate/max_brightness" || continue
+  if [[ "$(readlink -f "$candidate/device" 2>/dev/null || true)" == *eDP* ]]; then
+    device="$candidate"
+    break
+  fi
+  if [[ -z "$device" ]]; then device="$candidate"; fi
+done
+if [[ -z "$device" ]]; then
+  echo "This display has no adjustable backlight" >&2
+  exit 1
+fi
+
+max=$(<"$device/max_brightness")
+if ((max <= 0)); then
+  echo "Backlight reports a zero maximum" >&2
+  exit 1
+fi
+
+printf '%s\n' "$((level * max / 100))" > "$device/brightness"
