@@ -20,6 +20,7 @@ APP_MODE="flatpak"
 SKIP_APPS=false
 SKIP_ENGINE=false
 SKIP_PRIVILEGES=false
+SKIP_APT=false
 
 usage() {
   cat <<EOF
@@ -29,6 +30,7 @@ Options:
   --flatpak-apps       Install VacuumTube via Flatpak (Default, recommended on Zorin OS)
   --deb-apps           Install VacuumTube via official .deb packages
   --build-vacuumtube   Build VacuumTube from source (requires node/npm)
+  --skip-apt           Skip installing system apt packages
   --skip-apps          Skip installing apps (use if already installed)
   --skip-engine        Skip the stremio-service streaming engine
   --engine-url URL     Use an existing Stremio server (e.g. http://192.168.1.50:11470)
@@ -51,6 +53,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-vacuumtube)
       APP_MODE="build"
+      shift
+      ;;
+    --skip-apt)
+      SKIP_APT=true
       shift
       ;;
     --skip-apps)
@@ -93,54 +99,62 @@ printf "${NC}\n"
 
 # 1. System APT Dependencies
 printf "${BLUE}${BOLD}[1/4] Installing system dependencies via apt...${NC}\n"
-APT_PKGS=(
-  python3
-  python3-gi
-  gir1.2-gtk-3.0
-  gir1.2-gdkpixbuf-2.0
-  python3-qrcode
-  python3-pil
-  wmctrl
-  xdotool
-  x11-utils
-  libx11-6
-  libxtst6
-  pulseaudio-utils
-  curl
-  flatpak
-  unzip
-  mpv
-  fonts-noto-core
-  fonts-noto-ui-core
-  fonts-inter
-)
-# Optional packages: install when the distro has them, otherwise carry on.
-OPTIONAL_PKGS=(fonts-noto-core fonts-noto-ui-core fonts-inter)
-REQUIRED_PKGS=()
-for pkg in "${APT_PKGS[@]}"; do
-  if [[ " ${OPTIONAL_PKGS[*]} " == *" $pkg "* ]]; then
-    apt-cache show "$pkg" &>/dev/null || continue
-  fi
-  REQUIRED_PKGS+=("$pkg")
-done
-APT_PKGS=("${REQUIRED_PKGS[@]}")
-
-MISSING_PKGS=()
-for pkg in "${APT_PKGS[@]}"; do
-  if ! dpkg -s "$pkg" &>/dev/null; then
-    MISSING_PKGS+=("$pkg")
-  fi
-done
-
-if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
-  printf "Installing missing packages: %s\n" "${MISSING_PKGS[*]}"
-  if [ "$EUID" -ne 0 ]; then
-    sudo apt-get update && sudo apt-get install -y "${MISSING_PKGS[@]}"
-  else
-    apt-get update && apt-get install -y "${MISSING_PKGS[@]}"
-  fi
+if [ "$SKIP_APT" = true ]; then
+  printf "${YELLOW}Skipping system apt dependencies (--skip-apt).${NC}\n"
 else
-  printf "${GREEN}✓ All system packages are already installed.${NC}\n"
+  APT_PKGS=(
+    python3
+    python3-gi
+    gir1.2-gtk-3.0
+    gir1.2-gdkpixbuf-2.0
+    python3-qrcode
+    python3-pil
+    wmctrl
+    xdotool
+    x11-utils
+    libx11-6
+    libxtst6
+    pulseaudio-utils
+    curl
+    flatpak
+    unzip
+    mpv
+    fonts-noto-core
+    fonts-noto-ui-core
+    fonts-inter
+  )
+  # Optional packages: install when the distro has them, otherwise carry on.
+  OPTIONAL_PKGS=(fonts-noto-core fonts-noto-ui-core fonts-inter)
+  REQUIRED_PKGS=()
+  for pkg in "${APT_PKGS[@]}"; do
+    if [[ " ${OPTIONAL_PKGS[*]} " == *" $pkg "* ]]; then
+      apt-cache show "$pkg" &>/dev/null || continue
+    fi
+    REQUIRED_PKGS+=("$pkg")
+  done
+  APT_PKGS=("${REQUIRED_PKGS[@]}")
+
+  MISSING_PKGS=()
+  for pkg in "${APT_PKGS[@]}"; do
+    if ! dpkg -s "$pkg" &>/dev/null; then
+      MISSING_PKGS+=("$pkg")
+    fi
+  done
+
+  if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
+    printf "Installing missing packages: %s\n" "${MISSING_PKGS[*]}"
+    if [ "$EUID" -ne 0 ]; then
+      if sudo -n true 2>/dev/null; then
+        sudo apt-get update && sudo apt-get install -y "${MISSING_PKGS[@]}"
+      else
+        printf "${YELLOW}sudo requires a password; skipping apt package installation.${NC}\n"
+      fi
+    else
+      apt-get update && apt-get install -y "${MISSING_PKGS[@]}"
+    fi
+  else
+    printf "${GREEN}✓ All system packages are already installed.${NC}\n"
+  fi
 fi
 
 # 2. TV Applications (VacuumTube) and streaming engine
@@ -183,8 +197,14 @@ printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"
 if [ "$SKIP_PRIVILEGES" = true ]; then
   printf "${YELLOW}Skipping sudo privileges configuration (--skip-privileges).${NC}\n"
 else
-  if [ "$EUID" -ne 0 ]; then
-    sudo bash "$APP_DIR/deploy/setup-privileges.sh"
+  if [ -f /etc/sudoers.d/imactv-tv ] || [ -f /etc/sudoers.d/zz-tvremote-power ]; then
+    printf "${GREEN}✓ Maintenance privileges already configured in /etc/sudoers.d/${NC}\n"
+  elif [ "$EUID" -ne 0 ]; then
+    if sudo -n true 2>/dev/null; then
+      sudo bash "$APP_DIR/deploy/setup-privileges.sh"
+    else
+      printf "${YELLOW}sudo requires a password; skipping sudo privileges setup.${NC}\n"
+    fi
   else
     bash "$APP_DIR/deploy/setup-privileges.sh"
   fi

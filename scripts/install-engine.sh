@@ -58,13 +58,21 @@ fi
 
 printf "${BLUE}${BOLD}=== Installing streaming engine (stremio-service) ===${NC}\n"
 
-if [ ! -x "$SHARE/stremio-runtime" ]; then
+USER_SHARE="$HOME/.local/share/stremio-service"
+
+if [ ! -x "$SHARE/stremio-runtime" ] && [ ! -x "$USER_SHARE/stremio-runtime" ]; then
   TMP_DIR="$(mktemp -d)"; trap 'rm -rf "$TMP_DIR"' EXIT
   URL="$(curl -fsSL https://api.github.com/repos/Stremio/stremio-service/releases/latest \
     | grep -o 'https://[^"]*stremio-service_amd64\.deb' | head -1 || true)"
   if [ -n "$URL" ] && curl -fsSL "$URL" -o "$TMP_DIR/stremio-service.deb"; then
-    $SUDO apt-get install -y "$TMP_DIR/stremio-service.deb" \
-      || { $SUDO apt-get install -f -y; true; }
+    if [ -n "$SUDO" ] && sudo -n true 2>/dev/null; then
+      $SUDO apt-get install -y "$TMP_DIR/stremio-service.deb" \
+        || { $SUDO apt-get install -f -y; true; }
+    else
+      mkdir -p "$USER_SHARE" "$TMP_DIR/extracted"
+      dpkg -x "$TMP_DIR/stremio-service.deb" "$TMP_DIR/extracted"
+      cp -r "$TMP_DIR/extracted/usr/share/stremio-service/"* "$USER_SHARE/"
+    fi
   fi
 fi
 
@@ -72,9 +80,11 @@ if [ -x "$SHARE/stremio-runtime" ]; then
   # The package ships a tray app plus the bundled node runtime and server.js;
   # run the latter directly so no tray icon appears. ffmpeg/ffprobe sit beside it.
   EXEC="$SHARE/stremio-runtime server.js"; WORKDIR="$SHARE"
+elif [ -x "$USER_SHARE/stremio-runtime" ]; then
+  EXEC="$USER_SHARE/stremio-runtime server.js"; WORKDIR="$USER_SHARE"
 else
   printf "${YELLOW}.deb unavailable; falling back to Flatpak com.stremio.Service${NC}\n"
-  command -v flatpak >/dev/null || $SUDO apt-get install -y flatpak
+  command -v flatpak >/dev/null || { if sudo -n true 2>/dev/null; then $SUDO apt-get install -y flatpak; fi; }
   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
   flatpak info com.stremio.Service &>/dev/null || flatpak install -y --user flathub com.stremio.Service
   EXEC="/usr/bin/flatpak run com.stremio.Service"; WORKDIR="$HOME"

@@ -27,7 +27,7 @@ fi
 # 2. Ensure flathub remote is configured (user and system)
 printf "${BLUE}Checking Flathub remote...${NC}\n"
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
-if command -v sudo &>/dev/null && [ "$EUID" -ne 0 ]; then
+if command -v sudo &>/dev/null && [ "$EUID" -ne 0 ] && sudo -n true 2>/dev/null; then
   sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
 fi
 
