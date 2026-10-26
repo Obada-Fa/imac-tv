@@ -9,14 +9,15 @@ from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, Gdk, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import backgrounds  # noqa: E402
 import display  # noqa: E402
 import settings_model
 import widgets  # noqa: E402
-from screens import Screen, text_label, cmd, cover_pixbuf, round_pixbuf, ASSETS  # noqa: E402
+from widgets import glass, pairing  # noqa: E402
+from screens import Screen, text_label, cmd, cover_pixbuf, ASSETS  # noqa: E402
 from media import config as media_config  # noqa: E402
 
 PER_ROW = 5
@@ -26,19 +27,16 @@ MIN_WIDTH = 640
 def settings_css(scale=1.0):
     p = lambda n: max(1, round(n * scale))
     return f"""
-.set-page {{ background: #11151c; }}
-.set-title {{ font-size: {p(52)}px; font-weight: 300; color: #fff; }}
-.set-section {{ font-size: {p(20)}px; font-weight: 800; letter-spacing: 2px; color: #93a4c3; }}
-.set-output {{ font-size: {p(30)}px; font-weight: 700; color: #fff; }}
-.set-note {{ font-size: {p(20)}px; color: rgba(255,255,255,0.62); }}
-.set-btn {{ background: rgba(255,255,255,0.07); border: {p(2)}px solid rgba(255,255,255,0.18); border-radius: {p(10)}px;
-           color: #fff; padding: {p(12)}px {p(26)}px; box-shadow: none; min-width: {p(150)}px; }}
-.set-btn:focus {{ background: rgba(255,255,255,0.26); border-color: #fff; box-shadow: 0 0 0 {p(3)}px rgba(255,255,255,0.28); }}
-.set-current {{ border-color: #a8cfff; background: rgba(96,165,250,0.16); }}
-.set-btn-main {{ font-size: {p(26)}px; font-weight: 700; color: #fff; }}
-.set-btn-sub {{ font-size: {p(20)}px; font-weight: 600; color: rgba(255,255,255,0.6); }}
-.set-current .set-btn-sub {{ color: #93c5fd; }}
-.set-count {{ font-size: {p(30)}px; font-weight: 700; color: #facc15; }}
+.set-page {{ background: #0b121c; }}
+.set-title {{ font-size: {p(54)}px; font-weight: 200; color: #fff; text-shadow: 0 2px 3px rgba(0,0,0,0.45); }}
+.set-output {{ font-size: {p(58)}px; font-weight: 200; color: #fff; }}
+.set-note {{ font-size: {p(20)}px; font-weight: 400; color: rgba(255,255,255,0.6); }}
+.set-sheet-title {{ font-size: {p(40)}px; font-weight: 300; color: #fff; }}
+entry.set-entry, entry.set-entry:focus {{ background-color: transparent; background-image: none; border: none;
+    box-shadow: none; outline: none;
+    color: #fff; font-size: {p(24)}px; padding: {p(18)}px 0; caret-color: #fff; }}
+.set-page scrolledwindow, .set-page viewport {{ background: transparent; border: none; }}
+.set-count {{ font-size: {p(30)}px; font-weight: 300; color: #fff; }}
 """
 
 
@@ -93,7 +91,45 @@ def chunk(seq, n):
     return [seq[i:i + n] for i in range(0, len(seq), n)]
 
 
+SUBTITLES = {
+    "Appearance": "Make it yours. Shape the look and choose a lighter experience.",
+    "Ambient": "Set the mood for the moments between watching.",
+    "Display": "A comfortable picture, matched to your screen.",
+    "Playback": "Your languages, quality and watching preferences.",
+    "Connections": "Keep your phone and streaming services close.",
+    "System": "Everything you need to keep your TV running smoothly.",
+}
+GLYPHS = {"Appearance": "appearance", "Ambient": "ambient", "Display": "display", "Playback": "playback",
+          "Connections": "connections", "System": "system"}
+RAIL_INDENT = (0, 30, 10, 38, 6, 26)      # a loose constellation, not a straight list
+HEADINGS = {'transparency': 'Surfaces & motion', 'style': 'Home screen', 'interval': 'Timing',
+            'visualizer': 'While idle', 'sub_default': 'Languages & quality', 'autoplay_next': 'Episodes'}
+_ART = {}
+
+
+def art_surface(path, width, height):
+    """Cover-cropped picture as a cairo surface, cached per file + size (re-renders happen on every change)."""
+    if not path or glass.cairo is None:
+        return None
+    try:
+        key = (str(path), width, height, Path(path).stat().st_mtime)
+    except OSError:
+        return None
+    surf = _ART.get(key)
+    if surf is None:
+        try:
+            surf = Gdk.cairo_surface_create_from_pixbuf(cover_pixbuf(path, width, height), 1, None)
+        except (GLib.Error, OSError):
+            return None
+        if len(_ART) > 48:
+            _ART.clear()
+        _ART[key] = surf
+    return surf
+
+
 class SettingsScreen(Screen):
+    """Home's language on a menu: the blurred Home photo with a still constellation, a rail of glass nodes
+    joined by lines, and a frosted panel of borderless rows (all drawn by widgets.glass)."""
     header = True
     sname = "settings"
 
@@ -102,53 +138,93 @@ class SettingsScreen(Screen):
         px = shell.px
         self.get_style_context().add_class("set-page")
         self.disposed = False
-        self.connect("destroy", lambda *_: setattr(self, "disposed", True))
+        self.connect("destroy", self.on_destroy)
         self.rows = []
         self.torbox_busy = False
         self.loading = False
         self.outputs = None
         self.busy = False
+        self.qr_refresh = None
+        self.signal = None
         self.retro = backgrounds.Backgrounds(display.DATA)
         self.memory = getattr(shell, 'settings_memory', {'category': 'Appearance', 'controls': {}, 'scroll': {}})
         shell.settings_memory = self.memory
         self.category = self.memory['category']
-        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(72))
-        layout.set_margin_top(px(160))
-        layout.set_margin_start(px(64))
+        self.look = glass.Look(widgets.load_config(display.DATA))
+        overlay = Gtk.Overlay()
+        self.pack_start(overlay, True, True, 0)
+        self.backdrop = glass.Backdrop(shell, self.look)
+        overlay.add(self.backdrop)
+        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(36))
+        layout.set_margin_top(px(146))
+        layout.set_margin_start(px(52))
         layout.set_margin_end(px(64))
-        layout.set_margin_bottom(px(40))
-        self.pack_start(layout, True, True, 0)
-        rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
-        rail.get_style_context().add_class("set-rail")
+        layout.set_margin_bottom(px(52))
+        overlay.add_overlay(layout)
+        rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         rail.set_valign(Gtk.Align.START)
-        rail.pack_start(text_label("Settings", "set-title"), False, False, px(24))
+        title = text_label("Settings", "set-title")
+        title.set_margin_start(px(30))
+        title.set_margin_bottom(px(26))
+        rail.pack_start(title, False, False, 0)
+        self.rail = glass.RailLinks(shell)
         self.tabs = []
-        for category in settings_model.CATEGORIES:
-            b = self.button(category, '', category == self.category, ('category', category),
-                            lambda c=category: self.enter_category(c))
+        for i, category in enumerate(settings_model.CATEGORIES):
+            b = glass.RailNode(shell, self.backdrop, self.look, category, GLYPHS[category], glass.TINTS[category],
+                               lambda c=category: self.enter_category(c), ('category', category),
+                               indent=px(RAIL_INDENT[i % len(RAIL_INDENT)]))
             b.connect('focus-in-event', lambda _b, _e, c=category: self.select_category(c) if self.shell.current() is self else False)
-            rail.pack_start(b, False, False, 0)
+            self.rail.add_node(b)
             self.tabs.append(b)
+        rail.pack_start(self.rail, False, False, 0)
         layout.pack_start(rail, False, False, 0)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.rail_box = rail
+        self.backdrop.avoid = self.avoid_rects
+        panel = glass.GlassPanel(shell, self.backdrop, self.look, fade=px(30))
+        self.panel = panel
+        layout.pack_start(panel, True, True, 0)
+        scroll = Gtk.ScrolledWindow()           # the title scrolls with the rows: the only cut is the panel's edge
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
+        scroll.set_margin_start(px(20))
+        scroll.set_margin_end(px(20))
+        scroll.set_margin_top(px(2))
+        scroll.set_margin_bottom(px(2))
         self.scroll = scroll
-        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(12))
-        self.body.set_margin_bottom(px(80))
+        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.body.set_margin_bottom(px(40))
         scroll.add(self.body)
-        layout.pack_start(scroll, True, True, 0)
+        panel.pack_start(scroll, True, True, 0)
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(6))
+        head.set_margin_top(px(34))
+        head.set_margin_start(px(46))
+        head.set_margin_end(px(46))
+        head.set_margin_bottom(px(2))
         self.title = text_label(self.category, 'set-output')
-        self.body.pack_start(self.title, False, False, 0)
         self.subtitle = text_label("", "set-note", wrap=True)
-        self.body.pack_start(self.subtitle, False, False, 0)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
-        self.content.set_margin_top(px(20))
+        head.pack_start(self.title, False, False, 0)
+        head.pack_start(self.subtitle, False, False, 0)
+        self.body.pack_start(head, False, False, 0)
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.body.pack_start(self.content, False, False, 0)
+        if hasattr(shell, 'pair_listeners'):
+            shell.pair_listeners.append(self.on_pair)
         self.render()
         if self.memory.get("in_content"):
             key = self.memory["controls"].get(self.category)
             self.last_focus = next((b for row in self.rows for b in row if b.sel_key == key), None)
+
+    def avoid_rects(self):
+        """Keep the backdrop's constellation off the rail's labels."""
+        pos = self.rail_box.translate_coordinates(self.backdrop, 0, 0)
+        w, h = self.rail_box.get_allocated_width(), self.rail_box.get_allocated_height()
+        return [(pos[0], pos[1], w, h)] if pos and w > 1 else []
+
+    def on_destroy(self, *_):
+        self.disposed = True
+        listeners = getattr(self.shell, 'pair_listeners', None)
+        if listeners and self.on_pair in listeners:
+            listeners.remove(self.on_pair)
 
     # ---- Screen API
     def focus_groups(self):
@@ -225,6 +301,7 @@ class SettingsScreen(Screen):
         return False
 
     def on_enter(self, returning):
+        self.backdrop.snapshot()
         self.load()
 
     def reveal(self, widget):
@@ -234,7 +311,7 @@ class SettingsScreen(Screen):
         pos = widget.translate_coordinates(self.body, 0, 0)
         if not pos:
             return
-        y, h, page, m = pos[1], widget.get_allocated_height(), adj.get_page_size(), self.shell.px(140)
+        y, h, page, m = pos[1], widget.get_allocated_height(), adj.get_page_size(), self.shell.px(110)
         if y - m < adj.get_value():
             adj.set_value(max(0, y - m))
         elif y + h + m > adj.get_value() + page:
@@ -269,140 +346,165 @@ class SettingsScreen(Screen):
             self.shell.focus_screen(self)
         return False
 
-    # ---- view
-    def button(self, main, sub, current, key, on_click):
-        px = self.shell.px
-        b = Gtk.Button()
-        b.set_relief(Gtk.ReliefStyle.NONE)
-        b.get_style_context().add_class("set-btn")
-        if current:
-            b.get_style_context().add_class("set-current")
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(2))
-        m = text_label(main, "set-btn-main", wrap=True)
-        m.set_max_width_chars(44)
-        m.set_halign(Gtk.Align.START)
-        box.pack_start(m, False, False, 0)
-        s = text_label(sub or " ", "set-btn-sub", wrap=True)
-        s.set_max_width_chars(54)
-        s.set_halign(Gtk.Align.START)
-        if sub:
-            box.pack_start(s, False, False, 0)
-        b.add(box)
-        b.sel_key = key
-        b.connect("clicked", lambda *_: on_click())
-        return b
+    def on_pair(self, *_):
+        if self.disposed or self.category != 'Connections':
+            return False
+        if self.qr_refresh:
+            self.qr_refresh()
+        if self.signal:
+            self.signal.set_net(getattr(self.shell, 'net', None))
+        return False
 
-    def grid(self, buttons, columns=1):
+    # ---- view
+    def button(self, main, sub, current, key, on_click, value='', toggle=None):
+        """A borderless glass row (the name is kept from the old button-based screen)."""
+        return glass.GlassRow(self.shell, self.backdrop, self.look, main, sub, value, toggle, current, on_click, key)
+
+    def grid(self, buttons, columns=1, into=None):
         px = self.shell.px
         for line in chunk(buttons, columns):
-            hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(18))
-            for b in line:
-                hb.pack_start(b, True, True, 0)
-            self.content.pack_start(hb, False, False, 0)
+            if columns == 1:
+                (into or self.content).pack_start(line[0], False, False, 0)
+            else:
+                hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(2))
+                hb.set_margin_start(px(6))
+                for b in line:
+                    hb.pack_start(b, False, False, 0)
+                (into or self.content).pack_start(hb, False, False, 0)
             self.rows.append(line)
 
+    def note(self, text, into=None, top=4):
+        label = text_label(text, "set-note", wrap=True)
+        label.set_margin_start(self.shell.px(46))
+        label.set_margin_end(self.shell.px(46))
+        label.set_margin_top(self.shell.px(top))
+        label.set_margin_bottom(self.shell.px(8))
+        (into or self.content).pack_start(label, False, False, 0)
+        return label
+
+    def section(self, title, into=None):
+        (into or self.content).pack_start(glass.SectionLabel(self.shell, title, self.look), False, False, 0)
+
     def render(self):
-        px = self.shell.px
         for c in self.content.get_children():
             self.content.remove(c)
             c.destroy()
         self.rows = []
+        self.qr_refresh = self.signal = None
+        look = glass.Look(widgets.load_config(display.DATA))
+        if look.key() != self.look.key():
+            self.look = look
+            self.backdrop.set_look(look)
+            for w in self.tabs + [self.panel]:
+                w.look = look
+                w.queue_draw()
         self.title.set_text(self.category)
-        self.subtitle.set_text({
-            "Appearance": "Make it yours. Shape the look and choose a lighter experience.",
-            "Ambient": "Set the mood for the moments between watching.",
-            "Display": "A comfortable picture, matched to your screen.",
-            "Playback": "Your languages, quality and watching preferences.",
-            "Connections": "Keep your phone and streaming services close.",
-            "System": "Everything you need to keep your TV running smoothly.",
-        }[self.category])
+        self.subtitle.set_text(SUBTITLES[self.category])
         for b in self.tabs:
-            ctx = b.get_style_context()
-            (ctx.add_class if b.sel_key[1] == self.category else ctx.remove_class)('set-current')
+            b.set_selected(b.sel_key[1] == self.category)
+        self.rail.queue_draw()
         if self.category == 'Appearance':
             self.render_background()
         if self.category in ('Appearance', 'Ambient', 'Playback'):
             self.render_fields()
         if self.category == 'Playback':
             cfg = media_config.load()
-            self.grid([self.button('YouTube paused auto-close', 'Off' if not cfg['youtube_close_after_paused_min'] else str(cfg['youtube_close_after_paused_min']) + ' min', False, ('youtube',),
-                                   lambda: self.choice_sheet('YouTube paused auto-close', [0, 30, 60], cfg['youtube_close_after_paused_min'], lambda v: self.apply_setting('youtube_close', {'minutes': v})))])
+            mins = cfg['youtube_close_after_paused_min']
+            self.section('YouTube')
+            self.grid([self.button('Close YouTube when paused', '', False, ('youtube',),
+                                   lambda: self.choice_sheet('Close YouTube when paused', [0, 30, 60], mins,
+                                                             lambda v: self.apply_setting('youtube_close', {'minutes': v}),
+                                                             labels=['Never', 'After 30 min', 'After 60 min']),
+                                   value='Never' if not mins else '%s min' % mins)])
         if self.category == 'Connections':
-            self.render_torbox()
-            self.grid([self.button('Phone pairing', 'Show QR code and pairing code', False, ('pairing',), self.shell.show_pairing),
-                       self.button('Disconnect other phones', '', False, ('access', 'other_phones'), lambda: self.confirm_access('other_phones')),
-                       self.button('Disable legacy link', '', False, ('access', 'old_link'), lambda: self.confirm_access('old_link'))])
+            self.render_connections()
         if self.category == 'System':
             self.render_system()
-        if self.category != 'Display':
-            self.content.show_all()
-            GLib.idle_add(self.restore_scroll)
-            return
-        sec = text_label("DISPLAY", "set-section")
-        sec.set_margin_top(px(30))
-        self.content.pack_start(sec, False, False, 0)
-        if self.outputs is None:
-            self.content.pack_start(text_label("Looking for screens…", "set-note"), False, False, 0)
-        shown = [o for o in (self.outputs or []) if o["connected"] and o["modes"]]
-        if self.outputs is not None and not shown:
-            self.content.pack_start(text_label("This screen's resolution can't be changed here.", "set-note"),
-                                    False, False, 0)
-        for out in sorted(shown, key=lambda o: (not o["primary"], o["name"])):
-            head = text_label(output_label(out), "set-output")
-            head.set_margin_top(px(18))
-            self.content.pack_start(head, False, False, 0)
-            cur = out.get("current")
-            note = ("Now %s at %s" % (fmt_mode(cur["mode"]), fmt_rate(cur["rate"]))) if cur else "Switched off"
-            self.content.pack_start(text_label(note, "set-note"), False, False, 0)
-            res = text_label("RESOLUTION", "set-section")
-            res.set_margin_top(px(16))
-            self.content.pack_start(res, False, False, 0)
-            self.grid([self.button(fmt_mode(m), " · ".join(tags), "Current" in tags, (out["name"], m),
-                                   lambda o=out["name"], m=m, r=r: self.pick(o, m, r))
-                       for m, r, tags in tv_modes(out)])
-            rates = tv_rates(out)
-            if len(rates) > 1:
-                rl = text_label("REFRESH RATE", "set-section")
-                rl.set_margin_top(px(16))
-                self.content.pack_start(rl, False, False, 0)
-                self.grid([self.button(fmt_rate(r), "Current" if is_cur else "", is_cur, (out["name"], cur["mode"], r),
-                                       lambda o=out["name"], m=cur["mode"], r=r: self.pick(o, m, r))
-                           for r, is_cur in rates])
-        if shown:
-            foot = text_label("A new resolution goes back by itself after %d seconds unless you keep it."
-                              % display.TRIAL_SECONDS, "set-note")
-            foot.set_margin_top(px(26))
-            self.content.pack_start(foot, False, False, 0)
+        if self.category == 'Display':
+            self.render_display()
         self.content.show_all()
         GLib.idle_add(self.restore_scroll)
 
+    def render_display(self):
+        if self.outputs is None:
+            self.note("Looking for screens…", top=18)
+        shown = [o for o in (self.outputs or []) if o["connected"] and o["modes"]]
+        if self.outputs is not None and not shown:
+            self.note("This screen's resolution can't be changed here.", top=18)
+        for out in sorted(shown, key=lambda o: (not o["primary"], o["name"])):
+            cur = out.get("current")
+            self.section(output_label(out))
+            self.note(("Now %s  ·  %s" % (fmt_mode(cur["mode"]), fmt_rate(cur["rate"]))) if cur else "Switched off", top=0)
+            self.section('Resolution')
+            self.grid([self.button(fmt_mode(m), "", "Current" in tags, (out["name"], m),
+                                   lambda o=out["name"], m=m, r=r: self.pick(o, m, r),
+                                   value="  ·  ".join(t for t in tags if t != "Current"))
+                       for m, r, tags in tv_modes(out)])
+            rates = tv_rates(out)
+            if len(rates) > 1:
+                self.section('Refresh rate')
+                self.grid([self.button(fmt_rate(r), "", is_cur, (out["name"], cur["mode"], r),
+                                       lambda o=out["name"], m=cur["mode"], r=r: self.pick(o, m, r))
+                           for r, is_cur in rates])
+        if shown:
+            self.note("A new resolution goes back by itself after %d seconds unless you keep it."
+                      % display.TRIAL_SECONDS, top=22)
+
+    def render_connections(self):
+        px = self.shell.px
+        self.section('Phone')
+        pair = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(30))
+        card, self.qr_refresh = pairing.qr_card(self.shell, px(6), photo=self.backdrop)
+        card.set_valign(Gtk.Align.START)
+        card.set_margin_start(px(40))
+        card.set_margin_top(px(6))
+        pair.pack_start(card, False, False, 0)
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.signal = glass.SignalLine(self.shell, self.look)
+        self.signal.set_net(getattr(self.shell, 'net', None))
+        self.signal.set_margin_start(px(46))
+        self.signal.set_margin_top(px(8))
+        side.pack_start(self.signal, False, False, 0)
+        self.note('Scan the code with your phone on the same Wi-Fi, or open the address and enter the code.',
+                  into=side, top=6)
+        self.grid([self.button('Show the code full screen', '', False, ('pairing',), self.shell.show_pairing),
+                   self.button('Disconnect other phones', '', False, ('access', 'other_phones'),
+                               lambda: self.confirm_access('other_phones')),
+                   self.button('Disable legacy link', '', False, ('access', 'old_link'),
+                               lambda: self.confirm_access('old_link'))], into=side)
+        pair.pack_start(side, True, True, 0)
+        self.content.pack_start(pair, False, False, 0)
+        self.render_torbox()
+
     def render_torbox(self):
         px = self.shell.px
-        self.content.pack_start(text_label("TORBOX", "set-section"), False, False, 0)
-        self.torbox_status = text_label("", "set-note")
-        self.content.pack_start(self.torbox_status, False, False, 0)
+        self.section('TorBox')
+        self.torbox_status = self.note("", top=0)
         self.torbox_entry = Gtk.Entry()
         self.torbox_entry.set_visibility(False)
         self.torbox_entry.set_max_length(128)
         self.torbox_entry.set_placeholder_text("Paste your TorBox API key")
-        self.torbox_entry.get_style_context().add_class("search-entry")
-        self.torbox_entry.set_size_request(-1, px(70))
+        self.torbox_entry.get_style_context().add_class("set-entry")
         self.torbox_entry.sel_key = ("torbox", "key")
         self.torbox_entry.connect("activate", lambda *_: self.save_torbox())
-        self.content.pack_start(self.torbox_entry, False, False, 0)
+        field = glass.GlassField(self.shell, self.backdrop, self.look, self.torbox_entry)
+        field.set_margin_start(px(30))
+        field.set_margin_end(px(30))
+        field.set_margin_top(px(4))
+        field.set_margin_bottom(px(6))
+        self.content.pack_start(field, False, False, 0)
         self.rows.append([self.torbox_entry])
         self.torbox_save = self.button("Save API key", "Checked with TorBox", False, ("torbox", "save"), self.save_torbox)
         self.torbox_remove = self.button("Remove key", "Disconnect TorBox", False, ("torbox", "remove"),
                                          lambda: self.change_torbox("torbox_remove"))
         self.grid([self.torbox_save, self.torbox_remove])
         self.update_torbox(bool(media_config.read_key()))
-        self.content.pack_start(text_label("You can also add or change this key from your phone's Settings.", "set-note"),
-                                False, False, 0)
+        self.note("You can also add or change this key from your phone's Settings.", top=6)
 
     def update_torbox(self, configured):
         if self.category != "Connections":
             return
-        self.torbox_status.set_text("TorBox: " + ("connected" if configured else "not connected"))
+        self.torbox_status.set_text("Connected" if configured else "Not connected  ·  add an API key to stream")
         self.torbox_remove.set_sensitive(configured and not self.torbox_busy)
 
     def save_torbox(self):
@@ -446,7 +548,7 @@ class SettingsScreen(Screen):
         use_retro = cfg["background"] == "retro" and bool(lib)
         home = self.shell.tops.get('home')
         photo = getattr(home, 'current_item', None) or {}
-        self.section('BACKGROUND')
+        self.section('Background')
         self.grid([
             self.picture_button('Focus', 'Nature photography', not use_retro, ('bg', 'photos'),
                                 lambda: self.choose_background('photos'),
@@ -458,45 +560,19 @@ class SettingsScreen(Screen):
         if lib and use_retro:
             off = set(cfg["retro_off"])
             on = {i["id"] for i in lib} - off or {i["id"] for i in lib}
-            self.section('YOUR PICTURES · %d OF %d ON' % (len(on), len(lib)))
+            self.section('Your pictures  ·  %d of %d on' % (len(on), len(lib)))
             pictures = []
             for item in lib:
                 bid = item['id']
                 pictures.append(self.picture_button(item['name'], 'In rotation' if bid in on else 'Paused',
                                 bid in on, ('bg', 'pic', bid), lambda b=bid: self.picture_options(b),
-                                self.retro.thumb_path(bid), width=280, height=158))
+                                self.retro.thumb_path(bid), width=300, height=169))
             self.grid(pictures, columns=3)
 
-    def section(self, title):
-        label = text_label(title, 'set-section')
-        label.set_margin_top(self.shell.px(20))
-        label.set_margin_bottom(self.shell.px(12))
-        self.content.pack_start(label, False, False, 0)
-
-    def picture_button(self, title, sub, current, key, action, path, width=420, height=190):
-        b = self.button(title, ('Selected · ' if current and key[1] != 'pic' else '') + sub,
-                        current, key, action)
-        b.get_style_context().add_class('set-picture')
-        box = b.get_child()
-        box.set_spacing(self.shell.px(8))
-        for label in box.get_children():
-            label.set_max_width_chars(24)
-            label.set_line_wrap(False)
-            from gi.repository import Pango
-            label.set_ellipsize(Pango.EllipsizeMode.END)
-        image = Gtk.Image()
-        image.set_size_request(self.shell.px(width), self.shell.px(height))
-        image.set_halign(Gtk.Align.START)
-        image.get_style_context().add_class('set-picture-art')
-        if path:
-            try:
-                image.set_from_pixbuf(round_pixbuf(cover_pixbuf(path, self.shell.px(width),
-                                        self.shell.px(height)), self.shell.px(12)))
-            except (GLib.Error, OSError):
-                pass
-        box.pack_start(image, False, False, 0)
-        box.reorder_child(image, 0)
-        return b
+    def picture_button(self, title, sub, current, key, action, path, width=440, height=248):
+        px = self.shell.px
+        return glass.PictureTile(self.shell, self.backdrop, self.look, title, sub,
+                                 art_surface(path, px(width), px(height)), current, action, key, width, height)
 
     def picture_options(self, bid):
         item = next((item for item in self.retro.list() if item['id'] == bid), None)
@@ -542,37 +618,67 @@ class SettingsScreen(Screen):
         self.scroll.get_vadjustment().set_value(self.memory['scroll'].get(self.category, 0))
         return False
 
-    def add_thumbnail(self, button, path):
-        if not path:
-            return
-        from gi.repository import GdkPixbuf
-        try:
-            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), self.shell.px(180), self.shell.px(90), True)
-            image = Gtk.Image.new_from_pixbuf(pix)
-            button.get_child().pack_start(image, False, False, 0)
-            button.get_child().reorder_child(image, 0)
-        except Exception:
-            pass
-
     def confirm_remove(self, bid):
         self.choice_sheet('Remove this picture?', [False, True], False,
                           lambda yes: self.apply_setting('retro_remove', {'id': bid}) if yes else None,
                           labels=['Cancel', 'Remove'])
 
+    # ---- sheets: a glass panel over the scrim, same rows as the screen
+    def sheet_panel(self, title, note=None, width=760):
+        px = self.shell.px
+        panel = glass.GlassPanel(self.shell, self.backdrop, self.look)
+        panel.set_size_request(px(width), -1)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
+        inner.set_margin_top(px(40))
+        inner.set_margin_bottom(px(30))
+        inner.set_margin_start(px(20))
+        inner.set_margin_end(px(20))
+        head = text_label(title, 'set-sheet-title', wrap=True)
+        head.set_margin_start(px(46))
+        head.set_margin_end(px(46))
+        head.set_margin_bottom(px(4 if note else 14))
+        inner.pack_start(head, False, False, 0)
+        if note:
+            self.note(note, into=inner, top=0)
+        panel.pack_start(inner, True, True, 0)
+        return panel, inner
+
     def choice_sheet(self, title, choices, current, save, labels=None):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(12))
-        box.get_style_context().add_class('ah-sheet')
-        box.pack_start(text_label(title, 'set-output'), False, False, 0)
+        panel, inner = self.sheet_panel(title)
         buttons = []
+
         def choose(value):
             self.shell.close_sheet()
             save(value)
         for i, value in enumerate(choices):
             b = self.button(labels[i] if labels else settings_model.label(value), '', value == current,
                             ('choice', i), lambda v=value: choose(v))
-            box.pack_start(b, False, False, 0)
+            inner.pack_start(b, False, False, 0)
             buttons.append(b)
-        self.shell.open_sheet('setting', box, [[b] for b in buttons], default=buttons[choices.index(current)] if current in choices else buttons[0])
+        self.shell.open_sheet('setting', panel, [[b] for b in buttons], default=buttons[choices.index(current)] if current in choices else buttons[0])
+
+    def multi_sheet(self, key, value, title, options):
+        """On/off per option with hex toggles; each press saves and the sheet stays open."""
+        panel, inner = self.sheet_panel(title, 'Select an item to turn it on or off.')
+        state = [x for x in value if x in options]
+        buttons = []
+
+        def flip(option, row):
+            if option in state:
+                state.remove(option)
+            else:
+                state.append(option)
+            row.set_value(toggle=option in state)
+            self.apply_setting('setting_set', {'key': key, 'value': list(state)}, ('setting', key), rebuild=False)
+        for option in options:
+            row = self.button(settings_model.label(option), '', False, ('multi', option), None, toggle=option in state)
+            row.on_activate = lambda o=option, r=row: flip(o, r)
+            inner.pack_start(row, False, False, 0)
+            buttons.append(row)
+        done = self.button('Done', '', False, ('save',), self.shell.close_sheet)
+        inner.pack_start(done, False, False, 0)
+        buttons.append(done)
+        self.shell.open_sheet('setting', panel, [[b] for b in buttons], default=buttons[0])
 
     def render_fields(self):
         cfg = widgets.load_config(display.DATA)
@@ -580,27 +686,18 @@ class SettingsScreen(Screen):
         for key, category, title, kind, options, network in settings_model.FIELDS:
             if category != self.category:
                 continue
-            headings = {'transparency': 'SURFACES & MOTION', 'style': 'HOME SCREEN',
-                        'interval': 'TIMING', 'visualizer': 'WHILE IDLE',
-                        'sub_default': 'LANGUAGES & QUALITY', 'autoplay_next': 'EPISODES'}
-            if key in headings:
-                self.section(headings[key])
+            if key in HEADINGS:
+                self.section(HEADINGS[key])
             disabled = network and cfg['style'] == 'bubbles'
             value = values[key]
-            b = self.button(title, 'Available with Network; saved: ' + settings_model.label(value) if disabled else settings_model.label(value),
-                            False, ('setting', key), lambda k=key, v=value, t=title, typ=kind, opts=options: self.edit_setting(k, v, t, typ, opts))
-            box = b.get_child()
-            box.set_orientation(Gtk.Orientation.HORIZONTAL)
-            labels = box.get_children()
-            labels[0].set_halign(Gtk.Align.START)
-            labels[0].set_xalign(0)
-            labels[0].set_max_width_chars(34)
-            box.set_child_packing(labels[0], True, True, 0, Gtk.PackType.START)
-            labels[1].set_halign(Gtk.Align.END)
-            labels[1].set_xalign(1)
-            labels[1].set_max_width_chars(34)
-            if kind == 'bool':
-                labels[1].get_style_context().add_class('set-toggle-on' if value else 'set-toggle-off')
+            action = lambda k=key, v=value, t=title, typ=kind, opts=options: self.edit_setting(k, v, t, typ, opts)
+            if disabled:
+                b = self.button(title, 'Available with the Network layout  ·  saved: ' + settings_model.label(value),
+                                False, ('setting', key), action)
+            elif kind == 'bool':
+                b = self.button(title, '', False, ('setting', key), action, toggle=bool(value))
+            else:
+                b = self.button(title, '', False, ('setting', key), action, value=settings_model.label(value))
             b.set_sensitive(not disabled)
             self.grid([b])
 
@@ -609,22 +706,27 @@ class SettingsScreen(Screen):
         if kind in ('order', 'languages') and reorder:
             self.order_sheet(key, value, title, kind, options)
             return
-        if kind in ('choice', 'bool'):
-            self.choice_sheet(title, options if kind == 'choice' else [False, True], value, save)
+        if kind == 'bool':                        # OK flips it right here, like a switch
+            save(not value)
+            return
+        if kind == 'choice':
+            self.choice_sheet(title, options, value, save)
             return
         if kind == 'multi':
-            self.choice_sheet(title, options, None,
-                              lambda v: save([x for x in value if x in options and x != v] if v in value else [x for x in value if x in options] + [v]),
-                              labels=[('On · ' if v in value else 'Off · ') + v for v in options])
+            self.multi_sheet(key, value, title, options)
             return
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(16))
-        box.get_style_context().add_class('ah-sheet')
-        box.pack_start(text_label(title, 'set-note'), False, False, 0)
         note = 'Comma separated, first preferred' if kind in ('languages', 'order') else ('Range: %s–%s' % tuple(options) if kind == 'number' else 'Use a two or three letter language code, e.g. eng')
-        box.pack_start(text_label(note, 'set-note'), False, False, 0)
+        panel, inner = self.sheet_panel(title, note)
         entry = Gtk.Entry()
+        entry.get_style_context().add_class('set-entry')
         entry.set_text(', '.join(value) if isinstance(value, list) else str(value))
-        box.pack_start(entry, False, False, 0)
+        field = glass.GlassField(self.shell, self.backdrop, self.look, entry)
+        px = self.shell.px
+        field.set_margin_start(px(30))
+        field.set_margin_end(px(30))
+        field.set_margin_bottom(px(8))
+        inner.pack_start(field, False, False, 0)
+
         def submit():
             try:
                 raw = entry.get_text().strip()
@@ -637,49 +739,54 @@ class SettingsScreen(Screen):
             save(v)
         b = self.button('Save', '', False, ('save',), submit)
         entry.connect('activate', lambda *_: submit())
-        box.pack_start(b, False, False, 0)
-        self.shell.open_sheet('setting', box, [[entry], [b]], default=entry)
+        inner.pack_start(b, False, False, 0)
+        self.shell.open_sheet('setting', panel, [[entry], [b]], default=entry)
 
     def order_sheet(self, key, value, title, kind, options):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(10))
-        box.get_style_context().add_class('ah-sheet')
-        box.pack_start(text_label(title, 'set-output'), False, False, 0)
-        box.pack_start(text_label('First is preferred. Select an item to move it to first.', 'set-note'), False, False, 0)
+        px = self.shell.px
+        panel, inner = self.sheet_panel(title, 'First is preferred. Select an item to move it to first.')
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_max_content_height(self.shell.px(400))
+        scroll.set_max_content_height(px(430))
         scroll.set_propagate_natural_height(True)
-        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(8))
+        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         scroll.add(items)
-        box.pack_start(scroll, True, True, 0)
+        inner.pack_start(scroll, True, True, 0)
         buttons = []
         for index, item in enumerate(value):
-            b = self.button('%d. %s' % (index + 1, settings_model.label(item)), 'Move to first', False, ('order', item),
-                            lambda v=item: self.order_sheet(key, [v] + [x for x in value if x != v], title, kind, options))
+            b = self.button('%d   %s' % (index + 1, settings_model.label(item)), '', False, ('order', item),
+                            lambda v=item: self.order_sheet(key, [v] + [x for x in value if x != v], title, kind, options),
+                            value='First' if index == 0 else 'Move to first')
             items.pack_start(b, False, False, 0)
             buttons.append(b)
         if kind == 'languages':
             edit = self.button('Edit language codes', 'Add or remove languages', False, ('edit',),
                                lambda: self.edit_setting(key, value, title, kind, options, reorder=False))
-            box.pack_start(edit, False, False, 0)
+            inner.pack_start(edit, False, False, 0)
             buttons.append(edit)
+
         def save():
             self.shell.close_sheet()
             self.apply_setting('setting_set', {'key': key, 'value': value}, ('setting', key))
         done = self.button('Save order', '', False, ('save',), save)
-        box.pack_start(done, False, False, 0)
+        inner.pack_start(done, False, False, 0)
         buttons.append(done)
-        self.shell.open_sheet('setting', box, [[b] for b in buttons], default=buttons[0])
+        self.shell.open_sheet('setting', panel, [[b] for b in buttons], default=buttons[0])
 
-    def apply_setting(self, action, params, key=None):
+    def apply_setting(self, action, params, key=None, rebuild=True):
         self.remember()
+
         def work():
             result = cmd(action, params, timeout=15)
             GLib.idle_add(done, result)
+
         def done(result):
+            if self.disposed:
+                return False
             if not result or not result.get('ok'):
                 self.shell.toast((result or {}).get('error', 'Could not reach the controller'), 5)
-            self.rerender(key)
+            if rebuild or not self.shell.sheet:
+                self.rerender(key)
             return False
         threading.Thread(target=work, daemon=True).start()
 
@@ -695,23 +802,26 @@ class SettingsScreen(Screen):
         threading.Thread(target=work, daemon=True).start()
 
     def render_system(self):
-        for title, action in [('Restart current app', 'restart_app'), ('Recover TV Home', 'recover'), ('Restart desktop session', 'restart_session')]:
+        self.section('Maintenance')
+        for title, sub, action in [('Restart current app', 'Close and reopen what is playing', 'restart_app'),
+                                   ('Recover TV Home', 'Bring the TV back to this screen', 'recover'),
+                                   ('Restart desktop session', 'Stops playback', 'restart_session')]:
             def invoke(a=action):
                 if a == 'restart_session':
                     self.choice_sheet('Restart desktop and stop playback?', [False, True], False,
                                       lambda yes: self.apply_setting(a, {'confirm': True}) if yes else None, labels=['Cancel', 'Restart'])
                 else:
                     self.apply_setting(a, {})
-            self.grid([self.button(title, '', False, (action,), invoke)])
+            self.grid([self.button(title, sub, False, (action,), invoke)])
+        self.section('Status')
         state = getattr(self.shell, 'settings_status', {}) or {}
-        self.system_status = text_label("", "set-note")
-        self.content.pack_start(self.system_status, False, False, 0)
+        self.system_status = self.note("", top=0)
         self.update_system_status(state)
 
     def update_system_status(self, state):
-        self.system_status.set_text('Controller: %s · CPU: %s · GPU: %s' % (
+        self.system_status.set_text('Controller %s  ·  CPU %s  ·  GPU %s' % (
             'connected' if state else 'unavailable',
-            str(state.get('temperature') or 'unknown') + '°C', str(state.get('gpu_temperature') or 'unknown') + '°C'))
+            str(state.get('temperature') or '–') + '°C', str(state.get('gpu_temperature') or '–') + '°C'))
 
     # ---- actions
     def pick(self, output, mode, rate):
@@ -741,7 +851,6 @@ class SettingsScreen(Screen):
             self.shell.toast("Couldn't change the resolution: " + err[:80], 6)
         self.shell.display_changed()
         return False
-
 
 def show_trial_sheet(shell, state):
     """'Keep this resolution?' with Keep (focused) / Revert. Returns the countdown updater."""

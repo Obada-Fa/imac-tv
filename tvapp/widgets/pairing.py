@@ -110,9 +110,9 @@ class QRTile(Gtk.DrawingArea):
     style "light" instead draws dark modules on a frosted light tile (fallback for cameras that can't read
     inverted codes)."""
 
-    def __init__(self, shell, module_px, style="glass"):
+    def __init__(self, shell, module_px, style="glass", photo=None):
         super().__init__()
-        self.shell, self.style = shell, style
+        self.shell, self.style, self.photo = shell, style, photo
         self.module = max(2, module_px)
         self.matrix = None
         self.dark_cache = (None, 0.0)
@@ -170,7 +170,7 @@ class QRTile(Gtk.DrawingArea):
     def on_draw(self, _w, cr):
         if cairo is None:
             return False
-        photo = getattr(self.shell, "photo_canvas", None)
+        photo = self.photo or getattr(self.shell, "photo_canvas", None)
         pad = getattr(self, "pad", 0)
         pos = self.translate_coordinates(photo, pad, pad) if photo else None
         cr.translate(pad, pad)
@@ -181,21 +181,50 @@ class QRTile(Gtk.DrawingArea):
 class GlassBox(Gtk.Box):
     """A box that paints frosted light glass (blurred photo crop + faint white tint + hairline) behind its children."""
 
-    def __init__(self, shell, *a, **kw):
+    def __init__(self, shell, *a, photo=None, **kw):
         super().__init__(*a, **kw)
-        self.shell = shell
+        self.shell, self.photo = shell, photo
         self.set_has_window(False)
 
     def do_draw(self, cr):
         if cairo is not None:
             w, h = self.get_allocated_width(), self.get_allocated_height()
-            paint_glass(cr, self, getattr(self.shell, "photo_canvas", None), w, h,
+            paint_glass(cr, self, self.photo or getattr(self.shell, "photo_canvas", None), w, h,
                         min(self.shell.px(30), h / 2))
         return Gtk.Box.do_draw(self, cr)
 
 
 def qr_style(shell):
     return (getattr(shell, "home_cfg", None) or {}).get("qr_style", "glass")
+
+
+def qr_card(shell, module_px=None, photo=None):
+    """Home's glass QR drop-down as a stand-alone card for other screens: the same GlassBox, kicker, QRTile and
+    code. photo = the frost source (anything with blur_layers()/blur_k/transparency; default Home's photo).
+    -> (card, refresh) where refresh() re-reads shell.net / shell.code."""
+    p = shell.px
+    card = GlassBox(shell, orientation=Gtk.Orientation.VERTICAL, spacing=p(8), photo=photo)
+    card.get_style_context().add_class("ah-drop")
+    kicker = text_label("Scan to connect your phone", "ah-kicker")
+    kicker.set_halign(Gtk.Align.CENTER)
+    kicker.set_margin_top(p(14))
+    qr = QRTile(shell, module_px or p(5), qr_style(shell), photo=photo)
+    code = text_label("--- ---", "ah-code")
+    code.set_halign(Gtk.Align.CENTER)
+    for w in (kicker, qr, code):
+        card.pack_start(w, False, False, 0)
+    last = [None]
+
+    def refresh(*_):
+        net, c = getattr(shell, "net", None) or {}, getattr(shell, "code", None) or "------"
+        url = f"http://{net.get('ip', '127.0.0.1')}:8765/?pair={c}"
+        code.set_text(fmt_code(c))
+        if url != last[0]:
+            last[0] = url
+            qr.set_text(url)
+        return False
+    refresh()
+    return card, refresh
 
 
 # ---------------------------------------------------------------- sheets (in-window overlays)

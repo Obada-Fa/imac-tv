@@ -11,34 +11,10 @@ def theme_css(scale=1.0, preferences=None):
 .brand, .hero-kicker, .set-section {{ color: #a8d7eb; }}
 .nav-button {{ color: #9eafc1; }}
 .nav-button:focus, .nav-current {{ color: #e5f6ff; border-bottom-color: #a8d7eb; }}
-/* Settings use space and typography; only keyboard focus has an outline. */
-.set-rail {{ background: transparent; border: none; padding: 0; }}
-.set-rail .set-btn {{ background: transparent; border-color: transparent; min-width: {p(230)}px;
-                     padding: {p(18)}px {p(22)}px; }}
-.set-rail .set-current {{ background: #1c3042; }}
-.set-rail .set-btn-main {{ color: #9baebf; }}
-.set-rail .set-current .set-btn-main {{ color: #e5f6ff; }}
-.set-title {{ font-size: {p(38)}px; font-weight: 500; padding-left: {p(22)}px; }}
-.set-output {{ font-size: {p(46)}px; font-weight: 500; }}
-.set-section {{ font-size: {p(16)}px; letter-spacing: 2px; font-weight: 600; color: #829bad; }}
-.set-note {{ font-size: {p(20)}px; color: #99adbf; }}
-.set-btn {{ background: transparent; border: {p(2)}px solid transparent;
-            border-radius: {p(12)}px; padding: {p(16)}px {p(20)}px; box-shadow: none; }}
-.set-btn-main {{ font-size: {p(24)}px; font-weight: 500; color: #e3ecf3; }}
-.set-btn-sub {{ font-size: {p(20)}px; font-weight: 400; color: #9eb6c9; }}
-.set-current {{ background: #172a3b; }}
-.set-btn:focus, .set-rail .set-btn:focus {{ background: #233e52; border-color: #c0e8f8; box-shadow: none; }}
-.set-btn:disabled {{ background: transparent; border-color: transparent; }}
-.set-btn:disabled label {{ color: #718496; }}
-.set-toggle-on, .set-toggle-off {{ border-radius: {p(18)}px; padding: {p(3)}px {p(16)}px; }}
-.set-toggle-on {{ background: #29495c; color: #d7f0fc; }}
-.set-toggle-off {{ background: #1b2936; color: #91a4b4; }}
-.set-picture {{ padding: {p(10)}px; background: transparent; }}
-.set-picture.set-current {{ background: #1b3041; }}
-.set-picture-art {{ background-image: linear-gradient(140deg, #34485b, #18273a 55%, #574c61);
-                    border-radius: {p(12)}px; }}
-.set-picture .set-btn-main {{ font-size: {p(22)}px; }}
-.set-picture .set-btn-sub {{ font-size: {p(18)}px; }}
+/* Settings are drawn by widgets/glass.py (Home's glass); CSS only sets their type. */
+.set-title {{ font-size: {p(54)}px; font-weight: 200; color: #fff; }}
+.set-output {{ font-size: {p(58)}px; font-weight: 200; color: #fff; }}
+.set-note {{ font-size: {p(20)}px; color: rgba(255,255,255,0.6); }}
 .src-row {{ background: rgba(28,44,60,0.88); border: {p(2)}px solid #34495c;
             border-radius: {p(18)}px; padding: {p(16)}px {p(24)}px; }}
 .src-row:focus, .card:focus {{ background: #294459; border-color: #c0e8f8;

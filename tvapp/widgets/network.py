@@ -173,6 +173,17 @@ def paint_frost(cr, base, widget, photo):
     cr.restore()
 
 
+def draw_glow(cr, f, shape):
+    """Soft cool focus glow as a few widening translucent outlines of `shape(cr, grow)` (f = focus 0..1)."""
+    if f < 0.02:
+        return
+    for i in range(1, 6):
+        shape(cr, i * 3.0)
+        cr.set_source_rgba(*GLOW, 0.20 * f * (1 - i / 6))
+        cr.set_line_width(3.2)
+        cr.stroke()
+
+
 # ---------------------------------------------------------------- nodes
 
 class Node(Gtk.DrawingArea):
@@ -250,14 +261,7 @@ class Node(Gtk.DrawingArea):
         raise NotImplementedError
 
     def glow(self, cr, f, shape):
-        """Soft cool glow as a few widening translucent outlines of `shape(cr, grow)`."""
-        if f < 0.02:
-            return
-        for i in range(1, 6):
-            shape(cr, i * 3.0)
-            cr.set_source_rgba(*GLOW, 0.20 * f * (1 - i / 6))
-            cr.set_line_width(3.2)
-            cr.stroke()
+        draw_glow(cr, f, shape)
 
 
 class TileNode(Node):

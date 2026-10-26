@@ -131,6 +131,61 @@ class CategoryNavigationTest(unittest.TestCase):
         self.assertEqual(restored.last_focus.sel_key, key)
         restored.destroy()
 
+    def test_drawn_rail_and_rows(self):
+        from widgets import glass
+        screen = self.screen
+        self.assertTrue(all(isinstance(t, glass.RailNode) for t in screen.tabs))
+        self.assertEqual([t.selected for t in screen.tabs], [t.sel_key[1] == 'Appearance' for t in screen.tabs])
+        screen.tabs[2].grab_focus()
+        self.drain()
+        self.assertEqual([t.selected for t in screen.tabs], [i == 2 for i in range(len(screen.tabs))])
+        screen.select_category('Appearance')
+        rows = [b for row in screen.rows for b in row]
+        self.assertTrue(any(isinstance(b, glass.PictureTile) for b in rows))
+        toggle = next(b for b in rows if b.sel_key == ('setting', 'transparency'))
+        self.assertIsInstance(toggle, glass.GlassRow)
+        self.assertIs(toggle.toggle, True)
+
+    def test_ok_on_a_switch_flips_it(self):
+        from unittest import mock
+        screen = self.screen
+        screen.select_category('Appearance')
+        row = next(b for r in screen.rows for b in r if b.sel_key == ('setting', 'visual_effects'))
+        with mock.patch.object(screen, 'apply_setting') as apply:
+            row.press()
+        apply.assert_called_once_with('setting_set', {'key': 'visual_effects', 'value': False}, ('setting', 'visual_effects'))
+
+    def test_connections_shows_home_qr_card(self):
+        self.shell.net = {'connected': True, 'type': 'wifi', 'ssid': 'Home', 'signal': 80, 'ip': '10.0.0.2'}
+        self.shell.code = '123456'
+        self.screen.select_category('Connections')
+        self.drain()
+        self.assertIsNotNone(self.screen.qr_refresh)
+        self.assertEqual(self.screen.signal.line(), 'Home  ·  10.0.0.2')
+        self.assertEqual(settings.glass.signal_level(self.shell.net), 4)
+        keys = [b.sel_key for r in self.screen.rows for b in r]
+        self.assertIn(('access', 'other_phones'), keys)
+        self.assertIn(('torbox', 'key'), keys)
+
+    def test_plain_switches_render(self):
+        import widgets
+        from widgets import glass
+        widgets.save_keys(display.DATA, {'transparency': False, 'visual_effects': False, 'tile_shape': 'chamfer',
+                                         'node_shape': 'octagon'})
+        self.screen.render()
+        self.drain()
+        self.assertEqual(self.screen.look.key(), ('octagon', 'chamfer', False, False))
+        self.assertFalse(self.screen.backdrop.transparency)
+        self.assertEqual(self.screen.tabs[0].look.node_shape, 'octagon')
+        row = next(b for r in self.screen.rows for b in r if isinstance(b, glass.GlassRow))
+        row.grab_focus()
+        row.on_focus()
+        self.assertEqual(row.f, float(row.has_focus()))   # snapped, no easing
+        self.assertNotIn(row, glass.TICKER.live)
+        glass.TICKER.last -= 1
+        glass.TICKER.step()                                # whatever was easing settles; the timer stops
+        self.assertEqual(glass.TICKER.src, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
