@@ -510,6 +510,15 @@
   [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { send('select', {app: 'youtube'}).catch(() => {}); });
 
   // Playback prompts: each button is one server action; the TV answers the same prompts with OK / Back.
+  let playbackPromptId = null;
+  for (const [id, choice] of [['ph-switch', 'switch'], ['ph-dismiss', 'dismiss']]) {
+    $(id).onclick = async () => {
+      if (!playbackPromptId) return;
+      $('ph-switch').disabled = $('ph-dismiss').disabled = true;
+      try { await send('playback_suggestion', {id: playbackPromptId, choice}); await refresh(); }
+      catch (e) {} finally { $('ph-switch').disabled = $('ph-dismiss').disabled = false; }
+    };
+  }
   [['np-skip', 'skip_segment', {}], ['un-play', 'upnext', {choice: 'play'}], ['un-cancel', 'upnext', {choice: 'cancel'}],
    ['st-continue', 'still_watching', {choice: 'continue'}], ['st-stop', 'still_watching', {choice: 'stop'}]]
     .forEach(([id, action, params]) => $(id).onclick = () => { send(action, params).then(() => refresh()).catch(() => {}); });
@@ -524,6 +533,16 @@
   $('viz-next').onclick = () => { send('viz_next').then(() => setTimeout(refresh, 600)).catch(() => {}); };
 
   function renderView(s, pb, name) {
+    const help = s.playback_suggestion;
+    playbackPromptId = help ? help.id : null;
+    $('playback-help').hidden = !help;
+    if (help) {
+      $('ph-title').textContent = help.title;
+      $('ph-message').textContent = help.message;
+      $('ph-current').textContent = `Current: ${help.current}`;
+      $('ph-alternative').textContent = `Try: ${help.alternative}`;
+      $('ph-dismiss').textContent = help.failed ? 'Not now' : 'Keep watching';
+    }
     const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
     const c = $('controls');
     if (c.dataset.view !== view) {
@@ -693,7 +712,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       
-      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'playback_suggestion', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);

@@ -45,6 +45,12 @@
     <button id="fullscreen" type="button" class="hb" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
   </div>
   <section id="controls" class="controls" aria-label="Remote controls" data-view="browse">
+    <div id="playback-help" class="card glass" role="status" hidden>
+      <h2 id="ph-title"></h2><p id="ph-message" class="meta"></p>
+      <p id="ph-current" class="meta"></p><p id="ph-alternative"></p>
+      <p class="meta">Continue from your current position. Different editions may have different timing.</p>
+      <div class="prow"><button id="ph-switch" type="button" class="go">Switch and continue</button><button id="ph-dismiss" type="button">Keep watching</button></div>
+    </div>
     <div id="buffer" class="card glass buffer" hidden>
       <div class="spinner" aria-hidden="true"></div>
       <small class="eyebrow">STARTING</small>

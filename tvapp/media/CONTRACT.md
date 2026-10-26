@@ -33,6 +33,11 @@
 - `subtitle` (existing) `{id: int|"no"}`; `subdelay` (existing).
 - `open_search` params `{}` → server tells TV Home to show Search screen (writes `$DATA/ui_request.json` `{"screen":"search","ts":..}` which home.py polls), returns `{"ok": true}`.
 - `back` while playing: quits mpv, sets app "home", and TV Home returns to the Details screen of the media that was playing (home.py reads `state.media` / last_media).
+- `playback_suggestion` params `{id: string, choice: "switch"|"dismiss"}` answers
+  the current health prompt. Stale IDs are ignored. Switch captures the live
+  timestamp (or last known position after failure) and opens the internally held
+  source via `play_media`; clients never submit its URL. OK/Back answer the same
+  prompt while it is active, ahead of skip/up-next handling.
 
 ## GET /api/state additions (keep all existing fields)
 - `app`: now one of `"home" | "youtube" | "player"`.
@@ -40,6 +45,10 @@
 - `buffering`: `{"peers": int, "speed": float, "source": label} | null` (non-null only while phase=="buffering").
 - `media`: `{"type","id","video_id","season","episode","name"} | null` — current or last-played item (`last_media` persists after stop so Home can return to Details).
 - `playback` (existing shape) plus: each `subtitles[]` entry gains `"lang"`; new `"audio": [{"id","title","lang","selected"}]`.
+- `playback_suggestion`: null or `{id, reason: "bandwidth"|"decode"|"unplayable",
+  title, message, current: source_label, alternative: source_label, failed: bool}`.
+  Available after playback failure as well as while playing. Contains display
+  labels only; URLs and trackers remain private.
 
 ## UI ↔ server
 - home.py browses metadata by importing `media.addons` directly (in a thread; never block GTK main loop).

@@ -150,11 +150,12 @@ class PlayMediaTests(unittest.TestCase):
         self.assertEqual(c.media["video_id"], "tt0903747:1:2")
         self.assertEqual(server.Controller._read_json(server.DATA / "last_media.json", {})["video_id"], "tt0903747:1:2")
 
-    def worker(self, c, stream=None, mpv_results=None, healthy=True, found=None, tracks=(), loop=False, local=True):
+    def worker(self, c, stream=None, mpv_results=None, healthy=True, found=None, tracks=(), loop=False, local=True, paused=False):
         c.action_lock = server.threading.RLock()
         with mock.patch.object(server.threading, "Thread"), mock.patch.object(server, "playback", return_value={"active": False}):
             c.action("play_media", {"type": "movie", "id": "tt0063350"})
         gen = c.generation
+        c.recovery_paused = paused
         src = found if found is not None else [{"name": "Torrentio\n1080p", "title": "Movie 1080p WEB-DL x264\n\U0001f464 50 \U0001f4be 2 GB", "infoHash": "d" * 40, "fileIdx": 1,
                                                  "sources": ["tracker:udp://t:1/announce", "dht:" + "d" * 40]}]
         proc = mock.Mock()
@@ -213,6 +214,10 @@ class PlayMediaTests(unittest.TestCase):
         popen, _ = self.worker(c, local=False)
         popen.assert_called_once()
         self.eng_holder["eng"].configure_cache.assert_not_called()
+
+    def test_worker_preserves_paused_state_during_source_switch(self):
+        popen, _ = self.worker(self.controller(), paused=True)
+        self.assertIn("--pause=yes", popen.call_args.args[0])
 
     def test_subs_select_default_language_and_prefer_embedded(self):
         c = self.controller()
@@ -917,6 +922,161 @@ class PlaybackPromptTests(unittest.TestCase):
         self.assertEqual([s["kind"] for s in c.flow.segments], ["intro", "credits"])
         self.assertEqual(look.call_args.kwargs["tvdb_id"], 81189)
         self.assertEqual(look.call_args.kwargs["duration"], 1000.0)
+
+
+class PlaybackRecoveryTests(unittest.TestCase):
+    controller = LifecycleTests.controller
+
+    def setup_source(self):
+        c = self.controller()
+        raw = [{"name": "[TB+] Torrentio 2160p", "title": "Show 2160p REMUX HEVC\n💾 20 GB",
+                "url": "https://example.com/secret/original"},
+               {"name": "[TB+] Torrentio 1080p", "title": "Show 1080p x264\n💾 5 GB",
+                "url": "https://example.com/secret/alternative"}]
+        c.current_source = server.media_streams.parse(raw[0])
+        c.health_tried.add(server.media_health.identity(c.current_source))
+        c.recovery_position = 100
+        return c, raw
+
+    def offer(self, c, raw, reason="decode"):
+        def thread(target, **kwargs):
+            return mock.Mock(start=target)
+        with mock.patch.object(server.addons, "streams", return_value=raw), \
+                mock.patch.object(server.threading, "Thread", side_effect=thread):
+            c._offer_alternative(c.generation, reason)
+
+    def test_offer_public_fields_do_not_leak_credentials(self):
+        c, raw = self.setup_source()
+        self.offer(c, raw)
+        public = c._health_view()
+        self.assertEqual(public["reason"], "decode")
+        self.assertIn("1080p", public["alternative"])
+        self.assertNotIn("secret", str(public))
+        self.assertNotIn("url", public)
+        self.assertIn("secret", c.health_suggestion["source"]["url"])
+
+    def test_switch_freezes_then_reads_current_position_and_preserves_pause(self):
+        for paused in (False, True):
+            c, raw = self.setup_source()
+            self.offer(c, raw)
+            prompt = c.health_suggestion
+            def mpv(*args):
+                return {"time-pos": 187.375, "pause": paused}.get(args[-1])
+            with mock.patch.object(server, "mpv", side_effect=mpv) as ipc, \
+                    mock.patch.object(c, "play_media", return_value={"ok": True}) as play:
+                c.action("playback_suggestion", {"id": prompt["id"], "choice": "switch"})
+            self.assertEqual(ipc.call_args_list[:3], [mock.call("get_property", "pause"),
+                mock.call("set_property", "pause", True), mock.call("get_property", "time-pos")])
+            self.assertEqual(play.call_args.args[0], {"type": "series", "id": "tt9", "season": 1, "episode": 2, "start": 187.375})
+            self.assertEqual(play.call_args.kwargs, {"prefetched": prompt["source"], "recovery": True, "paused": paused})
+
+    def test_failed_source_uses_last_position_and_remote_ok_works_without_player(self):
+        c, raw = self.setup_source()
+        c.app, c.phase = "home", "ready"
+        self.offer(c, raw, "unplayable")
+        with mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(c, "play_media") as play:
+            c.action("ok", {})
+        self.assertEqual(play.call_args.args[0]["start"], 100)
+
+    def test_dismiss_and_stale_responses_do_not_switch(self):
+        c, raw = self.setup_source()
+        self.offer(c, raw)
+        token = c.health_suggestion["id"]
+        with mock.patch.object(c, "play_media") as play, mock.patch.object(server, "mpv") as ipc:
+            self.assertTrue(c.action("playback_suggestion", {"id": "old", "choice": "switch"})["ignored"])
+            self.assertIsNotNone(c.health_suggestion)
+            c.action("back", {})
+            self.assertIsNone(c.health_suggestion)
+            c.action("playback_suggestion", {"id": token, "choice": "switch"})
+        play.assert_not_called()
+        ipc.assert_not_called()
+        # Once dismissed, this cause cannot create another prompt for the same source.
+        self.offer(c, raw)
+        self.assertIsNone(c.health_suggestion)
+
+    def test_no_alternative_and_old_generation_create_no_prompt(self):
+        c, raw = self.setup_source()
+        self.offer(c, raw[:1])
+        self.assertIsNone(c.health_suggestion)
+        c.health_requests.clear()
+        def stale(*args):
+            c.generation += 1
+            return raw
+        with mock.patch.object(server.addons, "streams", side_effect=stale), \
+                mock.patch.object(server.threading, "Thread", side_effect=lambda target, **kw: mock.Mock(start=target)):
+            c._offer_alternative(c.generation, "decode")
+        self.assertIsNone(c.health_suggestion)
+
+    def test_pending_recommendation_cannot_reappear_during_stop(self):
+        c, raw = self.setup_source()
+        def stop_during_fetch(*args):
+            with mock.patch.object(server, "mpv", side_effect=OSError):
+                c._end_playback()
+            return raw
+        with mock.patch.object(server.addons, "streams", side_effect=stop_during_fetch), \
+                mock.patch.object(server.threading, "Thread", side_effect=lambda target, **kw: mock.Mock(start=target)):
+            c._offer_alternative(c.generation, "decode")
+        self.assertIsNone(c.health_suggestion)
+
+    def test_failure_records_position_and_offers_another_source(self):
+        c, raw = self.setup_source()
+        with mock.patch.object(c, "_record") as record, mock.patch.object(c, "_offer_alternative") as offer:
+            c._play_fail(c.generation, RuntimeError("decode failed"))
+        record.assert_called_once()
+        self.assertEqual(c.recovery_position, 100)
+        offer.assert_called_once_with(c.generation, "unplayable")
+        self.assertEqual((c.app, c.phase), ("home", "ready"))
+
+    def test_startup_failure_keeps_original_resume_timestamp(self):
+        c, raw = self.setup_source()
+        c.session = None
+        c.recovery_position = 923.5
+        with mock.patch.object(c, "_offer_alternative"):
+            c._play_fail(c.generation, RuntimeError("startup failed"))
+        self.assertEqual(c.recovery_position, 923.5)
+
+    def test_player_error_offers_recovery_but_normal_exit_does_not(self):
+        for code in (0, 2):
+            c, raw = self.setup_source()
+            c.proc.poll.return_value = code
+            with mock.patch.object(server, "mpv", side_effect=OSError), \
+                    mock.patch.object(server.time, "sleep"), \
+                    mock.patch.object(server.threading, "Thread"), \
+                    mock.patch.object(c, "_offer_alternative") as offer:
+                c._playback_loop(c.generation)
+            self.assertEqual(offer.called, code != 0)
+
+    def test_health_tick_tolerates_optional_properties(self):
+        c, raw = self.setup_source()
+        c.health_monitor = mock.Mock()
+        c.health_monitor.tick.return_value = "decode"
+        with mock.patch.object(server, "mpv", side_effect=RuntimeError("property unavailable")), \
+                mock.patch.object(c, "_offer_alternative") as offer:
+            c._health_tick(c.generation, 125, False)
+        self.assertEqual(c.session["pos"], 125)
+        offer.assert_called_once_with(c.generation, "decode")
+        self.assertTrue(all(value is None for value in c.health_monitor.tick.call_args.args[2].values()))
+
+    def test_source_metadata_survives_explicit_selection(self):
+        c, raw = self.setup_source()
+        with mock.patch.object(server.addons, "streams", return_value=raw):
+            result = c.action("sources", {"type": "series", "id": "tt9", "season": 1, "episode": 2})
+        ref = next(s["ref"] for s in result["sources"] if s["quality"] == "2160p")
+        selected = c._resolve_stream({"ref": ref})
+        self.assertEqual(selected["size_bytes"], 20e9)
+        self.assertEqual(selected["quality"], "2160p")
+
+    def test_new_play_clears_prompt_and_recovery_keeps_tried_sources(self):
+        c, raw = self.setup_source()
+        self.offer(c, raw)
+        original = set(c.health_tried)
+        with mock.patch.object(server, "mpv", side_effect=OSError), mock.patch.object(server.threading, "Thread"):
+            c.play_media({"type": "movie", "id": "tt77", "start": 123}, recovery=True)
+            self.assertEqual(c.health_tried, original)
+            self.assertEqual(c.recovery_position, 123)
+            self.assertIsNone(c.health_suggestion)
+            c.play_media({"type": "movie", "id": "tt88", "start": 0})
+        self.assertFalse(c.health_tried)
 
 
 if __name__ == "__main__":

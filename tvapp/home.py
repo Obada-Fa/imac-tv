@@ -27,6 +27,7 @@ from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
 from widgets import chrome, glass  # noqa: E402
+from widgets.playback import PlaybackSuggestion
 from theme import theme_css
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
 import display  # noqa: E402
@@ -134,6 +135,8 @@ class Home(Gtk.Window):
         self.prev_app = None
         self.last_error = None
         self.state_seen = False
+        self.playback_prompt = None
+        self.playback_prompt_id = None
         self.modal_open = False     # legacy flag, no longer set: overlays use self.sheet
         self.sheet = None
         self.net = None
@@ -771,7 +774,34 @@ class Home(Gtk.Window):
                 self.present()
         self.prev_app = app
         self.state_seen = True
+        self.update_playback_prompt(state.get("playback_suggestion"))
         return False
+
+    def update_playback_prompt(self, prompt):
+        token = prompt.get("id") if prompt else None
+        if token == self.playback_prompt_id:
+            return
+        if self.playback_prompt:
+            self.playback_prompt.destroy()
+            self.playback_prompt = None
+        self.playback_prompt_id = token
+        if prompt:
+            def respond(choice):
+                def work():
+                    result = screens.cmd("playback_suggestion", {"id": token, "choice": choice}, timeout=15)
+                    GLib.idle_add(done, result)
+                def done(result):
+                    if self.playback_prompt_id == token and self.playback_prompt:
+                        self.playback_prompt.set_sensitive(True)
+                        if result and result.get("ok"):
+                            self.playback_prompt.destroy()
+                            self.playback_prompt = None
+                        else:
+                            self.toast((result or {}).get("error", "Could not reach the controller"), 5)
+                    self.last_state_poll = 0
+                    return False
+                threading.Thread(target=work, daemon=True).start()
+            self.playback_prompt = PlaybackSuggestion(prompt, respond, self.scale)
 
     def install_update(self):
         self.update_notice.set_sensitive(False)

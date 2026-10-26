@@ -114,6 +114,33 @@ Nothing is kept on disk: the engine cache is capped (`cache_bytes`, 3 GB) and th
 torrent is removed when playback ends. Continue Watching comes from
 `~/.local/share/imactv/history.json`.
 
+### Playback help
+
+During playback the controller samples mpv once a second. Five distinct buffering
+stalls of at least one second within two minutes (or one continuous 20-second
+stall) offer a smaller source. Startup loading, pauses and seeking are excluded.
+Sustained frame loss or growing audio/video desynchronization for ten seconds,
+with at least three seconds buffered, instead offers a lower resolution or a
+simpler format, preferring 1080p H.264 SDR for demanding 4K sources. These are
+likely causes; the app does not claim that the internet plan or GPU is at fault.
+
+A **Switch and continue / Keep watching** window appears above the video, and
+the phone Remote tab shows the same recommendation. Physical keyboard arrows
+select either button; Enter activates it and Escape dismisses it. The phone
+D-pad's OK switches and Back dismisses. Each cause is offered once per source;
+there is no automatic switch. Failed startup or a player error offers another
+source immediately when one is available, with **Not now** as the dismiss option.
+Known-dead torrents, uncached direct links and sources already tried in the same
+recovery sequence are excluded. Without a suitable alternative playback continues
+as usual, or the existing playback error is shown.
+
+Switching briefly pauses the old source, captures its current timestamp, and
+starts the replacement there, preserving whether playback was paused. A failed
+source uses its last known position, including a resume position when startup
+failed. Opening the replacement may take a moment. Different cuts of a movie or
+episode can have different timing; this is timestamp continuation, not automatic
+scene matching. Source URLs and TorBox credentials stay on the controller.
+
 ### TorBox
 
 With a TorBox key, Torrentio returns TorBox direct links. Cached ones play at once

@@ -35,7 +35,7 @@ try:
     import display
 except Exception:  # pragma: no cover
     display = None
-from media import segments as media_segments, upnext
+from media import segments as media_segments, upnext, health as media_health
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -393,6 +393,13 @@ class Controller:
         self.buffering = None
         self.proc = None
         self.session = None
+        self.health_monitor = media_health.Monitor()
+        self.health_suggestion = None
+        self.health_requests = set()
+        self.health_tried = set()
+        self.current_source = None
+        self.recovery_position = 0.0
+        self.recovery_paused = False
         self.flow = upnext.Flow()
         self.prefetch = None
         self.cache_ready = False
@@ -406,6 +413,7 @@ class Controller:
         self.pair_attempts = {}
         self.torbox_tries = []
         self.source_refs = {"time": 0.0, "urls": []}
+        self.source_metadata = {}
         self.sessions_path = DATA / "devices.json"
         self.sessions = self._read_json(self.sessions_path, {})
         previous_home_token = DATA / "home_token"
@@ -902,6 +910,8 @@ class Controller:
     def _end_playback(self):
         """Idempotent teardown: final history record, quit mpv, drop the torrent. True if this call ended a session."""
         with self.lock:
+            self.health_suggestion = None
+            self.current_source = None
             session, self.session = self.session, None
         if not session and not self._mpv_active():
             return False
@@ -949,7 +959,7 @@ class Controller:
         self._return_home(screen)
         return {"ok": True}
 
-    def play_media(self, params, prefetched=None, auto=False):
+    def play_media(self, params, prefetched=None, auto=False, recovery=False, paused=False):
         kind, item, season, episode, video_id = media_target(params)
         stream = self._resolve_stream(params.get("stream"))
         start = params.get("start")
@@ -962,6 +972,14 @@ class Controller:
         with self.lock:
             self.generation += 1
             generation = self.generation
+            self.health_monitor = media_health.Monitor()
+            self.health_suggestion = None
+            self.health_requests = set()
+            if not recovery:
+                self.health_tried = set()
+            self.current_source = None
+            self.recovery_position = float(start)
+            self.recovery_paused = paused
             self.app, self.phase, self.error = "player", "buffering", ""
             self.buffering = {"peers": 0, "speed": 0.0, "downloaded": 0, "source": "", "stage": "Finding the best source…"}
             self.media = {"type": kind, "id": item, "video_id": video_id, "season": season,
@@ -985,23 +1003,115 @@ class Controller:
                 urls = self.source_refs["urls"] if fresh else []
             if isinstance(ref, bool) or not isinstance(ref, int) or not 0 <= ref < len(urls):
                 raise ValueError("That source expired, pick one again")
-            return media_stream({"url": urls[ref]})
+            selected = media_stream({"url": urls[ref]})
+            return dict(self.source_metadata.get(media_health.identity(selected), selected))
         if isinstance(value, dict) and "url" in value:
             raise ValueError("Invalid stream")
-        return media_stream(value)
+        selected = media_stream(value)
+        return dict(self.source_metadata.get(media_health.identity(selected), selected)) if selected else None
 
     def _play_fail(self, generation, exc):
+        with self.action_lock:
+            self._play_fail_locked(generation, exc)
+
+    def _play_fail_locked(self, generation, exc):
         message = media_config.redact(exc)
         LOG.warning("Playback failed: %s", message)
         with self.lock:
             if generation != self.generation:
                 return
+            if self.session:
+                self.recovery_position = self.session["pos"]
+            self._record()
             self.app, self.phase, self.error, self.buffering = "home", "ready", message[:300], None
             session, self.session = self.session, None
         self._stop_proc()
         if session and session["engine"] and session["info_hash"]:
             session["engine"].remove(session["info_hash"])
         self._show_home()
+        self._offer_alternative(generation, "unplayable")
+
+    def _health_view(self):
+        """Public prompt fields only: source URLs and trackers never leave the controller."""
+        with self.lock:
+            prompt = self.health_suggestion
+            return {k: prompt[k] for k in ("id", "reason", "title", "message", "current", "alternative", "failed")} if prompt else None
+
+    def _offer_alternative(self, generation, reason):
+        with self.lock:
+            if generation != self.generation or not self.current_source or not self.media:
+                return
+            if reason != "unplayable" and self.phase != "playing":
+                return
+            if reason in self.health_requests:
+                return
+            self.health_requests.add(reason)
+            current, media = dict(self.current_source), dict(self.media)
+            tried = set(self.health_tried)
+        def work():
+            try:
+                found = [media_streams.parse(s) for s in addons.streams(media["type"], media["video_id"])]
+                # Explicit selections originally contain just a URL/hash. Recover their metadata.
+                source = next((s for s in found if media_health.identity(s) == media_health.identity(current)), current)
+                chosen = media_health.alternative(source, media_streams.rank(found, media_config.load()), reason, tried)
+                if not chosen:
+                    return
+                title, message = media_health.message(reason)
+                with self.lock:
+                    if generation != self.generation or not self.current_source or (self.health_suggestion and reason != "unplayable"):
+                        return
+                    if reason != "unplayable" and self.phase != "playing":
+                        return
+                    self.health_suggestion = {"id": secrets.token_hex(12), "reason": reason, "title": title,
+                        "message": message, "current": source.get("label") or "Selected source",
+                        "alternative": chosen["label"], "failed": reason == "unplayable", "source": chosen}
+            except Exception as exc:
+                LOG.warning("Could not find a playback alternative: %s", media_config.redact(exc))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _health_tick(self, generation, position, paused):
+        sample = {}
+        for prop in ("paused-for-cache", "demuxer-cache-duration", "seeking", "frame-drop-count",
+                     "decoder-frame-drop-count", "estimated-vf-fps", "avsync"):
+            try:
+                sample[prop] = mpv("get_property", prop)
+            except (OSError, TimeoutError):
+                return False
+            except (RuntimeError, ValueError):
+                sample[prop] = None   # older mpv builds may not expose every property
+        with self.lock:
+            if generation != self.generation or not self.session:
+                return False
+            self.session["pos"] = self.recovery_position = float(position)
+            reason = self.health_monitor.tick(position, paused, sample)
+            prompting = self.health_suggestion is not None
+        if reason:
+            self._offer_alternative(generation, reason)
+        return prompting
+
+    def answer_health(self, params):
+        choice = params.get("choice")
+        if choice not in ("switch", "dismiss"):
+            raise ValueError("Choice must be switch or dismiss")
+        with self.lock:
+            prompt = self.health_suggestion
+            if not prompt or params.get("id") != prompt["id"]:
+                return {"ok": True, "ignored": True}
+            self.health_suggestion = None
+            media = dict(self.media)
+            position = self.recovery_position
+        if choice == "dismiss":
+            return {"ok": True}
+        paused = False
+        try:
+            paused = mpv("get_property", "pause") is True
+            mpv("set_property", "pause", True)
+            position = media_health.number(mpv("get_property", "time-pos"), position)
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass   # failed playback uses the last position, including the original resume timestamp
+        target = {k: media[k] for k in ("type", "id", "season", "episode")}
+        target["start"] = max(0, position)
+        return self.play_media(target, prefetched=prompt["source"], recovery=True, paused=paused)
 
     def _attach_subs(self, tracks, cfg):
         """Load every picked external sub with a proper label/lang, then select the default language."""
@@ -1055,6 +1165,9 @@ class Controller:
                 misses += 1
             if (proc is not None and proc.poll() is not None) or misses >= 3:
                 if self._current(generation):
+                    if misses >= 3 or (proc is not None and proc.poll() not in (None, 0)):
+                        self._play_fail(generation, RuntimeError("The player could not continue with this source"))
+                        return
                     with self.lock:
                         session = self.session
                         event = self.flow.on_exit(session["pos"], session["dur"]) if session else None
@@ -1102,12 +1215,15 @@ class Controller:
             if not isinstance(pos, (int, float)):
                 continue
             dur = dur if isinstance(dur, (int, float)) else 0
+            prompting = self._health_tick(generation, pos, paused)
             with self.lock:
                 if generation != self.generation:
                     return
-                event = self.flow.tick(float(pos), float(dur), bool(paused))
+                event = self.flow.tick(float(pos), float(dur), bool(paused) or prompting)
                 view = self.flow.view(float(pos))
                 nxt = self.flow.next_ep
+            if prompting:
+                continue
             seg = view["segment"]
             if seg and announced != (seg["kind"], seg["end"]):
                 announced = (seg["kind"], seg["end"])
@@ -1267,9 +1383,10 @@ class Controller:
                     self.flow.begin(self.media["next"], [], cfg)
             direct = None
             if stream:
-                info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], "Selected source"
+                info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], stream.get("label") or "Selected source"
                 direct = stream.get("url")
-                sources = []
+                sources = stream.get("sources") or []
+                chosen = dict(stream, label=label)
             else:
                 chosen = prefetched
                 if not chosen:
@@ -1280,6 +1397,12 @@ class Controller:
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
                 direct = chosen.get("url")
                 sources = chosen.get("sources") or []
+            with self.lock:
+                if generation != self.generation:
+                    return
+                self.current_source = dict(chosen)
+                self.health_tried.add(media_health.identity(chosen))
+            if not stream:
                 if direct:
                     info_hash = None
                 else:
@@ -1300,7 +1423,7 @@ class Controller:
                 self.media["name"] = name
                 self._save_json(self.media_path, self.media)
                 self.buffering["source"] = label
-                self.session = {"engine": torrents, "info_hash": info_hash, "pos": 0.0, "dur": 0.0,
+                self.session = {"engine": torrents, "info_hash": info_hash, "pos": float(start), "dur": 0.0,
                                 "entry": {"type": kind, "id": item, "video_id": video_id, "season": season,
                                           "episode": episode, "name": base_name, "poster": meta.get("poster")}}
             try:
@@ -1316,6 +1439,8 @@ class Controller:
             os.chmod(log_path, 0o600)
             argv = player.mpv_argv(direct or torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
                                   log_file=str(log_path), ipc=MPV_SOCK)
+            if self.recovery_paused:
+                argv.insert(1, "--pause=yes")
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.DEVNULL, start_new_session=True)
             with self.lock:
@@ -1497,6 +1622,7 @@ class Controller:
                 nxt = None
             current_media["next"] = nxt
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
+                "playback_suggestion": self._health_view(),
                 "gui": gui, "volume": percent, "muted": muted,
                 "audio_warning": self.audio_warning,
                 "old_link_active": bool(self.legacy_secret),
@@ -1747,6 +1873,13 @@ class Controller:
                 return self.toggle_fullscreen()
             if action == "play_media":
                 return self.play_media(params)
+            if action == "playback_suggestion":
+                return self.answer_health(params)
+            if action in ("ok", "back") and self.health_suggestion:
+                return self.answer_health({"id": self.health_suggestion["id"],
+                                           "choice": "switch" if action == "ok" else "dismiss"})
+            if action in ("left", "right", "up", "down") and self.health_suggestion:
+                return {"ok": True, "ignored": True}  # the prompt's OK / Back choices take priority over seeking
             if action == "open_search":
                 if self.app == "youtube":
                     # Stay on YouTube: focus VacuumTube and press the YouTube TV search shortcut.
@@ -1797,6 +1930,7 @@ class Controller:
                 except addons.AddonError as exc:
                     raise RuntimeError(media_config.redact(exc)) from None
                 ranked, urls = media_streams.rank(found, media_config.load()), []
+                metadata = {media_health.identity(s): dict(s) for s in ranked}
                 for src in ranked:  # direct links embed the TorBox key: keep them here, hand out an opaque ref
                     url = src.pop("url", None)
                     if url:
@@ -1804,6 +1938,7 @@ class Controller:
                         urls.append(url)
                 with self.lock:
                     self.source_refs = {"time": time.monotonic(), "urls": urls}
+                    self.source_metadata = metadata
                 return {"sources": ranked}
             if action == "torbox_key":
                 return self.set_torbox_key(params.get("key"))
