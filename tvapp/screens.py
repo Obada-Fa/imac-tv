@@ -410,6 +410,10 @@ def text_label(text, style=None, wrap=False, lines=0, ellipsize=False):
     return w
 
 
+# widgets/* import text_label and cmd from here, so the drawn kit is imported once those exist
+from widgets import chrome, glass  # noqa: E402
+
+
 class ArtImage(Gtk.Image):
     """Image that loads remote art asynchronously and drops stale results."""
 
@@ -435,86 +439,60 @@ class ArtImage(Gtk.Image):
         load_art(url, self.w, self.h, done, self.radius, self.fit)
 
 
-_skeletons = weakref.WeakSet()
-_shimmer = {"on": False, "started": False}
-
-
-def skeleton(w, h):
-    box = Gtk.Box()
-    box.get_style_context().add_class("skel")
-    box.set_size_request(w, h)
-    _skeletons.add(box)
-    if not _shimmer["started"]:
-        _shimmer["started"] = True
-
-        def tick():
-            _shimmer["on"] = not _shimmer["on"]
-            for s in list(_skeletons):
-                ctx = s.get_style_context()
-                (ctx.add_class if _shimmer["on"] else ctx.remove_class)("skel-b")
-            return True
-        GLib.timeout_add(700, tick)
-    return box
-
-
 CARD_DIMS = {"poster": (190, 285), "wide": (330, 186), "episode": (300, 169), "app": (300, 96)}
 
 
-def make_card(shell, item, kind, on_activate, on_focus):
+def card_art_url(item, kind):
+    if kind == "poster":
+        return poster_url(item)
+    if kind == "episode":
+        return item.get("thumbnail")
+    return backdrop_url(item) or poster_url(item)
+
+
+def make_card(shell, item, kind, on_activate, on_focus, src=None):
+    """A focusable card for `item`: drawn PosterCards for art (poster / wide / episode), a GlassButton chip for
+    "pill"; the legacy button only for "app"."""
     px = shell.px
+    if kind == "pill":
+        btn = chrome.GlassButton(shell, src, chrome.look(shell), item.get("name", ""), px=21, height=px(58),
+                                 on_activate=lambda: on_activate(item))
+        btn.item = item
+        btn.connect("focus-in-event", lambda *_: on_focus(item, btn) or False)
+        return btn
+    if kind in CARD_DIMS and kind != "app":
+        w, h = (px(v) for v in CARD_DIMS[kind])
+        card = chrome.PosterCard(shell, chrome.look(shell), item, kind, w, h, lambda: on_activate(item))
+        url = card_art_url(item, kind)
+        if url:
+            ref = weakref.ref(card)
+
+            def done(pb):
+                c = ref()
+                if c is not None and not c.dead and pb is not None:
+                    c.set_pixbuf(pb)
+                return False
+            load_art(url, w, h, done)
+        card.connect("focus-in-event", lambda *_: on_focus(item, card) or False)
+        return card
     btn = Gtk.Button()
     btn.set_relief(Gtk.ReliefStyle.NONE)
     btn.get_style_context().add_class("card")
     btn.item = item
-    if kind == "pill":
-        btn.get_style_context().add_class("pill")
-        btn.add(Gtk.Label(label=item.get("name", "")))
-    elif kind == "app":
-        btn.get_style_context().add_class("app-card")
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(16))
-        box.set_margin_start(px(20))
-        box.set_margin_end(px(28))
-        box.set_margin_top(px(14))
-        box.set_margin_bottom(px(14))
-        icon = ASSETS / "app-icons" / item.get("icon", "")
-        try:
-            pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(icon), px(64), px(64), True)
-            box.pack_start(Gtk.Image.new_from_pixbuf(pb), False, False, 0)
-        except (GLib.Error, TypeError):
-            box.pack_start(Gtk.Image.new_from_icon_name("applications-multimedia", Gtk.IconSize.DIALOG), False, False, 0)
-        box.pack_start(text_label(item.get("name", ""), "card-title"), False, False, 0)
-        btn.add(box)
-    else:
-        w, h = (px(v) for v in CARD_DIMS[kind])
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
-        ov = Gtk.Overlay()
-        img = ArtImage(w, h, px(12))
-        img.get_style_context().add_class("card-art")
-        if kind == "poster":
-            url = poster_url(item)
-        elif kind == "episode":
-            url = item.get("thumbnail")
-        else:
-            url = backdrop_url(item) or poster_url(item)
-        img.set_url(url)
-        ov.add(img)
-        if item.get("progress") is not None:
-            bar = Gtk.ProgressBar()
-            bar.set_fraction(max(0.0, min(1.0, float(item["progress"]))))
-            bar.set_valign(Gtk.Align.END)
-            bar.set_margin_start(px(10))
-            bar.set_margin_end(px(10))
-            bar.set_margin_bottom(px(10))
-            ov.add_overlay(bar)
-        col.pack_start(ov, False, False, 0)
-        for text, style in ((item.get("name", ""), "card-title"), (item.get("subtitle", ""), "card-sub")):
-            if text or style == "card-title":
-                lab = text_label(text, style, ellipsize=True)
-                lab.set_max_width_chars(1)
-                lab.set_size_request(w, -1)
-                lab.set_margin_start(px(2))
-                col.pack_start(lab, False, False, 0)
-        btn.add(col)
+    btn.get_style_context().add_class("app-card")
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(16))
+    box.set_margin_start(px(20))
+    box.set_margin_end(px(28))
+    box.set_margin_top(px(14))
+    box.set_margin_bottom(px(14))
+    icon = ASSETS / "app-icons" / item.get("icon", "")
+    try:
+        pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(icon), px(64), px(64), True)
+        box.pack_start(Gtk.Image.new_from_pixbuf(pb), False, False, 0)
+    except (GLib.Error, TypeError):
+        box.pack_start(Gtk.Image.new_from_icon_name("applications-multimedia", Gtk.IconSize.DIALOG), False, False, 0)
+    box.pack_start(text_label(item.get("name", ""), "card-title"), False, False, 0)
+    btn.add(box)
     btn.set_margin_start(px(8))
     btn.set_margin_end(px(8))
     btn.set_margin_top(px(10))
@@ -522,6 +500,14 @@ def make_card(shell, item, kind, on_activate, on_focus):
     btn.connect("clicked", lambda *_: on_activate(item))
     btn.connect("focus-in-event", lambda *_: on_focus(item, btn) or False)
     return btn
+
+
+def placeholder(shell, kind):
+    """A still card-shaped glass placeholder while a row loads (no shimmer timer)."""
+    w, h = (shell.px(v) for v in CARD_DIMS.get(kind, CARD_DIMS["wide"]))
+    ph = chrome.PosterCard(shell, chrome.look(shell), {"name": ""}, kind, w, h)
+    ph.set_can_focus(False)
+    return ph
 
 
 class Rail(Gtk.Box):
@@ -534,11 +520,12 @@ class Rail(Gtk.Box):
         self.on_activate, self.on_focus = on_activate or (lambda i: None), on_focus or (lambda i, b: None)
         self.hide_empty, self.quiet, self.limit = hide_empty, quiet, limit
         self.on_ready = None
+        self.frost = None             # frost source for glass chips in this row (Details' art)
         self.cards, self.items, self.token, self.state = [], [], 0, "idle"
         self.set_no_show_all(True)
-        self.title_label = text_label(title, "rail-title") if title else None
+        self.title_label = chrome.RailTitle(shell, chrome.look(shell), title) if title else None
         if self.title_label:
-            self.title_label.set_margin_start(shell.px(8))
+            self.title_label.set_margin_top(shell.px(10))
             self.pack_start(self.title_label, False, False, 0)
         self.scroller = Gtk.ScrolledWindow()
         self.scroller.set_policy(Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER)
@@ -563,14 +550,10 @@ class Rail(Gtk.Box):
 
     def _skeleton(self):
         self._clear()
-        w, h = (self.shell.px(v) for v in CARD_DIMS.get(self.kind, CARD_DIMS["wide"]))
+        if self.kind not in CARD_DIMS or self.kind == "app":
+            return
         for _ in range(8):
-            s = skeleton(w, h + self.shell.px(46))
-            s.set_margin_start(self.shell.px(8))
-            s.set_margin_end(self.shell.px(8))
-            s.set_margin_top(self.shell.px(10))
-            s.set_margin_bottom(self.shell.px(10))
-            self.row.pack_start(s, False, False, 0)
+            self.row.pack_start(placeholder(self.shell, self.kind), False, False, 0)
         self.show_rail()
 
     def load(self, loader=None, skeleton_first=True):
@@ -612,21 +595,11 @@ class Rail(Gtk.Box):
     def _error(self, loader):
         had = any(c.has_focus() for c in self.cards)
         self._clear()
-        card = Gtk.Button()
-        card.set_relief(Gtk.ReliefStyle.NONE)
-        card.get_style_context().add_class("card")
-        card.get_style_context().add_class("err-card")
-        card.set_size_request(self.shell.px(520), self.shell.px(110))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(4))
-        box.pack_start(text_label("Couldn't load this row", "card-title"), False, False, 0)
-        box.pack_start(text_label("Check the internet connection, then press OK to retry", "card-sub"), False, False, 0)
-        box.set_margin_start(self.shell.px(24))
-        box.set_valign(Gtk.Align.CENTER)
-        card.add(box)
-        card.set_margin_start(self.shell.px(8))
-        card.set_margin_top(self.shell.px(10))
-        card.set_margin_bottom(self.shell.px(10))
-        card.connect("clicked", lambda *_: self.load(loader))
+        card = chrome.GlassButton(self.shell, self.frost, chrome.look(self.shell), "Couldn't load this row",
+                                  "retry", sub="Check the internet connection, then press OK to retry",
+                                  on_activate=lambda: self.load(loader))
+        card.set_margin_top(self.shell.px(14))
+        card.set_margin_bottom(self.shell.px(14))
         card.connect("focus-in-event", lambda *_: self.on_focus(None, card) or False)
         self.row.pack_start(card, False, False, 0)
         self.cards = [card]
@@ -649,7 +622,7 @@ class Rail(Gtk.Box):
                 self.show_rail()
         else:
             for item in items:
-                card = make_card(self.shell, item, self.kind, self.on_activate, self.on_focus)
+                card = make_card(self.shell, item, self.kind, self.on_activate, self.on_focus, self.frost)
                 self.row.pack_start(card, False, False, 0)
                 self.cards.append(card)
             self.show_rail()
@@ -683,6 +656,29 @@ class Screen(Gtk.Box):
         self.shell = shell
         self.get_style_context().add_class("page")
         self.last_focus = None
+        self.backdrop = None
+
+    def glass_page(self):
+        """Home's backdrop (blurred photo + still constellation, shared between screens) behind a content box.
+        -> the content box (vertical) to pack the screen into."""
+        self.look = chrome.look(self.shell)
+        self.get_style_context().add_class("glass-page")
+        base = Gtk.Overlay()
+        self.backdrop = chrome.SharedBackdrop(self.shell, self.look)
+        base.add(self.backdrop)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        base.add_overlay(content)
+        self.pack_start(base, True, True, 0)
+        return content
+
+    def title_band(self):
+        """Constellation keep-out for screens with text along the top (Search's field, Sources' title); one band
+        for both, so they share a cached backdrop."""
+        return [(0, self.shell.px(40), getattr(self.shell, "sw", 1920), self.shell.px(250))]
+
+    def snapshot(self):
+        if self.backdrop is not None:
+            self.backdrop.snapshot()
 
     def focus_groups(self):
         return []
@@ -711,35 +707,30 @@ class RailsScreen(Screen):
         self.hero_timer = 0
         self.hero_token = 0
         self.hero_h = max(shell.px(440), round(shell.sh * 0.45))
-        self.pack_start(self.make_hero(), False, False, 0)
+        content = self.glass_page()
+        content.pack_start(self.make_hero(), False, False, 0)
         self.vscroll = Gtk.ScrolledWindow()
         self.vscroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         self.vscroll.set_shadow_type(Gtk.ShadowType.NONE)
+        self.backdrop.avoid = self.avoid_rects
         self.rails_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=shell.px(6))
         self.rails_box.set_margin_start(shell.px(60))
         self.rails_box.set_margin_end(shell.px(60))
         self.rails_box.set_margin_bottom(shell.px(380))
         self.vscroll.add(self.rails_box)
-        self.pack_start(self.vscroll, True, True, 0)
+        content.pack_start(self.vscroll, True, True, 0)
 
     def make_hero(self):
         s, px = self.shell, self.shell.px
         ov = Gtk.Overlay()
         ov.set_size_request(s.sw, self.hero_h)
-        self.hero_img = Gtk.Image()
-        self.hero_img.set_size_request(s.sw, self.hero_h)
+        self.hero_img = chrome.ArtLayer(s, self.look, s.sw, self.hero_h, px(220), under=self.backdrop)
         ov.add(self.hero_img)
-        for cls, valign, size in (("hero-fade", Gtk.Align.FILL, -1), ("hero-bottom-fade", Gtk.Align.END, px(200))):
-            fade = Gtk.Box()
-            fade.get_style_context().add_class(cls)
-            fade.set_valign(valign)
-            fade.set_size_request(-1, size)
-            ov.add_overlay(fade)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
         body.set_valign(Gtk.Align.END)
         body.set_margin_start(px(76))
         body.set_margin_bottom(px(18))
-        self.h_kicker = text_label("", "hero-kicker")
+        self.h_kicker = chrome.Kicker(s, self.look)
         self.h_title = text_label("", "hero-title", wrap=True, lines=2)
         self.h_title.set_max_width_chars(30)
         self.h_info = text_label("", "hero-info")
@@ -749,6 +740,12 @@ class RailsScreen(Screen):
             body.pack_start(w, False, False, 0)
         ov.add_overlay(body)
         return ov
+
+    def avoid_rects(self):
+        """Keep the backdrop's constellation off the hero's text column (fixed, so the backdrop stays cached)."""
+        px, sw = self.shell.px, getattr(self.shell, "sw", 1920)
+        return [(0, px(150), px(1180), self.hero_h - px(150) + px(70)),     # the hero's text column
+                (round(sw * 0.45), 0, sw, self.hero_h - px(60))]           # under the opaque hero art
 
     def rail_ready(self, rail):
         """Until the user moves, keep focus on the first populated rail as rows load in."""
@@ -816,7 +813,7 @@ class RailsScreen(Screen):
 
         def done(pb):
             if tok == self.hero_token and pb is not None:
-                self.hero_img.set_from_pixbuf(pb)
+                self.hero_img.set_pixbuf(pb)
             return False
         load_art(url, self.shell.sw, self.hero_h, done)
         return False
@@ -833,6 +830,7 @@ class RailsScreen(Screen):
         self.vscroll.get_vadjustment().set_value(0)
 
     def on_enter(self, returning):
+        self.snapshot()
         for r in self.rails[:3]:
             r.start()
 
@@ -875,25 +873,32 @@ class SearchScreen(Screen):
         self.token = 0
         self.timer = 0
         self.scope = None
-        self.set_margin_top(px(130))
-        self.set_margin_start(px(68))
-        self.set_margin_end(px(68))
+        page = self.glass_page()
+        self.backdrop.avoid = self.title_band
+        page.set_margin_top(px(130))
+        page.set_margin_start(px(68))
+        page.set_margin_end(px(68))
         self.entry = Gtk.Entry()
         self.entry.set_placeholder_text("Search movies and series")
         self.entry.get_style_context().add_class("search-entry")
         self.entry.set_size_request(-1, px(76))
         self.entry.connect("changed", self.on_changed)
         self.entry.connect("activate", lambda *_: self.run())
-        self.pack_start(self.entry, False, False, 0)
+        self.field = glass.GlassField(shell, self.backdrop, self.look, self.entry)
+        self.field.set_margin_start(px(8))
+        self.field.set_margin_end(px(8))
+        page.pack_start(self.field, False, False, 0)
         self.chip = text_label("", "section-note")
         self.chip.set_halign(Gtk.Align.START)
         self.chip.set_margin_top(px(10))
         self.chip.set_no_show_all(True)
-        self.pack_start(self.chip, False, False, 0)
+        self.chip.set_margin_start(px(10))
+        page.pack_start(self.chip, False, False, 0)
         self.info = text_label("Type on your phone to search", "section-note")
         self.info.set_margin_top(px(14))
         self.info.set_margin_bottom(px(10))
-        self.pack_start(self.info, False, False, 0)
+        self.info.set_margin_start(px(10))
+        page.pack_start(self.info, False, False, 0)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
@@ -901,7 +906,7 @@ class SearchScreen(Screen):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(6))
         box.set_margin_bottom(px(200))
         scroll.add(box)
-        self.pack_start(scroll, True, True, 0)
+        page.pack_start(scroll, True, True, 0)
         self.movies = Rail(shell, "Movies", kind="poster", on_activate=shell.open_details, quiet=True)
         self.series = Rail(shell, "Series", kind="poster", on_activate=shell.open_details, quiet=True)
         self.counts = {}
@@ -915,6 +920,7 @@ class SearchScreen(Screen):
         return self.entry
 
     def on_enter(self, returning):
+        self.snapshot()
         self.entry.grab_focus()
 
     def set_query(self, text):
@@ -1016,15 +1022,13 @@ class DetailsScreen(Screen):
         self.backdrop_tok = 0
 
         ov = Gtk.Overlay()
-        self.backdrop = Gtk.Image()
-        self.backdrop.set_size_request(shell.sw, shell.sh)
-        ov.add(self.backdrop)
-        for cls, valign, size in (("hero-fade", Gtk.Align.FILL, -1), ("hero-bottom-fade", Gtk.Align.END, shell.sh // 2)):
-            f = Gtk.Box()
-            f.get_style_context().add_class(cls)
-            f.set_valign(valign)
-            f.set_size_request(-1, size)
-            ov.add_overlay(f)
+        self.glass_page().pack_start(ov, True, True, 0)
+        # lines only where the art has faded out: not behind the text column, not under the opaque art
+        self.backdrop.avoid = lambda: [(0, round(shell.sh * 0.42), px(1240), shell.sh),
+                                       (round(shell.sw * 0.45), 0, shell.sw, shell.sh)]
+        self.art = chrome.ArtLayer(shell, self.look, shell.sw, shell.sh, shell.sh // 2, under=self.backdrop,
+                                   left=(0.0, 0.28, 0.58))
+        ov.add(self.art)
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(10))
         col.set_valign(Gtk.Align.END)
         col.set_margin_start(px(76))
@@ -1042,15 +1046,13 @@ class DetailsScreen(Screen):
         col.pack_start(self.title, False, False, 0)
         col.pack_start(self.info, False, False, 0)
         col.pack_start(self.desc, False, False, px(4))
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(14))
-        actions.set_margin_top(px(10))
-        actions.set_margin_bottom(px(6))
-        self.play_btn = Gtk.Button(label="▶  Play")
-        self.play_btn.get_style_context().add_class("hero-primary")
-        self.play_btn.connect("clicked", lambda *_: self.play())
-        self.src_btn = Gtk.Button(label="☰  Sources")
-        self.src_btn.get_style_context().add_class("hero-secondary")
-        self.src_btn.connect("clicked", lambda *_: self.sources())
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(4))
+        actions.set_margin_top(px(2))
+        actions.set_margin_start(-px(14))           # the buttons' focus room; their glass lines up with the text
+        self.play_btn = chrome.GlassButton(shell, self.art, self.look, "Play", "play", primary=True,
+                                           on_activate=lambda: self.play())
+        self.src_btn = chrome.GlassButton(shell, self.art, self.look, "Sources", "list",
+                                          on_activate=lambda: self.sources())
         actions.pack_start(self.play_btn, False, False, 0)
         actions.pack_start(self.src_btn, False, False, 0)
         col.pack_start(actions, False, False, 0)
@@ -1058,10 +1060,12 @@ class DetailsScreen(Screen):
         self.season_rail = Rail(shell, None, kind="pill", on_activate=self.pick_season, quiet=True)
         self.ep_rail = Rail(shell, None, kind="episode", on_activate=self.play_episode,
                             on_focus=self.focus_episode, quiet=True, limit=500)
+        self.season_rail.frost = self.ep_rail.frost = self.art
+        self.season_rail.set_margin_start(-px(14))
+        self.ep_rail.set_margin_start(-px(14))
         col.pack_start(self.season_rail, False, False, 0)
         col.pack_start(self.ep_rail, False, False, 0)
         ov.add_overlay(col)
-        self.pack_start(ov, True, True, 0)
         self.render_basic()
         self.update_buttons()
         self.fetch()
@@ -1084,7 +1088,7 @@ class DetailsScreen(Screen):
 
         def done(pb):
             if tok == self.backdrop_tok and pb is not None:
-                self.backdrop.set_from_pixbuf(pb)
+                self.art.set_pixbuf(pb)
             return False
         load_art(url, self.shell.sw, self.shell.sh, done)
 
@@ -1208,9 +1212,9 @@ class DetailsScreen(Screen):
         ep = f" S{t['season']} E{t['episode']}" if "season" in t else ""
         res = self.resume()
         if res:
-            self.play_btn.set_label(f"▶  Resume{ep}  {fmt_time(res)}")
+            self.play_btn.set_label(f"Resume{ep}  ·  {fmt_time(res)}")
         else:
-            self.play_btn.set_label(f"▶  Play{ep}")
+            self.play_btn.set_label(f"Play{ep}")
 
     def refresh_history(self):
         self.entries = history_entries()
@@ -1250,6 +1254,7 @@ class DetailsScreen(Screen):
         return self.play_btn
 
     def on_enter(self, returning):
+        self.snapshot()
         if returning:
             self.refresh_history()
 
@@ -1261,44 +1266,65 @@ class SourcesScreen(Screen):
         super().__init__(shell)
         px = shell.px
         self.media, self.start, self.rows, self.token = media, start, [], 0
-        self.set_margin_start(px(120))
-        self.set_margin_end(px(120))
-        self.set_margin_top(px(70))
-        self.set_margin_bottom(px(50))
+        page = self.glass_page()
+        self.backdrop.avoid = self.title_band
+        page.set_margin_start(px(104))
+        page.set_margin_end(px(120))
+        page.set_margin_top(px(64))
+        page.set_margin_bottom(px(50))
         ep = f"  ·  S{media['season']} E{media['episode']}" if "season" in media else ""
-        self.pack_start(text_label("Choose a source", "rail-title"), False, False, 0)
-        self.pack_start(text_label((media.get("name") or "") + ep, "section-note"), False, False, 0)
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
+        head.set_margin_start(px(16))
+        head.pack_start(text_label("Choose a source", "set-title"), False, False, 0)
+        head.pack_start(text_label((media.get("name") or "") + ep, "set-note"), False, False, 0)
+        page.pack_start(head, False, False, 0)
+        status = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(8))
+        status.set_margin_top(px(26))
+        self.spinner = chrome.HexSpinner(shell, self.look)
+        self.spinner.set_no_show_all(True)
+        self.spinner.set_valign(Gtk.Align.CENTER)
+        status.pack_start(self.spinner, False, False, 0)
         self.stack_msg = text_label("", "empty-copy", wrap=True)
-        self.stack_msg.set_margin_top(px(30))
-        self.pack_start(self.stack_msg, False, False, 0)
-        self.retry = Gtk.Button(label="Try again")
-        self.retry.get_style_context().add_class("hero-secondary")
+        self.stack_msg.set_valign(Gtk.Align.CENTER)
+        self.stack_msg.set_margin_start(px(10))
+        status.pack_start(self.stack_msg, False, False, 0)
+        page.pack_start(status, False, False, 0)
+        self.retry = chrome.GlassButton(shell, self.backdrop, self.look, "Try again", "retry",
+                                        on_activate=lambda: self.load())
         self.retry.set_halign(Gtk.Align.START)
-        self.retry.set_margin_top(px(20))
+        self.retry.set_margin_top(px(12))
         self.retry.set_no_show_all(True)
-        self.retry.connect("clicked", lambda *_: self.load())
-        self.pack_start(self.retry, False, False, 0)
-        self.spinner = Gtk.Spinner()
-        self.spinner.set_size_request(px(56), px(56))
-        self.spinner.set_halign(Gtk.Align.START)
-        self.spinner.set_margin_top(px(20))
-        self.pack_start(self.spinner, False, False, 0)
+        page.pack_start(self.retry, False, False, 0)
+        self.panel = glass.GlassPanel(shell, self.backdrop, self.look, fade=px(28))
+        self.panel.set_no_show_all(True)
+        self.panel.set_valign(Gtk.Align.START)            # as tall as its rows, up to the screen's bottom
+        self.panel.set_margin_top(px(12))
         self.scroll = Gtk.ScrolledWindow()
         self.scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         self.scroll.set_shadow_type(Gtk.ShadowType.NONE)
-        self.scroll.set_margin_top(px(24))
-        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
+        self.scroll.set_margin_top(px(18))
+        self.scroll.set_margin_bottom(px(18))
+        self.scroll.set_margin_start(px(14))
+        self.scroll.set_margin_end(px(14))
+        self.scroll.set_propagate_natural_height(True)
+        self.scroll.set_max_content_height(getattr(shell, "sh", 1080) - px(330))
+        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.scroll.add(self.list)
-        self.pack_start(self.scroll, True, True, 0)
+        self.panel.pack_start(self.scroll, True, True, 0)
+        self.panel.watch(self.scroll)
+        page.pack_start(self.panel, False, False, 0)
         self.load()
+
+    def on_enter(self, returning):
+        self.snapshot()
 
     def load(self):
         self.token += 1
         tok = self.token
         self.retry.hide()
         self.stack_msg.set_text("Finding the best sources…")
+        self.stack_msg.show()
         self.spinner.show()
-        self.spinner.start()
         params = {k: v for k, v in self.media.items() if k in ("type", "id", "season", "episode")}
 
         def work():
@@ -1309,7 +1335,6 @@ class SourcesScreen(Screen):
     def done(self, tok, res):
         if tok != self.token:
             return False
-        self.spinner.stop()
         self.spinner.hide()
         sources = sources_from(res)
         for r in self.list.get_children():
@@ -1328,8 +1353,9 @@ class SourcesScreen(Screen):
             self.stack_msg.hide()
             px = self.shell.px
             for i, src in enumerate(sources):
-                self.add_row(src, i == 0, px)
-            self.list.show_all()
+                self.add_row(src, i == 0, px, last=i == len(sources) - 1)
+            self.panel.show()
+            self.scroll.show_all()
         self.shell.ensure_focus()
         if self.rows:
             self.rows[0].grab_focus()
@@ -1337,25 +1363,11 @@ class SourcesScreen(Screen):
             self.retry.grab_focus()
         return False
 
-    def add_row(self, src, best, px):
-        btn = Gtk.Button()
-        btn.set_relief(Gtk.ReliefStyle.NONE)
-        btn.get_style_context().add_class("src-row")
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(20))
-        badge = text_label("BEST" if best else "", "badge-best" if best else "badge-none")
-        badge.set_size_request(px(86), -1)
-        badge.set_valign(Gtk.Align.CENTER)
-        box.pack_start(badge, False, False, 0)
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(2))
-        col.pack_start(text_label(src.get("label") or src.get("title") or "Source", "src-label", ellipsize=True), False, False, 0)
-        langs = src.get("languages") or []
-        if langs:
-            col.pack_start(text_label(" · ".join(str(l) for l in langs), "card-sub", ellipsize=True), False, False, 0)
-        box.pack_start(col, True, True, 0)
-        btn.add(box)
-        btn.connect("clicked", lambda *_: self.choose(src))
-        self.list.pack_start(btn, False, False, 0)
-        self.rows.append(btn)
+    def add_row(self, src, best, px, last=False):
+        row = chrome.SourceRow(self.shell, self.look, src, best=best, first=not self.rows, last=last,
+                               on_activate=lambda: self.choose(src))
+        self.list.pack_start(row, False, False, 0)
+        self.rows.append(row)
 
     def choose(self, src):
         params = {k: v for k, v in self.media.items() if k in ("type", "id", "season", "episode")}
@@ -1380,73 +1392,76 @@ class SourcesScreen(Screen):
                 animate(adj, y + h - page + 10, 160)
 
 
+def buffering_lines(state):
+    """(kicker, title, status, meta) for the loading screen from an /api/state payload: 'Season 3 · Episode 9'
+    (or 'Getting ready'), the name, 'Connecting to peers · 12 peers · 2.4 MB/s' and the source's quality / size
+    as the quiet meta line."""
+    buf = state.get("buffering") or {}
+    media = state.get("media") or {}
+    name = media.get("name") or ""
+    kicker = "Getting ready"
+    if media.get("season") is not None:
+        kicker = f"Season {media['season']}  ·  Episode {media.get('episode')}"
+    stage = (buf.get("stage") or "Connecting…").rstrip(".…")
+    parts = [stage]
+    if buf.get("source") and any(buf.get(k) for k in ("peers", "speed", "downloaded")):
+        if buf.get("peers"):
+            parts.append(f"{int(buf['peers'])} peers")
+        parts.append(f"{(buf.get('speed') or 0) / 1_000_000:.1f} MB/s")
+        got = (buf.get("downloaded") or 0) / 1_000_000
+        if got >= 1:
+            parts.append(f"{got:.0f} MB ready")
+    meta = [p.strip() for p in str(buf.get("source") or "").split("·")]
+    meta = [p for p in meta if p and not p.endswith(" seeds")]
+    langs = media.get("languages") or []
+    meta += [str(x).upper() for x in langs if isinstance(x, str)]
+    return kicker, name or "Starting playback", "  ·  ".join(parts), "  ·  ".join(meta)
+
+
 class BufferingOverlay(Gtk.Box):
+    """The stream loading screen, shown from picking a source until mpv plays (chrome.LoadingView draws it)."""
+
     def __init__(self, shell):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=shell.px(14))
-        px = shell.px
+        super().__init__(orientation=Gtk.Orientation.VERTICAL)
+        self.shell = shell
         self.get_style_context().add_class("buffer-overlay")
         self.set_halign(Gtk.Align.FILL)
         self.set_valign(Gtk.Align.FILL)
         self.set_no_show_all(True)
-        self.spinner = Gtk.Spinner()
-        self.spinner.set_size_request(px(26), px(26))
-        self.spinner.set_valign(Gtk.Align.CENTER)
-        self.title = text_label("", "buffer-title", wrap=True)
-        self.source = text_label("", "buffer-line")
-        self.status = text_label("Connecting…", "buffer-status")
-        self.hint = text_label("Press Back to cancel", "buffer-line")
-        self.metrics = text_label("", "buffer-line")
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(22))
-        card.get_style_context().add_class("buffer-card")
-        card.set_halign(Gtk.Align.FILL)
-        card.set_margin_start(px(160))
-        card.set_margin_end(px(160))
-        mark = text_label("GETTING READY", "buffer-mark")
-        for label in (self.title, self.source, self.status, self.metrics):
-            label.set_max_width_chars(58)
-            label.set_line_wrap(True)
-        self.title.set_max_width_chars(32)
-        progress = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(18))
-        progress.set_margin_top(px(24))
-        progress.pack_start(self.spinner, False, False, 0)
-        progress.pack_start(self.status, False, False, 0)
-        self.hint.set_margin_top(px(54))
-        top, bottom = Gtk.Box(), Gtk.Box()
-        self.pack_start(top, True, True, 0)
-        for w in (mark, self.title, self.source, progress, self.metrics, self.hint):
-            card.pack_start(w, False, False, 0)
-        self.pack_start(card, False, False, 0)
-        self.pack_start(bottom, True, True, 0)
+        self.view = chrome.LoadingView(shell, chrome.look(shell))
+        self.pack_start(self.view, True, True, 0)
+        self.media_key = None
+        self.art_tok = 0
 
     def show_for(self, state):
-        buf = state.get("buffering") or {}
+        kicker, title, status, meta = buffering_lines(state)
+        self.view.set_text(title, status, meta, kicker)
         media = state.get("media") or {}
-        name = media.get("name") or ""
-        if media.get("season") is not None:
-            name += f"  ·  S{media['season']} E{media.get('episode')}"
-        self.title.set_text(name or "Starting playback")
-        self.source.set_text(buf.get("source") or "")
-        stage = buf.get("stage") or "Connecting…"
-        metrics = ""
-        if buf.get("source") and any(buf.get(k) for k in ('peers', 'speed', 'downloaded')):
-            speed = (buf.get("speed") or 0) / 1_000_000
-            got = (buf.get("downloaded") or 0) / 1_000_000
-            metrics = f"{speed:.1f} MB/s"
-            if buf.get('peers'):
-                metrics += f"  ·  {int(buf['peers'])} peers"
-            if got >= 1:
-                metrics += f"  ·  {got:.0f} MB ready"
-        self.status.set_text(stage)
-        self.metrics.set_text(metrics)
+        key = (media.get("type"), media.get("id"))
+        if key != self.media_key:
+            self.media_key = key
+            self.load_art(media)
         if not self.get_visible():
             self.show()
-            for c in self.get_children():
-                c.show_all()
-            self.spinner.start()
+            self.view.show()
+
+    def load_art(self, media):
+        self.art_tok += 1
+        tok = self.art_tok
+        self.view.clear_art()
+        sw, sh = getattr(self.shell, "sw", 1920), getattr(self.shell, "sh", 1080)
+        poster, art = poster_url(media) if media.get("id") or media.get("poster") else None, \
+            backdrop_url(media) if media.get("id") or media.get("background") else None
+        r = self.shell.px(205)
+        if poster:
+            load_art(poster, round(2 * r), round(3 * r),
+                     lambda pb: tok == self.art_tok and pb is not None and self.view.set_art(poster=pb) and False)
+        if art:
+            load_art(art, round(sw / 4), round(sh / 4),
+                     lambda pb: tok == self.art_tok and pb is not None and self.view.set_art(art=pb) and False)
 
     def hide_now(self):
         if self.get_visible():
-            self.spinner.stop()
             self.hide()
 
 

@@ -26,6 +26,7 @@ from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
+from widgets import chrome  # noqa: E402
 from theme import theme_css
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
 import display  # noqa: E402
@@ -158,6 +159,8 @@ class Home(Gtk.Window):
         self.header.set_valign(Gtk.Align.START)
         root.add_overlay(self.header)
         self.buffering = BufferingOverlay(self)
+        self.buffering.connect("map", lambda *_: self.covered(True))
+        self.buffering.connect("unmap", lambda *_: self.covered(False))
         root.add_overlay(self.buffering)
         self.toaster = Toast(self)
         root.add_overlay(self.toaster)
@@ -168,6 +171,13 @@ class Home(Gtk.Window):
         self.toaster.hide()
         self.push(self.top_screen("home"))
         GLib.timeout_add(500, self.tick)
+        fake = os.environ.get("IMACTV_FAKE_BUFFERING")      # test hook: show the loading screen with this state
+        if fake:
+            try:
+                self.fake_buffering = json.loads(fake)
+                GLib.timeout_add(1500, lambda: self.buffering.show_for(self.fake_buffering) and False)
+            except ValueError:
+                pass
 
     # ---- geometry / resolution
     def load_css(self):
@@ -175,8 +185,11 @@ class Home(Gtk.Window):
         if self.css:
             Gtk.StyleContext.remove_provider_for_screen(screen, self.css)
         self.css = Gtk.CssProvider()
-        self.css.load_from_data(build_css(self.scale, widgets.load_config(DATA)))
+        cfg = widgets.load_config(DATA)
+        self.css.load_from_data(build_css(self.scale, cfg))
         Gtk.StyleContext.add_provider_for_screen(screen, self.css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        if chrome.refresh_look(self, cfg):          # drawn pieces share one Look: repaint them in the new one
+            self.queue_draw()
 
     def target_size(self):
         """Size of the monitor we are (or will be) fullscreen on."""
@@ -250,6 +263,15 @@ class Home(Gtk.Window):
         self.fullscreen()                         # ask the WM to re-fit us to the new monitor size
         self.sync_trial()
 
+    def covered(self, on):
+        """The loading screen covers everything: unmap the screens and header under it, so its animation never
+        repaints them (and Home's own timers stop); bring them back, with focus, when it goes."""
+        self.stack.set_visible(not on)
+        cur = self.current()
+        self.header.set_visible(not on and bool(cur and cur.header))
+        if not on:
+            GLib.idle_add(self.focus_screen)
+
     def sync_trial(self):
         """Show / update / close the "Keep this resolution?" sheet from display.trial_state(); time it out."""
         if display.check_trial():
@@ -288,59 +310,40 @@ class Home(Gtk.Window):
 
     # ---- header
     def make_header(self):
+        """Home's language on the top bar: a light wordmark, tabs with a lit hexagon under the current one, a hex
+        signal glyph, the phone chip, a small light clock and a hex power button (all drawn by widgets.chrome)."""
+        look = chrome.look(self)
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(20))
         bar.get_style_context().add_class("header-bar")
-        bar.pack_start(text_label("IMAC TV", "brand"), False, False, 0)
-        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(18))
+        bar.pack_start(chrome.Wordmark(self, look), False, False, 0)
+        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(2))
         self.nav_buttons = {}
         for label, name in (("Home", "home"), ("Movies", "movies"), ("Series", "series"), ("Search", "search"),
                             ("Settings", "settings")):
-            b = Gtk.Button(label=label)
-            if name == 'settings':
-                image = Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_scale(
-                    str(screens.ASSETS / 'icons' / 'settings.svg'), self.px(26), self.px(26), True))
-                b.set_image(image)
-                b.set_always_show_image(True)
-            b.set_relief(Gtk.ReliefStyle.NONE)
-            b.get_style_context().add_class("nav-button")
-            b.connect("clicked", lambda _b, n=name: self.goto_top(n))
+            b = chrome.NavTab(self, look, label, "settings" if name == "settings" else None,
+                              on_activate=lambda n=name: self.goto_top(n))
             nav.pack_start(b, False, False, 0)
             self.nav_buttons[name] = b
         bar.pack_start(nav, False, False, self.px(16))
 
-        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(16))
+        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(18))
         right.set_valign(Gtk.Align.CENTER)
-        self.wifi_label = text_label("Connecting…", "conn-wifi")
+        self.wifi_label = chrome.NetLabel(self, look)
         right.pack_start(self.wifi_label, False, False, self.px(4))
-
-        self.conn_pill = Gtk.Button()
-        self.conn_pill.set_relief(Gtk.ReliefStyle.NONE)
-        self.conn_pill.get_style_context().add_class("conn-pill")
-        self.conn_pill.connect("clicked", lambda *_: self.show_pairing())
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(12))
-        icon = Gtk.Image.new_from_icon_name('phone-symbolic', Gtk.IconSize.LARGE_TOOLBAR)
-        icon.get_style_context().add_class('conn-status-icon')
-        content.pack_start(icon, False, False, 0)
-        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.px(2))
-        info.set_valign(Gtk.Align.CENTER)
-        self.ip_label = text_label("Connect phone", "conn-ip")
-        self.code_label = text_label("Scan to pair", "conn-code")
-        info.pack_start(self.ip_label, False, False, 0)
-        info.pack_start(self.code_label, False, False, 0)
-        content.pack_start(info, False, False, 0)
-        self.conn_pill.add(content)
+        self.conn_pill = chrome.PhoneChip(self, None, look, on_activate=lambda: self.show_pairing())
         right.pack_start(self.conn_pill, False, False, 0)
-
-        self.clock = text_label("", "header-note")
-        self.clock.set_valign(Gtk.Align.CENTER)
+        self.clock = chrome.HeaderClock(self, look)
         right.pack_start(self.clock, False, False, self.px(6))
-        self.power_btn = Gtk.Button(label="⏻")
-        self.power_btn.get_style_context().add_class("conn-btn")
-        self.power_btn.connect("clicked", lambda *_: self.confirm_off())
+        self.power_btn = chrome.PowerButton(self, None, look, on_activate=lambda: self.confirm_off())
         right.pack_start(self.power_btn, False, False, 0)
         bar.pack_end(right, False, False, 0)
         self.header_row = list(self.nav_buttons.values()) + [self.conn_pill, self.power_btn]
+        self.clock.set_now(datetime.datetime.now())
         return bar
+
+    def set_phone_lines(self, connected):
+        self.conn_pill.set_lines(*(("Phone connected", "Scan to pair another") if connected
+                                   else ("Connect phone", "Scan to pair")))
 
     # ---- screens / back stack
     def top_screen(self, name):
@@ -390,9 +393,8 @@ class Home(Gtk.Window):
     def activate(self, screen, returning):
         self.header.set_visible(screen.header)
         for name, b in self.nav_buttons.items():
-            ctx = b.get_style_context()
-            active = (name == "home" and len(self.back) == 1) or (len(self.back) > 1 and self.back[1].sname == name)
-            (ctx.add_class if active else ctx.remove_class)("nav-current")
+            b.set_current((name == "home" and len(self.back) == 1) or
+                          (len(self.back) > 1 and self.back[1].sname == name))
         screen.on_enter(returning)
         GLib.idle_add(self.focus_screen, screen)
 
@@ -665,27 +667,8 @@ class Home(Gtk.Window):
             fn()
         if self.sheet and self.sheet["refresh"]:
             self.sheet["refresh"]()
-        if net.get("type") == "wifi" and net.get("connected"):
-            ssid = net.get("ssid", "Wi-Fi")
-            self.wifi_label.set_text(f"{ssid[:14]}")
-            self.wifi_label.get_style_context().remove_class("conn-wifi-off")
-            self.wifi_label.get_style_context().add_class("conn-wifi")
-        elif net.get("type") == "ethernet" and net.get("connected"):
-            self.wifi_label.set_text("Ethernet")
-            self.wifi_label.get_style_context().remove_class("conn-wifi-off")
-            self.wifi_label.get_style_context().add_class("conn-wifi")
-        elif net.get("connected"):
-            self.wifi_label.set_text("Online")
-            self.wifi_label.get_style_context().remove_class("conn-wifi-off")
-            self.wifi_label.get_style_context().add_class("conn-wifi")
-        else:
-            self.wifi_label.set_text("Offline")
-            self.wifi_label.get_style_context().remove_class("conn-wifi")
-            self.wifi_label.get_style_context().add_class("conn-wifi-off")
-
-        self.ip_label.set_text("Phone connected" if remote_connected(self.remote, lambda: False) else "Connect phone")
-        self.code_label.set_text("Scan to pair another" if remote_connected(self.remote, lambda: False) else "Scan to pair")
-
+        self.wifi_label.set_net(net)
+        self.set_phone_lines(remote_connected(self.remote, lambda: False))
         return False
 
     # ---- state polling
@@ -697,9 +680,7 @@ class Home(Gtk.Window):
         """Presence controls pairing UI; only a newly paired device gets a connected toast."""
         was = None if self.remote is None else remote_connected(self.remote, lambda: False)
         self.remote = remote if isinstance(remote, dict) else None
-        connected = remote_connected(self.remote, lambda: False)
-        self.ip_label.set_text("Phone connected" if connected else "Connect phone")
-        self.code_label.set_text("Scan to pair another" if connected else "Scan to pair")
+        self.set_phone_lines(remote_connected(self.remote, lambda: False))
         now = remote_connected(self.remote, lambda: False)
         paired_at = (self.remote or {}).get("paired_at")
         newly_paired = False
@@ -793,7 +774,7 @@ class Home(Gtk.Window):
         if self.tick_n % 2 == 0:
             now = time.monotonic()
             if live:                    # screen off: no clock, no Wi-Fi label, /api/state every 30 s
-                self.clock.set_text(datetime.datetime.now().strftime("%a, %b %-d   %H:%M"))
+                self.clock.set_now(datetime.datetime.now())
                 if now - self.last_net_check >= 4:
                     self.last_net_check = now
                     self.trigger_network_refresh()

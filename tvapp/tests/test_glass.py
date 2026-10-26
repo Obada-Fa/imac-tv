@@ -171,6 +171,64 @@ class FocusTest(unittest.TestCase):
         self.assertEqual(hits, [1])
 
 
+class SignalTest(unittest.TestCase):
+    def test_hexagons_stand_on_the_baseline_and_show_the_level(self):
+        surf, cr = surface(120, 60)
+        width = glass.draw_signal(cr, "hexagon", 10, 40, 16, 2)
+        self.assertGreater(width, 30)
+        lit_first = pixel(surf, 14, 38)[3]                 # inside the first (lit) hexagon, just above the baseline
+        self.assertGreater(lit_first, 200)
+        self.assertEqual(pixel(surf, 14, 42)[3], 0)        # nothing hangs below the baseline
+        last = round(width - 6)                            # the last hexagon is unlit: faint glass
+        self.assertLess(pixel(surf, last, 32)[3], 120)
+        self.assertGreater(pixel(surf, last, 32)[3], 20)
+        self.assertEqual(glass.signal_level({"connected": True, "type": "wifi", "signal": 30}), 2)
+        self.assertEqual(glass.signal_level({"connected": False}), 0)
+
+
+class FadeTest(unittest.TestCase):
+    def test_bands_only_where_content_is_cut(self):
+        win = Gtk.Window()
+        self.addCleanup(win.destroy)
+        panel = glass.GlassPanel(FakeShell(), Solid(), glass.Look({"transparency": False}), fade=20)
+        win.add(panel)
+        win.set_default_size(300, 300)
+        win.show_all()
+        drain()
+        self.assertEqual([d for _y, d in panel.fade_bands()], [1, -1])     # no scroller: both edges
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
+        inner = Gtk.Box()
+        inner.set_size_request(-1, 1000)
+        scroll.add(inner)
+        panel.pack_start(scroll, True, True, 0)
+        panel.watch(scroll)
+        win.show_all()
+        drain()
+        self.assertEqual([d for _y, d in panel.fade_bands()], [-1])        # at the top: only the bottom is cut
+        scroll.get_vadjustment().set_value(200)
+        self.assertEqual([d for _y, d in panel.fade_bands()], [1, -1])
+        adj = scroll.get_vadjustment()
+        adj.set_value(adj.get_upper() - adj.get_page_size())
+        self.assertEqual([d for _y, d in panel.fade_bands()], [1])
+
+    def test_band_is_solid_at_the_edge(self):
+        win = Gtk.Window()
+        self.addCleanup(win.destroy)
+        panel = glass.GlassPanel(FakeShell(), Solid(), glass.Look({"transparency": False}), fade=20)
+        win.add(panel)
+        win.set_default_size(200, 200)
+        win.show_all()
+        drain()
+        surf, cr = surface(200, 200)
+        cr.set_source_rgb(1, 0, 0)                          # "content" the band must cover
+        cr.paint()
+        panel.on_draw_over(panel, cr)
+        self.assertEqual(pixel(surf, 100, 15)[0], pixel(surf, 100, 5)[0])   # solid glass for `fade` px
+        self.assertLess(pixel(surf, 100, 15)[0], 100)
+        self.assertEqual(pixel(surf, 100, 100), (255, 0, 0, 255))          # mid-panel untouched
+
+
 class BackdropTest(unittest.TestCase):
     def test_rendered_once_per_size(self):
         win = Gtk.Window()

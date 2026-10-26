@@ -11,7 +11,9 @@ API (all sizes are 1080p px; pass shell.px()-scaled values)
                                cached surface. It is also the frost SOURCE for every piece below (it quacks like
                                Home's PhotoCanvas: blur_layers(), blur_k, transparency), so redraws of a small
                                region always line up with what is behind it.
-  GlassPanel(shell, src, look) Gtk.Box that paints a frosted tile (tile_shape) behind its children
+  GlassPanel(shell, src, look, fade=0, scroller=None)
+                               Gtk.Box that paints a frosted tile (tile_shape) behind its children; fade = px of
+                               solid-then-fading glass over content cut at the panel's (or scroller's) edges
   GlassField(shell, src, look, child)
                                glass well around an entry; hairline brightens while the child has focus
   draw_badge(cr, base, widget, src, look, r, glyph, tint, f, lit)
@@ -20,7 +22,7 @@ API (all sizes are 1080p px; pass shell.px()-scaled values)
                                hex toggle: filled tint = on, hairline outline = off
   draw_check(cr, shape, cx, cy, r, tint)   small filled hexagon with a check (the "selected" mark)
   glyph(cr, name, cx, cy, s)   line icons: appearance ambient display playback connections system check phone
-  draw_signal(cr, shape, x, y, s, level)   four rising small hexagons, `level` 0..4 lit
+  draw_signal(cr, shape, x, y, s, level)   four rising small hexagons on baseline y, `level` 0..4 lit
   draw_links(cr, pts, scale, alpha)        constellation lines + dust diamonds for [(x, y)]
   Focusable(shell, src, look)  base DrawingArea: OK/Enter/space activate, focus easing at <= 15 fps (only while
                                it moves), sel_key, Home's focus (scale, 22% -> 90% hairline, glow)
@@ -237,20 +239,24 @@ def draw_check(cr, shape, cx, cy, r, tint=None):
 
 
 def draw_signal(cr, shape, x, y, s, level):
-    """Four small hexagons rising left to right from baseline y; `level` of them are filled."""
+    """Four small glass hexagons rising left to right, standing on baseline y; s = height of the tallest. The
+    first `level` are lit, the rest are faint glass. -> the glyph's width."""
+    flat = 0.924 if shape == "octagon" else 0.866          # centre-to-flat-bottom, in radii
+    gap = max(2.0, s * 0.24)
     cr.save()
+    cr.set_line_join(cairo.LINE_JOIN_ROUND)
     for i in range(4):
-        r = s * (0.22 + 0.09 * i)
-        cx, cy = x + s * 0.32 + i * s * 0.62, y - r
+        r = s / (2 * flat) * (0.58 + 0.42 * i / 3)
+        cx, cy = x + r, y - r * flat
         poly_path(cr, poly_points(shape, r, cx, cy))
-        if i < level:
-            cr.set_source_rgba(1, 1, 1, 0.85)
-            cr.fill()
-        else:
-            cr.set_source_rgba(1, 1, 1, 0.4)
-            cr.set_line_width(1)
-            cr.stroke()
+        cr.set_source_rgba(1, 1, 1, 0.9 if i < level else 0.2)
+        cr.fill_preserve()
+        cr.set_source_rgba(1, 1, 1, 0.95 if i < level else 0.42)
+        cr.set_line_width(1)
+        cr.stroke()
+        x += 2 * r + gap
     cr.restore()
+    return x - gap
 
 
 def signal_level(net):
@@ -519,14 +525,24 @@ def paint_panel(cr, widget, src, look, w, h, s, dim=0.22, tint=0.07, hair=0.22, 
 class GlassPanel(Gtk.Box):
     """A box painting a frosted tile behind its children. dim=None follows the source's panel_dim()."""
 
-    def __init__(self, shell, src, look, dim=None, fade=0, **kw):
+    def __init__(self, shell, src, look, dim=None, fade=0, scroller=None, **kw):
         kw.setdefault("orientation", Gtk.Orientation.VERTICAL)
         super().__init__(**kw)
         self.shell, self.src, self.look, self.dim, self.fade = shell, src, look, dim, fade
+        self.scroller = None
         self.set_has_window(False)
         self.connect("draw", self.on_draw)
         if fade:
             self.connect_after("draw", self.on_draw_over)
+        if scroller is not None:
+            self.watch(scroller)
+
+    def watch(self, scroller):
+        """Fade at `scroller`'s edges instead of the panel's, and only on a side where content is cut off."""
+        self.scroller = scroller
+        adj = scroller.get_vadjustment()
+        for sig in ("value-changed", "changed"):
+            adj.connect(sig, lambda *_: self.queue_draw())
 
     def panel_dim(self):
         return self.dim if self.dim is not None else getattr(self.src, "panel_dim", lambda: 0.22)()
@@ -537,22 +553,43 @@ class GlassPanel(Gtk.Box):
                         scale_of(self.shell), dim=self.panel_dim())
         return False
 
+    def fade_bands(self):
+        """[(y_edge, direction)] of the edges to fade: direction +1 = content continues above (fade downward
+        from a top edge), -1 = continues below. Without a scroller: both panel edges, always."""
+        h = self.get_allocated_height()
+        sc = self.scroller
+        if sc is None:
+            return [(0, 1), (h, -1)]
+        pos = sc.translate_coordinates(self, 0, 0)
+        if not pos:
+            return []
+        adj = sc.get_vadjustment()
+        top, bottom = pos[1], pos[1] + sc.get_allocated_height()
+        out = []
+        if adj.get_value() > 0.5:
+            out.append((top, 1))
+        if adj.get_value() + adj.get_page_size() < adj.get_upper() - 0.5:
+            out.append((bottom, -1))
+        return out
+
     def on_draw_over(self, _w, cr):
-        """fade = px: repaint the glass over the children near the top and bottom edges, fading out, so scrolled
-        content melts into the panel instead of being cut."""
+        """fade = px: repaint the glass over the children at the edges where content is cut: fully opaque for
+        `fade` px (anything sliced by the edge disappears, never a half letter), then fading out over `fade` px
+        more, so the rest melts into the glass."""
         if cairo is None:
             return False
         w, h, f = self.get_allocated_width(), self.get_allocated_height(), self.fade
-        g = cairo.LinearGradient(0, 0, 0, h)
-        k = min(0.45, f / max(1, h))
-        g.add_color_stop_rgba(0, 0, 0, 0, 1)
-        g.add_color_stop_rgba(k, 0, 0, 0, 0)
-        g.add_color_stop_rgba(1 - k, 0, 0, 0, 0)
-        g.add_color_stop_rgba(1, 0, 0, 0, 1)
-        cr.rectangle(0, 0, w, f)                  # only the two bands: rows redrawn mid-panel cost nothing extra
-        cr.rectangle(0, h - f, w, f)
-        cr.clip()
-        paint_panel(cr, self, self.src, self.look, w, h, scale_of(self.shell), dim=self.panel_dim(), mask=g)
+        for edge, d in self.fade_bands():
+            y0, y1 = (edge, edge + 2 * f) if d > 0 else (edge - 2 * f, edge)
+            g = cairo.LinearGradient(0, edge, 0, edge + d * 2 * f)
+            g.add_color_stop_rgba(0, 0, 0, 0, 1)
+            g.add_color_stop_rgba(0.5, 0, 0, 0, 1)
+            g.add_color_stop_rgba(1, 0, 0, 0, 0)
+            cr.save()
+            cr.rectangle(0, y0, w, y1 - y0)       # only the band: rows redrawn mid-panel cost nothing extra
+            cr.clip()
+            paint_panel(cr, self, self.src, self.look, w, h, scale_of(self.shell), dim=self.panel_dim(), mask=g)
+            cr.restore()
         return False
 
 
@@ -925,9 +962,12 @@ class SignalLine(Gtk.DrawingArea):
     def on_draw(self, _w, cr):
         p = self.shell.px
         w, h = self.get_allocated_width(), self.get_allocated_height()
-        draw_signal(cr, self.look.node_shape, 0, h / 2 + p(11), p(24), signal_level(self.net))
-        self.text.draw(cr, self.line(), p(20), Pango.Weight.NORMAL, p(70), h / 2 - p(13), w - p(70),
-                       (1, 1, 1, 0.72))
+        tx = p(92)
+        lay = self.text.layout(self.line(), p(20), Pango.Weight.NORMAL, w - tx)
+        ty = (h - lay.get_pixel_size()[1]) / 2
+        base = ty + lay.get_baseline() / Pango.SCALE           # the glyph stands on the text's baseline
+        draw_signal(cr, self.look.node_shape, 0, base, p(18), signal_level(self.net))
+        self.text.draw(cr, self.line(), p(20), Pango.Weight.NORMAL, tx, ty, w - tx, (1, 1, 1, 0.72))
         return False
 
 

@@ -180,31 +180,30 @@ class SettingsScreen(Screen):
         layout.pack_start(rail, False, False, 0)
         self.rail_box = rail
         self.backdrop.avoid = self.avoid_rects
-        panel = glass.GlassPanel(shell, self.backdrop, self.look, fade=px(30))
+        panel = glass.GlassPanel(shell, self.backdrop, self.look, fade=px(32))   # >= the tallest scrolled text line
         self.panel = panel
         layout.pack_start(panel, True, True, 0)
-        scroll = Gtk.ScrolledWindow()           # the title scrolls with the rows: the only cut is the panel's edge
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(6))     # stays put; only rows scroll
+        head.set_margin_top(px(34))
+        head.set_margin_start(px(66))
+        head.set_margin_end(px(66))
+        self.title = text_label(self.category, 'set-output')
+        self.subtitle = text_label("", "set-note", wrap=True)
+        head.pack_start(self.title, False, False, 0)
+        head.pack_start(self.subtitle, False, False, 0)
+        panel.pack_start(head, False, False, 0)
+        scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
         scroll.set_margin_start(px(20))
         scroll.set_margin_end(px(20))
-        scroll.set_margin_top(px(2))
-        scroll.set_margin_bottom(px(2))
+        scroll.set_margin_bottom(px(10))
         self.scroll = scroll
         self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.body.set_margin_bottom(px(40))
         scroll.add(self.body)
         panel.pack_start(scroll, True, True, 0)
-        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(6))
-        head.set_margin_top(px(34))
-        head.set_margin_start(px(46))
-        head.set_margin_end(px(46))
-        head.set_margin_bottom(px(2))
-        self.title = text_label(self.category, 'set-output')
-        self.subtitle = text_label("", "set-note", wrap=True)
-        head.pack_start(self.title, False, False, 0)
-        head.pack_start(self.subtitle, False, False, 0)
-        self.body.pack_start(head, False, False, 0)
+        panel.watch(scroll)
         self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.body.pack_start(self.content, False, False, 0)
         if hasattr(shell, 'pair_listeners'):
