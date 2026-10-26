@@ -26,7 +26,7 @@ from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
-from widgets import chrome  # noqa: E402
+from widgets import chrome, glass  # noqa: E402
 from theme import theme_css
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
 import display  # noqa: E402
@@ -165,6 +165,9 @@ class Home(Gtk.Window):
         self.toaster = Toast(self)
         root.add_overlay(self.toaster)
 
+        # mouse / the phone's Pointer mode: clicks and hover reach the drawn (windowless) controls by hit test
+        self.pointer = glass.Pointer(self, root=self.pointer_root, on_click=self.pointer_clicked,
+                                     on_hover=lambda w: self.pointer_moved())
         self.trigger_network_refresh()
         self.show_all()
         self.buffering.hide()
@@ -262,6 +265,24 @@ class Home(Gtk.Window):
         self.resize(w, h)
         self.fullscreen()                         # ask the WM to re-fit us to the new monitor size
         self.sync_trial()
+
+    def pointer_root(self):
+        """Where pointer clicks can land: an open sheet only; nothing under the loading screen."""
+        if self.buffering.get_visible():
+            return None
+        return self.sheet["widget"] if self.sheet else self.root
+
+    def pointer_moved(self):
+        screen = self.current()
+        if hasattr(screen, "auto_focus"):
+            screen.auto_focus = False
+
+    def pointer_clicked(self, widget):
+        """A click moved focus to `widget`: bring it into view as arrow keys would, before it is activated."""
+        self.pointer_moved()
+        screen = self.current()
+        if screen and not self.sheet and widget.is_ancestor(screen):
+            screen.reveal(widget)
 
     def covered(self, on):
         """The loading screen covers everything: unmap the screens and header under it, so its animation never

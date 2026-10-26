@@ -32,6 +32,14 @@ API (all sizes are 1080p px; pass shell.px()-scaled values)
   SectionLabel(shell, text)    small letter-spaced caps behind a tiny hexagon marker
   SignalLine(shell, net)       hex signal glyph + quiet "name · ip" text
 
+  Pointer(window, root=None, on_click=None, hover=True)
+                               mouse / phone-pointer support for every Focusable under `window`, without input
+                               windows: one press + motion handler on the toplevel hit-tests the drawn controls
+                               under the pointer (pruned by allocation). A click focuses the control and runs
+                               exactly what OK does (press()); hovering focuses it (throttled, no redraw storm).
+  pick(root, x, y)             the topmost mapped, sensitive Focusable under toplevel point (x, y), or None
+  Focusable.hit(x, y)          pointer hit test in widget coordinates (default: inside the allocation)
+
 Calm cost is zero: nothing here owns a timer except the shared focus ticker, which runs only while some
 widget is still easing toward its focus state and stops by itself."""
 import math
@@ -705,6 +713,10 @@ class Focusable(Gtk.DrawingArea):
         if self.is_sensitive():
             self.on_activate()
 
+    def hit(self, x, y):
+        """Whether widget point (x, y) is on this control, for Pointer clicks and hover."""
+        return 0 <= x < self.get_allocated_width() and 0 <= y < self.get_allocated_height()
+
     def set_sensitive(self, on):
         Gtk.DrawingArea.set_sensitive(self, on)
         self.queue_draw()
@@ -1007,4 +1019,100 @@ class RailLinks(Gtk.Box):
             cr.set_source_rgba(1, 1, 1, 0.55 if (a or b) else 0.24)
             cr.set_line_width(max(1.2, 1.3 * s) * (1.5 if (a or b) else 1))
             cr.stroke()
+        return False
+
+
+# ---------------------------------------------------------------- pointer (mouse, the phone's Pointer mode)
+
+def pick(root, x, y):
+    """The topmost mapped, sensitive, focusable Focusable under point (x, y) of root's toplevel, or None.
+    Descends only into children whose allocation holds the point (scrolled-out cards, hidden stack pages and
+    unmapped overlays are skipped), so a pick visits a few dozen widgets at most."""
+    top = root.get_toplevel()
+    best = None
+
+    def visit(w):
+        nonlocal best
+        if not w.get_mapped():
+            return
+        pos = w.translate_coordinates(top, 0, 0)
+        if not pos:
+            return
+        lx, ly = x - pos[0], y - pos[1]
+        if not (0 <= lx < w.get_allocated_width() and 0 <= ly < w.get_allocated_height()):
+            return
+        if isinstance(w, Focusable):
+            if w.get_can_focus() and w.is_sensitive() and w.hit(lx, ly):
+                best = w                      # later in drawing order = on top
+            return
+        if isinstance(w, Gtk.Container):
+            for c in w.get_children():
+                visit(c)
+    visit(root)
+    return best
+
+
+class Pointer:
+    """Mouse support for the drawn controls under a toplevel window, the cheap way Home's rows do it: event
+    masks on the window and a hit test, no input window per control. root() -> the widget to search (e.g. an
+    open sheet only); on_click(widget) runs after focus moved and before press() (the shell reveals it there).
+    hover=True focuses what the pointer rests on, at most every HOVER_MS, and only when that changes."""
+    HOVER_MS = 60
+
+    def __init__(self, window, root=None, on_click=None, hover=True, on_hover=None):
+        self.window = window
+        self.root = root or (lambda: window)
+        self.on_click, self.on_hover = on_click, on_hover
+        self.hover = hover
+        self.pending = None
+        self.timer = 0
+        self.hovered = None
+        window.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.POINTER_MOTION_MASK)
+        window.connect("button-press-event", self.on_press)
+        window.connect("motion-notify-event", self.on_motion)
+
+    def at(self, x_root, y_root):
+        """The control under a screen point (events arrive on whichever GdkWindow selected them, so go by root
+        coordinates and the toplevel's origin)."""
+        gw, root = self.window.get_window(), self.root()
+        if gw is None or root is None:
+            return None
+        org = gw.get_origin()                      # (result, x, y)
+        return pick(root, x_root - org[-2], y_root - org[-1])
+
+    def on_press(self, _w, ev):
+        if ev.type != Gdk.EventType.BUTTON_PRESS or ev.button != 1:
+            return False
+        w = self.at(ev.x_root, ev.y_root)
+        if w is None:
+            return False
+        self.click(w)
+        return True
+
+    def click(self, w):
+        """Exactly what OK on the control does, after moving focus to it."""
+        w.grab_focus()
+        if self.on_click:
+            self.on_click(w)
+        w.press()
+
+    def on_motion(self, _w, ev):
+        if not self.hover:
+            return False
+        self.pending = (ev.x_root, ev.y_root)
+        if not self.timer:
+            self.timer = GLib.timeout_add(self.HOVER_MS, self.hover_now)
+        return False
+
+    def hover_now(self):
+        self.timer = 0
+        if self.pending is None:
+            return False
+        w = self.at(*self.pending)
+        self.pending = None
+        if w is not None and w is not self.hovered and not w.has_focus():
+            w.grab_focus()
+            if self.on_hover:
+                self.on_hover(w)
+        self.hovered = w
         return False
