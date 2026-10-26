@@ -1,102 +1,122 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<meta name="theme-color" content="#11151c"><meta name="apple-mobile-web-app-capable" content="yes">
-<title>iMac TV Remote</title><link rel="stylesheet" href="/app.css" defer><script src="/app.js" defer></script></head>
+<meta name="theme-color" content="#0b111d"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>iMac TV Remote</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
 <body>
+<canvas id="sky" class="sky" aria-hidden="true"></canvas>
+<svg class="defs" aria-hidden="true" focusable="false" width="0" height="0">
+  <defs>
+    <radialGradient id="g-idle" cx="30%" cy="25%" r="85%"><stop offset="0" stop-color="#9eccff" stop-opacity=".2"/><stop offset="1" stop-color="#9eccff" stop-opacity=".035"/></radialGradient>
+    <radialGradient id="g-lit" cx="30%" cy="25%" r="85%"><stop offset="0" stop-color="#9eccff" stop-opacity=".46"/><stop offset="1" stop-color="#9eccff" stop-opacity=".12"/></radialGradient>
+    <radialGradient id="g-press" cx="30%" cy="25%" r="85%"><stop offset="0" stop-color="#b9dbff" stop-opacity=".55"/><stop offset="1" stop-color="#9eccff" stop-opacity=".2"/></radialGradient>
+  </defs>
+</svg>
 <div id="message" class="toast" role="alert" hidden></div>
 <div id="connection" class="connection" role="status" aria-label="Connecting" title="Connecting…"></div>
 <main id="remote" class="shell" hidden>
-  <header class="remote-heading"><div><small>IMAC TV</small><h1>Remote</h1></div><span>Make yourself comfortable.</span></header>
+  <header class="masthead home-head">
+    <div class="mast-text"><small class="eyebrow">IMAC TV</small><h1 id="clock" class="clock">--:--</h1><p id="remote-meta" class="meta">Connecting…</p></div>
+    <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home" type="button">Home</button><button data-app="youtube" type="button">YouTube</button></nav>
+  </header>
   <div id="notice" class="notice" role="status" hidden></div>
-  <div id="yt" class="yt" hidden>
+  <div id="yt" class="yt glass" hidden>
     <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
     <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>
-    <div class="yt-ctl"><button id="yt-prev" type="button" data-yt="previous" aria-label="Previous">⏮</button><button id="yt-back" type="button" class="sk" aria-label="Back 10 seconds">−10</button><button id="yt-play" type="button" data-yt="play_pause" aria-label="Play or pause">⏯</button><button id="yt-fwd" type="button" class="sk" aria-label="Forward 10 seconds">+10</button><button id="yt-next" type="button" data-yt="next" aria-label="Next">⏭</button></div>
+    <div class="yt-ctl"><button id="yt-prev" type="button" class="hb" data-yt="previous" aria-label="Previous"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M18 6l-8 6 8 6z"/></svg></button><button id="yt-back" type="button" class="hb sk" aria-label="Back 10 seconds">−10</button><button id="yt-play" type="button" class="hb lit" data-yt="play_pause" aria-label="Play or pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg></button><button id="yt-fwd" type="button" class="hb sk" aria-label="Forward 10 seconds">+10</button><button id="yt-next" type="button" class="hb" data-yt="next" aria-label="Next"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M6 6l8 6-8 6z"/></svg></button></div>
     <button id="yt-show" type="button" class="yt-show" hidden>Open</button>
     <button id="yt-mode" type="button" class="yt-mode" hidden aria-label="Choose how the TV shows this YouTube channel"></button>
   </div>
-  <button id="viz-next" type="button" class="viz-next" hidden aria-label="Next visualizer effect">✨ Next effect<small id="viz-mode"></small></button>
-  <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home">⌂ Home</button><button data-app="youtube">▶ YouTube</button></nav>
+  <button id="viz-next" type="button" class="viz-next" hidden aria-label="Next visualizer effect"><i class="mk" aria-hidden="true"></i>Next effect<small id="viz-mode"></small></button>
   <div class="topbar">
-    <div class="brightness">
-      <button id="screen-off" type="button" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-          <rect x="2.5" y="4" width="19" height="12.5" rx="2.4"/>
-          <path d="M8.5 20.5h7M12 16.5v4"/>
-          <g class="power"><path d="M12 6.8v3.4"/><path d="M9.3 5.6a4.2 4.2 0 0 1 5.4 0"/></g>
-          <path class="slash" d="M3.8 20.2 20.2 3.8"/>
+    <div class="brightness glass">
+      <button id="screen-off" type="button" class="hb" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="3" y="5" width="18" height="11.5" rx="2"/>
+          <path d="M9 20h6M12 16.5V20"/>
+          <g class="power"><path d="M12 7.6v3"/><path d="M9.6 8.6a3.4 3.4 0 1 0 4.8 0"/></g>
+          <path class="slash" d="M4 20.5 20 4"/>
         </svg>
       </button>
       <input id="brightness" type="range" min="5" max="100" step="5" value="100" aria-label="TV screen brightness">
       <span id="brightness-level">100%</span>
     </div>
-    <button id="fullscreen" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen">⛶<span>Full</span></button>
+    <button id="fullscreen" type="button" class="hb" data-action="fullscreen" aria-pressed="false" aria-label="Toggle TV fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
   </div>
   <section id="controls" class="controls" aria-label="Remote controls" data-view="browse">
-    <div id="buffer" class="card buffer" hidden>
+    <div id="buffer" class="card glass buffer" hidden>
       <div class="spinner" aria-hidden="true"></div>
+      <small class="eyebrow">STARTING</small>
       <h2 id="buf-name">Starting…</h2>
-      <p id="buf-source"></p>
-      <p id="buf-stats" class="muted"></p>
-      <button id="buf-cancel" data-action="back" class="wide">Cancel</button>
+      <p id="buf-source" class="meta"></p>
+      <p id="buf-stats" class="meta"></p>
+      <button id="buf-cancel" type="button" data-action="back" class="wide">Cancel</button>
     </div>
-    <div id="nowplaying" class="card np" hidden>
-      <div class="np-head"><img id="np-poster" alt="" hidden><div class="np-titles"><h2 id="np-title">Video</h2><p id="np-sub" class="muted" hidden></p></div></div>
+    <div id="nowplaying" class="card glass np" hidden>
+      <div class="np-head"><img id="np-poster" alt="" hidden><div class="np-titles"><small class="eyebrow">NOW PLAYING</small><h2 id="np-title">Video</h2><p id="np-sub" class="meta" hidden></p></div></div>
       <button id="np-skip" class="skipbtn" type="button" hidden>Skip intro</button>
       <div id="np-upnext" class="prompt" hidden><div class="ptext"><small>UP NEXT · <span id="un-sec">10</span> s</small><b id="un-title">Next episode</b></div><div class="prow"><button id="un-play" type="button" class="go">Play now</button><button id="un-cancel" type="button">Cancel</button></div></div>
       <div id="np-still" class="prompt" hidden><div class="ptext"><small>NO INPUT FOR A WHILE · <span id="st-sec">60</span> s</small><b>Are you still watching?</b></div><div class="prow"><button id="st-continue" type="button" class="go">Continue</button><button id="st-stop" type="button">Stop</button></div></div>
       <div class="timeline"><span id="position">0:00</span><input id="seek" type="range" min="0" value="0" aria-label="Playback position"><span id="duration">-0:00</span></div>
       <div class="skip">
-        <button data-skip="-60" class="sm" aria-label="Back 60 seconds">−60</button><button data-skip="-10" aria-label="Back 10 seconds">−10</button>
-        <button id="np-play" data-action="play" class="big" aria-label="Play or pause">⏯</button>
-        <button data-skip="10" aria-label="Forward 10 seconds">+10</button><button data-skip="60" class="sm" aria-label="Forward 60 seconds">+60</button>
+        <button data-skip="-60" type="button" class="hb sm" aria-label="Back 60 seconds">−60</button><button data-skip="-10" type="button" class="hb" aria-label="Back 10 seconds">−10</button>
+        <button id="np-play" data-action="play" type="button" class="hb lit big" aria-label="Play or pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg></button>
+        <button data-skip="10" type="button" class="hb" aria-label="Forward 10 seconds">+10</button><button data-skip="60" type="button" class="hb sm" aria-label="Forward 60 seconds">+60</button>
       </div>
-      <button id="np-next" class="nextbtn" hidden><span>Next episode</span><b id="np-next-label">S01E02</b><span aria-hidden="true">▶|</span></button>
-      <div class="npvol"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="np-volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
+      <button id="np-next" type="button" class="nextbtn" hidden><span>Next episode</span><b id="np-next-label">S01E02</b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M6 6l8 6-8 6z"/></svg></button>
       <div class="pickers"><button id="pick-sub" type="button"><small>SUBTITLES</small><b id="pick-sub-label">Off</b></button><button id="pick-audio" type="button" hidden><small>AUDIO</small><b id="pick-audio-label">—</b></button></div>
-      <button data-action="back" class="wide stop">■ Stop · back to details</button>
+      <div class="npvol"><button data-action="volume" data-direction="-1" type="button" class="hb" aria-label="Volume down">−</button><button data-action="mute" id="np-volume-label" type="button" class="vol-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" type="button" class="hb" aria-label="Volume up">+</button></div>
+      <button data-action="back" type="button" class="wide stop">Stop · back to details</button>
     </div>
     <div id="browse" class="browse">
-      <div id="dpad" class="dpad">
-        <button data-action="up" class="up" aria-label="Up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button>
-        <button data-action="left" class="left" aria-label="Left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 7-5 5 5 5"/></svg></button>
-        <button data-action="ok" class="ok" aria-label="Select">OK</button>
-        <button data-action="right" class="right" aria-label="Right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 7 5 5-5 5"/></svg></button>
-        <button data-action="down" class="down" aria-label="Down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
+      <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" class="hb" aria-label="Backspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11v12H9l-5-6zM12 10l4 4M16 10l-4 4"/></svg></button></form>
+      <div id="hive" class="hive">
+        <svg id="hive-links" class="hive-links" aria-hidden="true" focusable="false"></svg>
+        <div id="dpad" class="dpad">
+          <button data-action="up" type="button" class="cell seg" aria-label="Up"></button>
+          <button data-action="left" type="button" class="cell seg" aria-label="Left"></button>
+          <button data-action="right" type="button" class="cell seg" aria-label="Right"></button>
+          <button data-action="down" type="button" class="cell seg" aria-label="Down"></button>
+          <button data-action="ok" type="button" class="cell ok" aria-label="Select"></button>
+        </div>
+        <div id="pad" class="pad" hidden><svg class="pad-face" aria-hidden="true" focusable="false"></svg><span>Move your finger to point</span><small>Tap to click · hold for right click · two fingers scroll</small></div>
+        <button data-action="back" type="button" class="cell sat" aria-label="Back"></button>
+        <button data-action="home" type="button" class="cell sat" aria-label="Home"></button>
+        <button id="search-open" type="button" class="cell sat" aria-label="Type on TV"><span class="sr">Type on TV</span></button>
+        <button id="more-open" type="button" class="cell sat" aria-label="Quick actions"></button>
       </div>
-      <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click · Two fingers to scroll</small></div>
-      <div class="transport"><button data-action="back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h12a6 6 0 0 1 6 6"/></svg><span>Back</span></button><button data-action="home" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/></svg><span>Home</span></button><button id="search-open" class="accent" aria-label="Type on TV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v14H3zM7 9h.01M11 9h.01M15 9h.01M18 9h.01M7 13h.01M11 13h.01M15 13h.01M7 16h10"/></svg><span>Type on TV</span></button></div>
-      <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" aria-label="Backspace">⌫</button></form>
     </div>
-    <div class="volume"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
+    <div class="volume"><button data-action="volume" data-direction="-1" type="button" class="hb" aria-label="Volume down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10"/></svg></button><button data-action="mute" id="volume-label" type="button" class="vol-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" type="button" class="hb" aria-label="Volume up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10M12 7v10"/></svg></button></div>
   </section>
-  <footer id="foot"><button id="mode" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open">Type</button><button id="settings-open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m9 3-1 3-3 1-2 4 2 2v3l4 3 3-1 3 1 4-3v-3l2-2-2-4-3-1-1-3z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button><button id="more-open" aria-label="Quick actions"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button></footer>
+  <footer id="foot"><button id="mode" type="button" class="quiet" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open" type="button" class="quiet">Keyboard</button><button id="settings-open" type="button" class="quiet" hidden>Settings</button></footer>
 </main>
 
 <main id="browser" class="shell" hidden>
   <section id="tab-movie" class="pane" data-type="movie" hidden>
-    <h2 class="ptitle">Movies</h2>
+    <header class="masthead"><div class="mast-text"><small class="eyebrow">IMAC TV</small><h2 class="ptitle">Movies</h2></div></header>
     <form class="findbox pfind" autocomplete="off"><input type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies" aria-label="Search movies"><button type="button" class="pclear" aria-label="Clear" hidden>✕</button></form>
     <div class="presults" hidden><div class="spin rspin" hidden><div class="spinner" aria-hidden="true"></div></div><p class="muted pempty"></p><div class="grid"></div></div>
     <div class="pbrowse">
-    <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
-    <div class="grid"></div>
-    <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
-    <button class="more" type="button" hidden>Load more</button>
-      </div>
+      <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
+      <h3 class="all-head">All movies</h3>
+      <div class="grid"></div>
+      <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
+      <button class="more" type="button" hidden>Load more</button>
+    </div>
   </section>
   <section id="tab-series" class="pane" data-type="series" hidden>
-    <h2 class="ptitle">Series</h2>
+    <header class="masthead"><div class="mast-text"><small class="eyebrow">IMAC TV</small><h2 class="ptitle">Series</h2></div></header>
     <form class="findbox pfind" autocomplete="off"><input type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search series" aria-label="Search series"><button type="button" class="pclear" aria-label="Clear" hidden>✕</button></form>
     <div class="presults" hidden><div class="spin rspin" hidden><div class="spinner" aria-hidden="true"></div></div><p class="muted pempty"></p><div class="grid"></div></div>
     <div class="pbrowse">
-    <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
-    <div class="grid"></div>
-    <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
-    <button class="more" type="button" hidden>Load more</button>
-      </div>
+      <div class="cont" hidden><h3>Continue watching</h3><div class="hrow"></div></div>
+      <h3 class="all-head">All series</h3>
+      <div class="grid"></div>
+      <div class="spin" hidden><div class="spinner" aria-hidden="true"></div></div>
+      <button class="more" type="button" hidden>Load more</button>
+    </div>
   </section>
   <section id="tab-search" class="pane" hidden>
+    <header class="masthead"><div class="mast-text"><small class="eyebrow">IMAC TV</small><h2 class="ptitle">Search</h2></div></header>
     <form id="find-form" class="findbox" autocomplete="off"><input id="find-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies and series" aria-label="Search titles"><button type="button" id="find-clear" aria-label="Clear" hidden>✕</button></form>
     <div id="find-results">
       <div class="spin" id="find-spin" hidden><div class="spinner" aria-hidden="true"></div></div>
@@ -106,27 +126,37 @@
     </div>
   </section>
   <section id="tab-settings" class="pane" hidden>
-    <div class="settings-heading"><small>YOUR TV, YOUR WAY</small><h2 class="ptitle">Settings</h2></div><div id="settings-tabs" role="tablist" aria-label="Settings categories"></div>
+    <header class="masthead"><div class="mast-text"><small class="eyebrow">IMAC TV</small><h2 class="ptitle">Settings</h2><p id="settings-sub" class="meta"></p></div></header>
+    <div id="settings-tabs" role="tablist" aria-label="Settings categories"></div>
     <div id="trial" class="prompt trial" hidden><div class="ptext"><small>TRYING <span id="trial-mode"></span> · <span id="trial-sec">15</span> s</small><b>Is the picture OK?</b></div><div class="prow"><button id="trial-keep" type="button" class="go">Keep</button><button id="trial-revert" type="button">Revert</button></div></div>
     <p id="set-error" class="tb-error" role="alert"></p>
-    <div id="settings-connections" role="tabpanel" aria-labelledby="category-connections" hidden><h3>TorBox</h3>
-    <div class="card setcard"><div id="set-torbox-row"></div><p class="muted small">Save your API key here to use TorBox on this TV or computer. Changes apply immediately.</p></div>
-    <div id="phone-access"></div></div><div id="settings-display" role="tabpanel" aria-labelledby="category-display" hidden><h3>Display</h3>
-    <div id="set-display"></div>
-    </div><div id="settings-appearance" role="tabpanel" aria-labelledby="category-appearance"><h3>Background</h3>
-    <div class="card setcard theme-gallery"><div id="bg-source" class="chips"><button type="button" data-src="photos">Focus</button><button type="button" data-src="retro">Retro</button></div>
-      <div id="bg-retro" hidden><div class="lbl">Retro backgrounds · <span id="bg-count"></span></div><p class="muted small">Choose the pictures Home rotates through.</p><div id="bg-list" class="bglist"></div></div>
-      <p id="bg-note" class="muted"></p>
-      <input id="bg-file" type="file" accept="image/*" hidden><button id="bg-add" type="button">Add a picture</button>
-      <p class="muted small">Upload a sharper image with the same name to replace a picture.</p></div>
-    <div id="fields-appearance"></div></div><div id="settings-ambient" role="tabpanel" aria-labelledby="category-ambient" hidden><div id="fields-ambient"></div></div><div id="settings-playback" role="tabpanel" aria-labelledby="category-playback" hidden><div id="fields-playback"></div><h3>YouTube</h3>
-    <div class="card setcard"><div class="lbl">Close YouTube after it's been paused</div><div id="yt-close" class="chips"><button type="button" data-min="0">Off</button><button type="button" data-min="30">30 min</button><button type="button" data-min="60">60 min</button></div></div>
-    </div><div id="settings-system" role="tabpanel" aria-labelledby="category-system" hidden></div>
+    <div id="settings-connections" role="tabpanel" aria-labelledby="category-connections" hidden>
+      <h3>Phone</h3><div id="phone-access"></div>
+      <h3>TorBox</h3><div id="set-torbox-row" class="glass rows"></div>
+    </div>
+    <div id="settings-display" role="tabpanel" aria-labelledby="category-display" hidden><div id="set-display"></div></div>
+    <div id="settings-appearance" role="tabpanel" aria-labelledby="category-appearance">
+      <h3>Background</h3>
+      <div class="theme-gallery">
+        <div id="bg-source" class="tiles"><button type="button" class="ptile" data-src="photos"><span class="pt-text"><b>Focus</b><small>Nature photography</small></span><i class="hcheck" aria-hidden="true"></i></button><button type="button" class="ptile" data-src="retro"><span class="pt-text"><b>Retro</b><small id="bg-retro-sub">Your pictures</small></span><i class="hcheck" aria-hidden="true"></i></button></div>
+        <div id="bg-retro" hidden><h3>Your pictures · <span id="bg-count"></span></h3><div id="bg-list" class="bglist"></div></div>
+        <p id="bg-note" class="note"></p>
+        <input id="bg-file" type="file" accept="image/*" hidden>
+        <button id="bg-add" type="button" class="addtile"><i class="mk plus" aria-hidden="true"></i><span>Add a picture<small>A sharper image with the same name replaces it</small></span></button>
+      </div>
+      <div id="fields-appearance"></div>
+    </div>
+    <div id="settings-ambient" role="tabpanel" aria-labelledby="category-ambient" hidden><div id="fields-ambient"></div></div>
+    <div id="settings-playback" role="tabpanel" aria-labelledby="category-playback" hidden><div id="fields-playback"></div>
+      <h3>YouTube</h3>
+      <div class="glass rows"><div class="row static"><span class="rt">Close YouTube after it's been paused</span></div><div id="yt-close" class="chips seg"><button type="button" data-min="0">Off</button><button type="button" data-min="30">30 min</button><button type="button" data-min="60">60 min</button></div></div>
+    </div>
+    <div id="settings-system" role="tabpanel" aria-labelledby="category-system" hidden></div>
   </section>
 </main>
 
-<section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown on your TV.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
+<section id="pair" class="pair" hidden><div class="pair-card glass"><svg class="pair-mark" viewBox="0 0 120 70" aria-hidden="true"><path class="pl" d="M33 35h54"/><circle class="pd" cx="52" cy="35" r="1.6"/><circle class="pd" cx="68" cy="35" r="1.6"/><polygon class="ph" points="34,35 26,48.9 10,48.9 2,35 10,21.1 26,21.1"/><polygon class="ph" points="118,35 110,48.9 94,48.9 86,35 94,21.1 110,21.1"/><rect class="pg" x="14" y="27.5" width="8" height="15" rx="1.8"/><rect class="pg" x="95" y="29" width="14" height="9.5" rx="1.2"/><path class="pg" d="M99.5 42h5"/></svg><small class="eyebrow">IMAC TV</small><h1>Connect your phone</h1><p class="meta">Enter the six-digit code shown on your TV.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit" class="go">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
 
-<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" aria-label="Close">✕</button></div><div id="sheet-content"></div></div></section>
-<nav id="tabbar" class="tabbar" aria-label="Sections" hidden><button type="button" data-tab="remote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7" y="2.5" width="10" height="19" rx="3"/><circle cx="12" cy="9" r="2"/><path d="M10 15h4"/></svg><span>Remote</span></button><button type="button" data-tab="movie"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 10h4M3 14h4M17 10h4M17 14h4"/></svg><span>Movies</span></button><button type="button" data-tab="series"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Series</span></button><button type="button" data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button><button type="button" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m9 3-1 3-3 1-2 4 2 2v3l4 3 3-1 3 1 4-3v-3l2-2-2-4-3-1-1-3z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button></nav>
+<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" type="button" class="hb" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg></button></div><div id="sheet-content"></div></div></section>
+<nav id="tabbar" class="tabbar" aria-label="Sections" hidden><button type="button" data-tab="remote"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7.5" y="3" width="9" height="18" rx="2.6"/><circle cx="12" cy="9" r="2"/><path d="M10.5 15h3"/></svg><span>Remote</span></button><button type="button" data-tab="movie"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="5" width="17" height="14" rx="1.8"/><path d="M7.5 5v14M16.5 5v14M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/></svg><span>Movies</span></button><button type="button" data-tab="series"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="5.5" width="17" height="11.5" rx="1.8"/><path d="M8.5 20.5h7M12 17v3.5"/></svg><span>Series</span></button><button type="button" data-tab="search"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m15.5 15.5 4.5 4.5"/></svg><span>Search</span></button><button type="button" data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3.2 7.6 4.4v8.8L12 20.8l-7.6-4.4V7.6z"/><circle cx="12" cy="12" r="2.8"/></svg><span>Settings</span></button></nav>
 </body></html>

@@ -25,19 +25,299 @@
     clearTimeout(toastTimer);
     if (text) toastTimer = setTimeout(() => { if ($('message').textContent === text) message(''); }, 6000);
   }
-  let haptics = true;
+  // ---- Haptics: the only place this page vibrates ----
+  // Feedback belongs to the finger, never to the network: nothing here is called after a request settles.
+  //   press  8 ms, once per press, at touch-down (pointerdown). The same tap's click is then swallowed.
+  //          In lists that scroll (posters, settings rows, sheets) a touch-down may be the start of a scroll,
+  //          so there the buzz waits for the click (the tap's release) instead. Keyboard presses buzz on click.
+  //   tick   4 ms per hold-to-repeat step (directions, volume), never more than one per 170 ms.
+  //   long   [12, 60, 22] once, when a long-press action fires (touchpad hold = right click).
+  // Off in Settings › System; a no-op where navigator.vibrate is missing (iOS Safari, desktop).
+  const HAPTIC = {press: 8, tick: 4, long: [12, 60, 22]};
+  let haptics = true, hapticAt = -1e9, felt = null;
   try { haptics = localStorage.getItem('remote-haptics') !== 'off'; } catch (e) {}
-  // Feedback belongs to the gesture, never to a delayed network response.
-  const buzz = (ms = 6) => { try { if (haptics && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} };
+  const canVibrate = typeof navigator.vibrate === 'function';
+  function haptic(kind) {
+    if (!haptics || !canVibrate) return false;
+    const now = performance.now();
+    if (kind === 'tick' && now - hapticAt < 170) return false;
+    hapticAt = now;
+    try { navigator.vibrate(HAPTIC[kind]); } catch (e) { return false; }
+    return true;
+  }
+  const PRESSABLE = 'button, [role=switch], label.row, .ptile';
+  const SCROLLS = '.pane, #sheet-content, .hrow, #settings-tabs';
+  document.addEventListener('pointerdown', e => {
+    felt = null;
+    const el = e.target.closest(PRESSABLE);
+    if (!el || el.disabled || el.closest(SCROLLS) || el.closest('#pad')) return;
+    felt = el; haptic('press');
+  }, true);
   document.addEventListener('click', e => {
-    const button = e.target.closest('button');
-    if (button && !button.disabled && !button.matches('[data-action]')) buzz();
+    const el = e.target.closest(PRESSABLE);
+    if (!el || el.disabled) return;
+    if (felt === el) { felt = null; return; }      // already felt at touch-down
+    felt = null;
+    if (e.detail === 0 || el.closest(SCROLLS)) haptic('press');
   }, true);
 
+  // ---- Shapes: Home's node shape (hexagon, or octagon when the TV says so) as SVG ----
+  const SHAPES = {hexagon: [6, 0], octagon: [8, Math.PI / 8]};
+  let nodeShape = 'hexagon';
+  try { if (localStorage.getItem('node-shape') === 'octagon') nodeShape = 'octagon'; } catch (e) {}
+  function polyPts(r, cx = 0, cy = 0) {
+    const [n, rot] = SHAPES[nodeShape];
+    return Array.from({length: n}, (_, i) => [cx + r * Math.cos(rot + 2 * Math.PI * i / n), cy + r * Math.sin(rot + 2 * Math.PI * i / n)]);
+  }
+  const ptsAttr = pts => pts.map(([x, y]) => `${+x.toFixed(2)},${+y.toFixed(2)}`).join(' ');
+  const shapeBox = () => nodeShape === 'octagon' ? [Math.cos(Math.PI / 8), Math.cos(Math.PI / 8)] : [1, Math.sqrt(3) / 2];
+  // One node image: optional tinted radial body (Home's RoundNode fill), hairline, and an inner mark.
+  function nodeUri({base = 0, tint = '158,204,255', a0 = 0, a1 = 0, line = 0, solid = false, core = '', inset = 0.955}) {
+    const [ex, ey] = shapeBox(), poly = ptsAttr(polyPts(inset)), [r, g, b] = tint.split(',');
+    const c = `rgb(${r},${g},${b})`, dark = `rgb(${Math.round(r * .6)},${Math.round(g * .6)},${Math.round(b * .7)})`;
+    let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${-ex} ${-ey} ${2 * ex} ${2 * ey}"><defs>` +
+      `<radialGradient id="r" cx="30%" cy="25%" r="85%"><stop offset="0" stop-color="${c}" stop-opacity="${a0}"/><stop offset="1" stop-color="${c}" stop-opacity="${a1}"/></radialGradient>` +
+      `<linearGradient id="l" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c}" stop-opacity=".95"/><stop offset="1" stop-color="${dark}" stop-opacity=".9"/></linearGradient></defs>`;
+    if (base) s += `<polygon points="${poly}" fill="#fff" fill-opacity="${base}"/>`;
+    if (a0) s += `<polygon points="${poly}" fill="url(#r)"/>`;
+    if (solid) s += `<polygon points="${poly}" fill="url(#l)"/>`;
+    if (line) s += `<polygon points="${poly}" fill="none" stroke="#fff" stroke-opacity="${line}" stroke-width="1" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>`;
+    s += core + '</svg>';
+    return `url("data:image/svg+xml,${encodeURIComponent(s)}")`;
+  }
+  const TINTS = {appearance: '158,107,214', ambient: '92,133,219', display: '71,168,158', playback: '219,143,82',
+    connections: '77,158,214', system: '128,143,168'};
+  function applyShape(shape) {
+    nodeShape = shape === 'octagon' ? 'octagon' : 'hexagon';
+    try { localStorage.setItem('node-shape', nodeShape); } catch (e) {}
+    const [ex, ey] = shapeBox(), root = document.documentElement.style;
+    const coreDot = `<polygon points="${ptsAttr(polyPts(0.34))}" fill="#fff" fill-opacity=".92"/>`;
+    const check = '<path d="M-.4 .02-.12 .3.42-.28" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    const plus = '<path d="M0-.36V.36M-.36 0H.36" fill="none" stroke="#fff" stroke-opacity=".85" stroke-width="1.5" stroke-linecap="round" vector-effect="non-scaling-stroke"/>';
+    root.setProperty('--hx-ar', (ex / ey).toFixed(4));
+    root.setProperty('--hx', nodeUri({base: .07, a0: .2, a1: .035, line: .26}));
+    root.setProperty('--hx-press', nodeUri({base: .13, tint: '185,219,255', a0: .55, a1: .2, line: .9}));
+    root.setProperty('--hx-lit', nodeUri({base: .08, a0: .46, a1: .12, line: .5}));
+    root.setProperty('--hx-on', nodeUri({solid: true, line: .75, core: coreDot}));
+    root.setProperty('--hx-off', nodeUri({line: .4}));
+    root.setProperty('--hx-mark', nodeUri({line: .6, inset: .9}));
+    root.setProperty('--hx-check', nodeUri({solid: true, line: .8, core: check}));
+    root.setProperty('--hx-plus', nodeUri({base: .07, a0: .2, a1: .035, line: .4, core: plus}));
+    document.querySelectorAll('#settings-tabs [role=tab]').forEach(paintBadge);
+    buildHive();
+    if (setState) renderSettings();
+  }
+  function paintBadge(b) {
+    const tint = TINTS[b.id.replace('category-', '')] || '158,204,255', badge = b.querySelector('.badge');
+    badge.style.setProperty('--tint', tint);
+    badge.style.setProperty('--badge', nodeUri({base: .08, tint, a0: .2, a1: .04, line: .26}));
+    badge.style.setProperty('--badge-lit', nodeUri({base: .1, tint, a0: .7, a1: .22, line: .55}));
+  }
+
+  // ---- Backdrop: Home's navy, the TV's photo blurred far back, a faint constellation; drawn once per size ----
+  let skyPhoto = null, skySize = '';
+  function drawSky(force) {
+    const c = $('sky'), w = innerWidth, h = Math.max(innerHeight, c.clientHeight || 0);
+    const size = w + 'x' + Math.round(h / 120);
+    if (!force && size === skySize) return;
+    skySize = size;
+    const dpr = Math.min(2, devicePixelRatio || 1), ctx = c.getContext('2d');
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const navy = ctx.createLinearGradient(0, 0, 0, h);
+    navy.addColorStop(0, 'rgb(13,18,31)'); navy.addColorStop(0.55, 'rgb(18,23,38)'); navy.addColorStop(1, 'rgb(5,8,15)');
+    ctx.fillStyle = navy; ctx.fillRect(0, 0, w, h);
+    if (skyPhoto) {
+      const iw = skyPhoto.naturalWidth, ih = skyPhoto.naturalHeight, k = Math.max(w / iw, h / ih) * 1.15;
+      const dw = iw * k, dh = ih * k, dx = (w - dw) / 2, dy = (h - dh) / 2;
+      ctx.globalAlpha = 0.8;
+      if ('filter' in ctx) { ctx.filter = 'blur(26px) saturate(1.1)'; ctx.drawImage(skyPhoto, dx, dy, dw, dh); ctx.filter = 'none'; }
+      else {   // no canvas filters: a tiny copy scaled back up is a blur too
+        const t = document.createElement('canvas'); t.width = 18; t.height = Math.max(8, Math.round(18 * ih / iw));
+        t.getContext('2d').drawImage(skyPhoto, 0, 0, t.width, t.height);
+        ctx.imageSmoothingQuality = 'high'; ctx.drawImage(t, dx, dy, dw, dh);
+      }
+      ctx.globalAlpha = 1;
+      const dim = ctx.createLinearGradient(0, 0, 0, h);
+      dim.addColorStop(0, 'rgba(8,12,22,.42)'); dim.addColorStop(0.6, 'rgba(8,12,22,.58)'); dim.addColorStop(1, 'rgba(4,6,12,.84)');
+      ctx.fillStyle = dim; ctx.fillRect(0, 0, w, h);
+    }
+    // Same recipe as Home's dust: k nearest neighbours within a reach, alpha fading with distance.
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const n = Math.max(16, Math.min(44, Math.round(w * h / 12000))), pts = [];
+    for (let i = 0; i < n; i++) pts.push([rnd() * w, rnd() * h]);
+    const reach = Math.min(190, w * 0.5);
+    ctx.lineWidth = 1; ctx.lineCap = 'round';
+    const done = new Set();
+    pts.forEach((p, i) => {
+      pts.map((q, j) => [j, Math.hypot(q[0] - p[0], q[1] - p[1])]).filter(([j, d]) => j !== i && d < reach)
+        .sort((a, b) => a[1] - b[1]).slice(0, 2).forEach(([j, d]) => {
+          const key = Math.min(i, j) + ':' + Math.max(i, j);
+          if (done.has(key)) return; done.add(key);
+          ctx.strokeStyle = `rgba(255,255,255,${(0.17 * (1 - d / reach)).toFixed(3)})`;
+          ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(pts[j][0], pts[j][1]); ctx.stroke();
+        });
+    });
+    ctx.fillStyle = 'rgba(255,255,255,.34)';
+    for (const [x, y] of pts) { const d = 1.8; ctx.beginPath(); ctx.moveTo(x, y - d); ctx.lineTo(x + d, y); ctx.lineTo(x, y + d); ctx.lineTo(x - d, y); ctx.fill(); }
+  }
+  function setSkyPhoto(src) {
+    if (!src || (skyPhoto && skyPhoto.dataset.src === src)) return;
+    const img = new Image();
+    img.dataset.src = src;
+    img.onload = () => { skyPhoto = img; drawSky(true); };
+    img.src = src;
+  }
+  let skyTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(skyTimer); skyTimer = setTimeout(() => { drawSky(); buildHiveLinks(); }, 150); });
+
+  // ---- The honeycomb: OK node, a ring of four directions around it, four satellite nodes on its diagonal edges ----
+  // A hexagon has six sides at 60°, a D-pad needs four at 90°, so the ring around OK is cut into four:
+  // Up/Down are its flat top and bottom, Left/Right the chevrons that point their way. The satellites sit
+  // edge to edge on the ring's four diagonal sides, as cells of one honeycomb. Units are CSS px at full size.
+  const HIVE = {ro: 124, ri: 58, gap: 5, rs: 34, sgap: 6, pad: 4};
+  const ICONS = {
+    back: '<path d="M10 6 4 12l6 6M4.5 12H15a5 5 0 0 1 5 5v1"/>',
+    home: '<path d="M4 11 12 4.5 20 11M6.5 9.5V19.5h4v-5h3v5h4V9.5"/>',
+    type: '<rect x="3" y="6.5" width="18" height="11" rx="2"/><path d="M7 10.5h.01M10.3 10.5h.01M13.7 10.5h.01M17 10.5h.01M8 14h8"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="m15.5 15.5 4.5 4.5"/>',
+    more: '<circle cx="6" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18" cy="12" r=".9"/>',
+  };
+  let hiveGeo = null;
+  function rayHit(o, u, poly) {
+    let best = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, ay] = poly[i], [bx, by] = poly[(i + 1) % poly.length], ex = bx - ax, ey = by - ay;
+      const den = u[0] * ey - u[1] * ex;
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((ax - o[0]) * ey - (ay - o[1]) * ex) / den, s = ((ax - o[0]) * u[1] - (ay - o[1]) * u[0]) / den;
+      if (t > 0 && s >= -1e-6 && s <= 1 + 1e-6) best = Math.min(best, t);
+    }
+    return [o[0] + u[0] * best, o[1] + u[1] * best];
+  }
+  const deg = a => a * Math.PI / 180;
+  function ringSegment(a0, a1, inner, outer, gap) {
+    const side = (a, sign) => { const u = [Math.cos(deg(a)), Math.sin(deg(a))]; return [[-u[1] * gap / 2 * sign, u[0] * gap / 2 * sign], u]; };
+    const [o0, u0] = side(a0, 1), [o1, u1] = side(a1, -1);
+    const between = (poly, rev) => {
+      const out = poly.map(p => [p, ((Math.atan2(p[1], p[0]) * 180 / Math.PI - a0) % 360 + 720) % 360])
+        .filter(([, r]) => r > 0.5 && r < a1 - a0 - 0.5).sort((a, b) => a[1] - b[1]).map(([p]) => p);
+      return rev ? out.reverse() : out;
+    };
+    return [rayHit(o0, u0, inner), rayHit(o0, u0, outer), ...between(outer), rayHit(o1, u1, outer), rayHit(o1, u1, inner), ...between(inner, true)];
+  }
+  function buildHive() {
+    const hive = $('hive');
+    if (!hive) return;
+    const [n] = SHAPES[nodeShape], ca = Math.cos(Math.PI / n), {ro, ri, gap, rs, sgap, pad} = HIVE;
+    const outer = polyPts(ro), inner = polyPts(ri + gap / ca), apO = ro * ca, apI = (ri + gap / ca) * ca;
+    const hex = nodeShape === 'hexagon';
+    const sectors = hex ? {right: [-60, 60], down: [60, 120], left: [120, 240], up: [240, 300]}
+      : {right: [-45, 45], down: [45, 135], left: [135, 225], up: [225, 315]};
+    const satAngles = hex ? [210, 330, 150, 30] : [225, 315, 135, 45];
+    const cells = [];   // {el, poly, glyph:[x,y], icon|arrow|label}
+    for (const [dir, [a0, a1]] of Object.entries(sectors)) {
+      const mid = deg((a0 + a1) / 2), r = (apI + apO) / 2;
+      cells.push({el: hive.querySelector(`#dpad [data-action=${dir}]`), poly: ringSegment(a0, a1, inner, outer, gap),
+        glyph: [Math.cos(mid) * r, Math.sin(mid) * r], arrow: mid});
+    }
+    cells.push({el: hive.querySelector('#dpad [data-action=ok]'), poly: polyPts(ri), glyph: [0, 0], label: 'OK'});
+    const sats = [hive.querySelector('.sat[data-action=back]'), hive.querySelector('.sat[data-action=home]'), $('search-open'), $('more-open')];
+    const satIcons = ['back', 'home', 'type', 'more'], d = apO + sgap + rs * ca;
+    const satCentres = satAngles.map(a => [Math.cos(deg(a)) * d, Math.sin(deg(a)) * d]);
+    sats.forEach((el, i) => cells.push({el, poly: polyPts(rs, ...satCentres[i]), glyph: satCentres[i], icon: satIcons[i]}));
+    const all = cells.flatMap(c => c.poly), X0 = Math.min(...all.map(p => p[0])) - pad, Y0 = Math.min(...all.map(p => p[1])) - pad;
+    const W = Math.max(...all.map(p => p[0])) + pad - X0, H = Math.max(...all.map(p => p[1])) + pad - Y0;
+    hive.style.setProperty('--hive-w', W.toFixed(1) + 'px');
+    hive.style.setProperty('--hive-ar', (W / H).toFixed(4));
+    const place = (el, x0, y0, x1, y1) => {
+      el.style.left = ((x0 - X0) / W * 100).toFixed(3) + '%'; el.style.top = ((y0 - Y0) / H * 100).toFixed(3) + '%';
+      el.style.width = ((x1 - x0) / W * 100).toFixed(3) + '%'; el.style.height = ((y1 - y0) / H * 100).toFixed(3) + '%';
+    };
+    for (const c of cells) {
+      const xs = c.poly.map(p => p[0]), ys = c.poly.map(p => p[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
+      place(c.el, x0, y0, x1, y1);
+      c.el.style.setProperty('--ox', ((c.glyph[0] - x0) / (x1 - x0) * 100).toFixed(1) + '%');
+      c.el.style.setProperty('--oy', ((c.glyph[1] - y0) / (y1 - y0) * 100).toFixed(1) + '%');
+      const [gx, gy] = c.glyph;
+      let mark = '';
+      if (c.arrow !== undefined) {
+        const s = 7.5, ux = Math.cos(c.arrow), uy = Math.sin(c.arrow);
+        const tip = [gx + ux * s * 0.55, gy + uy * s * 0.55], back = [gx - ux * s * 0.45, gy - uy * s * 0.45];
+        mark = `<g class="g"><path d="M${(back[0] - uy * s).toFixed(2)} ${(back[1] + ux * s).toFixed(2)}L${tip[0].toFixed(2)} ${tip[1].toFixed(2)}L${(back[0] + uy * s).toFixed(2)} ${(back[1] - ux * s).toFixed(2)}"/></g>`;
+      } else if (c.label) {
+        mark = `<text class="label" x="${gx}" y="${gy}">${c.label}</text>`;
+      } else {
+        const k = rs * 0.66 / 24;
+        mark = `<g class="g" transform="translate(${(gx - 12 * k).toFixed(2)} ${(gy - 12 * k).toFixed(2)}) scale(${k.toFixed(4)})">${ICONS[c.icon]}</g>`;
+      }
+      const keep = c.el.querySelector('.sr');
+      c.el.innerHTML = `<svg viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" aria-hidden="true" focusable="false"><polygon class="base" points="${ptsAttr(c.poly)}"/><polygon class="face" points="${ptsAttr(c.poly)}"/>${mark}</svg>`;
+      if (keep) c.el.append(keep);
+    }
+    // Pointer mode: the touchpad takes the ring's place, in the ring's shape.
+    const padEl = $('pad'), ox = outer.map(p => p[0]), oy = outer.map(p => p[1]);
+    const px0 = Math.min(...ox), py0 = Math.min(...oy), px1 = Math.max(...ox), py1 = Math.max(...oy);
+    place(padEl, px0, py0, px1, py1);
+    padEl.style.clipPath = `polygon(${outer.map(([x, y]) => `${((x - px0) / (px1 - px0) * 100).toFixed(2)}% ${((y - py0) / (py1 - py0) * 100).toFixed(2)}%`).join(',')})`;
+    const face = padEl.querySelector('.pad-face');
+    face.setAttribute('viewBox', `${px0} ${py0} ${px1 - px0} ${py1 - py0}`);
+    face.innerHTML = `<polygon points="${ptsAttr(polyPts(ro - 0.5))}"/>`;
+    hiveGeo = {X0, Y0, W, H, ro, apO, satCentres, rs};
+    buildHiveLinks();
+  }
+  // Thin constellation lines from the outer satellites to a few dust points, as Home links its nodes.
+  function buildHiveLinks() {
+    const svg = $('hive-links');
+    if (!svg || !hiveGeo) return;
+    const {X0, Y0, W, H, ro, apO, satCentres, rs} = hiveGeo;
+    svg.setAttribute('viewBox', `${X0} ${Y0} ${W} ${H}`);
+    const far = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (Math.abs(b[0]) > Math.abs(a[0]) ? b : a));
+    const top = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (b[1] < a[1] || (b[1] === a[1] && Math.abs(b[0]) < Math.abs(a[0])) ? b : a));
+    const bottom = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (b[1] > a[1] || (b[1] === a[1] && Math.abs(b[0]) < Math.abs(a[0])) ? b : a));
+    const [ul, ur, ll, lr] = satCentres, side = ro + 40;
+    const dust = {nw: [-side + 6, -apO - 14], w: [-side - 4, 2], sw: [-side + 14, apO + 12], ne: [side - 6, -apO - 16], e: [side + 2, -4], se: [side - 12, apO + 14],
+      n: [-8, -apO - 22], s: [10, apO + 22]};
+    const lines = [[far(ul), dust.nw, .26], [far(ul), dust.w, .2], [far(ll), dust.w, .22], [far(ll), dust.sw, .18],
+      [far(ur), dust.ne, .24], [far(ur), dust.e, .2], [far(lr), dust.e, .22], [far(lr), dust.se, .18],
+      [top(ul), dust.n, .16], [top(ur), dust.n, .18], [bottom(ll), dust.s, .14], [bottom(lr), dust.s, .16], [dust.nw, dust.n, .1]];
+    svg.innerHTML = lines.map(([a, b, o]) => `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke-opacity="${o}"/>`).join('') +
+      Object.values(dust).map(([x, y]) => `<path class="dust" d="M${x} ${y - 2.4}l2.4 2.4-2.4 2.4-2.4-2.4z"/>`).join('');
+  }
+
+  // Pause bars while playing, a play triangle while paused; drawn, so no emoji font gets a say.
+  function playGlyph(b, playing) {
+    const v = playing ? '1' : '0';
+    if (b.dataset.playing === v) return;
+    b.dataset.playing = v;
+    b.innerHTML = playing ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5v11M15 6.5v11"/></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg>';
+  }
+  // Home's clock and date line; one timer, woken once a minute.
+  let remoteLabel = 'Connecting', clockTimer = 0;
+  function tickClock() {
+    clearTimeout(clockTimer);
+    const now = new Date();
+    $('clock').textContent = now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
+    const day = now.toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
+    $('remote-meta').textContent = [day, remoteLabel].filter(Boolean).join(' · ');
+    clockTimer = setTimeout(tickClock, 60000 - now.getSeconds() * 1000 - now.getMilliseconds() + 50);
+  }
+  const fillRange = input => {
+    const min = Number(input.min) || 0, max = Number(input.max) || 100, v = Number(input.value) || 0;
+    input.style.setProperty('--fill', (max > min ? Math.max(0, Math.min(100, (v - min) / (max - min) * 100)) : 0).toFixed(1) + '%');
+  };
+
   function connected(value, label) {
+    const was = online;
     online = value;
+    if (was !== value && setState) renderConnections();
     $('connection').title = label; $('connection').setAttribute('aria-label', label);
     $('connection').classList.toggle('off', !value);
+    document.body.classList.toggle('offline', !value);
+    remoteLabel = label.replace(/^●\s*/, '');
+    tickClock();
     document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => b.disabled = !value);
   }
 
@@ -56,6 +336,7 @@
   function render(s) {
     renderTorboxRow('set-torbox-row', s.torbox);
     state = s;
+    if (!setState && !settingsAsked) { settingsAsked = true; loadSettings(); }   // node shape + Home's photo
     pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
     applyTab();
@@ -86,6 +367,7 @@
     } else if (!reason && !draggingBrightness) {
       $('brightness').value = light.level;
       $('brightness-level').textContent = `${light.level}%`;
+      fillRange($('brightness'));
     }
     if (reason && reason !== brightnessReason) {
       brightnessReason = reason;
@@ -152,7 +434,7 @@
   function ytTick() {
     if (!ytState || ytDragging || $('yt').hidden) return;
     const pos = ytPosition(), len = ytState.length || 0;
-    $('yt-range').value = pos; $('yt-pos').textContent = clock(pos); $('yt-dur').textContent = '-' + clock(len - pos);
+    $('yt-range').value = pos; fillRange($('yt-range')); $('yt-pos').textContent = clock(pos); $('yt-dur').textContent = '-' + clock(len - pos);
   }
   setInterval(ytTick, 250);
   function renderYoutube(yt, view) {
@@ -177,12 +459,12 @@
     $('yt-prev').hidden = yt.can_prev === false;
     $('yt-next').hidden = yt.can_next === false;
     $('yt-play').hidden = yt.can_pause === false;
-    if (Date.now() > ytPending) { $('yt-play').textContent = yt.status === 'Playing' ? '⏸' : '▶'; }
+    if (Date.now() > ytPending) playGlyph($('yt-play'), yt.status === 'Playing');
     const mode = $('yt-mode'), known = !open && (yt.youtube_mode === 'music' || yt.youtube_mode === 'video');
     mode.hidden = !known;
     if (known) {
       mode.dataset.mode = yt.youtube_mode === 'music' ? 'video' : 'music';
-      mode.textContent = yt.youtube_mode === 'music' ? '📺 Show video' : '🎵 Show visualizer';
+      mode.textContent = yt.youtube_mode === 'music' ? 'Show video' : 'Show visualizer';
       const who = document.createElement('small');
       who.textContent = 'always, for this channel';
       mode.appendChild(who);
@@ -194,9 +476,9 @@
   }
   document.querySelectorAll('#yt [data-yt]').forEach(b => b.onclick = async () => {
     
-    const play = $('yt-play'), before = play.textContent;
-    if (b === play) { play.textContent = before === '⏸' ? '▶' : '⏸'; ytPending = Date.now() + 2500; }
-    await ytSend({cmd: b.dataset.yt}, () => { if (b === play) play.textContent = before; });
+    const play = $('yt-play'), before = play.dataset.playing === '1';
+    if (b === play) { playGlyph(play, !before); ytPending = Date.now() + 2500; }
+    await ytSend({cmd: b.dataset.yt}, () => { if (b === play) playGlyph(play, before); });
     ytPending = 0;
   });
   [[$('yt-back'), -10], [$('yt-fwd'), 10]].forEach(([b, offset]) => b.onclick = () => {
@@ -205,7 +487,7 @@
     ytSend({cmd: 'seek', offset});
   });
   const yr = $('yt-range');
-  yr.addEventListener('input', () => { ytDragging = true; $('yt-pos').textContent = clock(+yr.value); $('yt-dur').textContent = '-' + clock((ytState && ytState.length || 0) - yr.value); });
+  yr.addEventListener('input', () => { ytDragging = true; fillRange(yr); $('yt-pos').textContent = clock(+yr.value); $('yt-dur').textContent = '-' + clock((ytState && ytState.length || 0) - yr.value); });
   yr.addEventListener('change', () => {
     const position = +yr.value;
     if (ytState) { ytState.position = position; ytAt = Date.now(); }
@@ -271,10 +553,11 @@
       const poster = $('np-poster');
       if (m.poster) { if (poster.getAttribute('src') !== m.poster) poster.src = m.poster; poster.hidden = false; poster.onerror = () => { poster.hidden = true; }; }
       else poster.hidden = true;
-      $('np-play').textContent = pb.paused ? '▶' : '⏸';
+      playGlyph($('np-play'), !pb.paused);
       if (!draggingSeek) {
         $('seek').max = Math.max(1, pb.duration || 1);
         $('seek').value = pb.position || 0;
+        fillRange($('seek'));
         $('position').textContent = fmt(pb.position);
         $('duration').textContent = '-' + fmt((pb.duration || 0) - (pb.position || 0));
       }
@@ -295,7 +578,8 @@
     }
     $('search-open').classList.toggle('on', searching);
     const yt = s.app === 'youtube', label = yt ? 'Search YouTube' : 'Type on TV';
-    $('search-open').querySelector('span').textContent = label;
+    const sr = $('search-open').querySelector('.sr');
+    if (sr) sr.textContent = label;
     $('search-open').setAttribute('aria-label', label);
     $('search-input').placeholder = yt ? 'Type to search YouTube on the TV' : 'Type to search on the TV';
   }
@@ -415,6 +699,7 @@
     $('dpad').hidden = which === 'pointer';
     $('pad').hidden = which !== 'pointer';
     $('mode').textContent = which === 'pointer' ? 'Directions' : 'Pointer';
+    $('hive').classList.toggle('pointer', which === 'pointer');
     if (state) sessionStorage.setItem('mode-' + state.app, which);
   }
 
@@ -519,22 +804,41 @@
     };
   }
 
+  // Small builders for the glass rows that Settings is made of.
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function rowText(title, sub) {
+    const t = el('span', 'rt', title);
+    if (sub) t.append(el('small', '', sub));
+    return t;
+  }
+  function actionRow(title, sub, fn, cls) {
+    const b = el('button', 'row' + (cls ? ' ' + cls : '')); b.type = 'button';
+    b.append(rowText(title, sub), el('i', 'chev')); b.onclick = fn;
+    return b;
+  }
+  function section(container, title) {
+    container.append(el('h3', '', title));
+    const card = el('div', 'glass rows'); container.append(card);
+    return card;
+  }
+
   function renderTorboxRow(id = 'torbox-row', torbox = state && state.torbox) {
     const row = $(id);
     if (!row || !torbox) return;
     const on = !!torbox.configured;
     if (row.dataset.on === String(on)) return;
     row.dataset.on = String(on);
-    const p = document.createElement('p'); p.textContent = on ? 'TorBox: connected' : 'TorBox: not connected';
-    const r = document.createElement('div'); r.className = 'sheet-row';
-    const connect = document.createElement('button'); connect.type = 'button';
-    connect.textContent = on ? 'Change API key' : 'Add API key';
-    connect.onclick = () => openTorbox(null);
-    r.append(connect);
-    const b = document.createElement('button'); b.type = 'button';
+    const status = el('div', 'row static');
+    status.append(rowText(on ? 'Connected' : 'Not connected', on ? 'Cached movies start instantly' : 'Add an API key to stream cached movies'),
+      el('span', 'rv', on ? 'TorBox' : ''));
+    const parts = [status, actionRow(on ? 'Change API key' : 'Add API key', 'Checked with TorBox, kept on the TV', () => openTorbox(null))];
     if (on) {
-      b.textContent = 'Remove key';
-      b.onclick = async () => {
+      parts.push(actionRow('Remove key', '', async () => {
         if (!confirm('Remove the TorBox key from the TV?')) return;
         try {
           await send('torbox_remove');
@@ -542,10 +846,9 @@
           renderTorboxRow(); renderTorboxRow('set-torbox-row', {configured: false});
         }
         catch (e) { message(e.message); }
-      };
+      }, 'danger'));
     }
-    if (on) r.append(b);
-    row.replaceChildren(p, r);
+    row.replaceChildren(...parts);
   }
 
   function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
@@ -556,6 +859,7 @@
   $('brightness').addEventListener('input', () => {
     draggingBrightness = true;
     $('brightness-level').textContent = `${$('brightness').value}%`;
+    fillRange($('brightness'));
   });
   $('brightness').addEventListener('change', () => {
     draggingBrightness = false;
@@ -575,6 +879,7 @@
   $('seek').addEventListener('input', () => {
     const v = Number($('seek').value), max = Number($('seek').max);
     $('position').textContent = fmt(v); $('duration').textContent = '-' + fmt(max - v);
+    fillRange($('seek'));
   });
   $('seek').addEventListener('change', () => {
     fire('seek', {seconds: Number($('seek').value)}); draggingSeek = false;
@@ -586,15 +891,15 @@
   document.addEventListener('pointerdown', e => {
     const b = e.target.closest('[data-action]');
     if (!b || b.disabled) return;
-    e.preventDefault(); buzz();
+    e.preventDefault();   // the touch-down buzz comes from the capture listener at the top
     b.classList.add('pressed');
     const action = b.dataset.action;
     const params = action === 'volume' ? {direction: Number(b.dataset.direction)} : {};
     fire(action, params);
-    b.setPointerCapture(e.pointerId);
+    try { b.setPointerCapture(e.pointerId); } catch (x) {}
     if (['up', 'down', 'left', 'right', 'volume'].includes(action)) {
       const delay = setTimeout(() => {
-        const interval = setInterval(() => fire(action, params), 180);
+        const interval = setInterval(() => { haptic('tick'); fire(action, params); }, 180);
         held.set(b, {interval});
       }, 450);
       held.set(b, {delay});
@@ -623,7 +928,6 @@
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]');
     if (b && !b.disabled && e.detail === 0) {
-      buzz();
       fire(b.dataset.action, b.dataset.action === 'volume' ? {direction: Number(b.dataset.direction)} : {});
     }
   });
@@ -684,7 +988,7 @@
     if (!gesture) {
       gesture = {sx: e.clientX, sy: e.clientY, moved: false, right: false, multi: false};
       gesture.hold = setTimeout(() => {
-        if (gesture && !gesture.moved && !gesture.multi) { gesture.right = true; buzz(15); quiet('rightclick', {}); }
+        if (gesture && !gesture.moved && !gesture.multi) { gesture.right = true; haptic('long'); quiet('rightclick', {}); }
       }, 550);
     } else {
       gesture.multi = true; clearTimeout(gesture.hold);
@@ -792,7 +1096,7 @@
 
 
   // ---- Settings tab: display modes (with a keep-or-revert trial) and the YouTube auto-close ----
-  let setState = null, trialTimer = null, setBusy = false;
+  let setState = null, trialTimer = null, setBusy = false, settingsAsked = false;
   const rateText = r => (Math.round(r * 100) / 100) + ' Hz';
   const sizeText = m => m.replace('x', ' × ');
   const wideEnough = m => (parseInt(m, 10) || 0) >= 640;
@@ -816,42 +1120,36 @@
     const box = $('set-display');
     box.replaceChildren();
     const outs = (setState.outputs || []).filter(o => o.connected);
-    if (!outs.length) {
-      const p = document.createElement('p'); p.className = 'muted';
-      p.textContent = setState.display_error || 'No connected screen found'; box.append(p);
-    }
+    if (!outs.length) box.append(el('p', 'note', setState.display_error || 'No connected screen found'));
     for (const o of outs) {
-      const card = document.createElement('div'); card.className = 'card setcard';
-      const h = document.createElement('h4'); h.textContent = o.name;
-      const now = document.createElement('div'); now.className = 'now';
-      const cur = o.current;
-      now.textContent = cur ? `Now ${sizeText(cur.mode)} at ${rateText(cur.rate)}` : 'Screen is off';
-      card.append(h, now);
+      const cur = o.current, card = section(box, o.name);
+      const now = el('div', 'row static');
+      now.append(rowText('Now showing'), el('span', 'rv', cur ? `${sizeText(cur.mode)} · ${rateText(cur.rate)}` : 'Screen is off'));
+      card.append(now);
       const modes = (o.modes || []).filter(m => wideEnough(m.mode) && !/i$/.test(m.mode));
-      const lbl1 = document.createElement('div'); lbl1.className = 'lbl'; lbl1.textContent = 'Resolution';
-      const res = document.createElement('div'); res.className = 'chips';
+      const res = el('div', 'chips pad-chips');
       for (const m of modes) {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = sizeText(m.mode) + (o.preferred && o.preferred.mode === m.mode ? ' · Recommended' : '');
+        const b = el('button', '', sizeText(m.mode) + (o.preferred && o.preferred.mode === m.mode ? ' · Recommended' : '')); b.type = 'button';
         if (cur && cur.mode === m.mode) b.classList.add('cur', 'on');
         const t0 = (cur && cur.mode === m.mode && m.rates.includes(cur.rate)) ? cur.rate : m.rates[0];
         b.onclick = () => startTrial(o.name, m.mode, t0);
         res.append(b);
       }
-      card.append(lbl1, res);
+      card.append(el('div', 'lbl', 'Resolution'), res);
       const curMode = cur && modes.find(m => m.mode === cur.mode);
       if (curMode && curMode.rates.length > 1) {
-        const lbl2 = document.createElement('div'); lbl2.className = 'lbl'; lbl2.textContent = 'Refresh rate';
-        const rates = document.createElement('div'); rates.className = 'chips';
+        const rates = el('div', 'chips pad-chips');
         for (const r of curMode.rates) {
-          const b = document.createElement('button'); b.type = 'button'; b.textContent = rateText(r);
+          const b = el('button', '', rateText(r)); b.type = 'button';
           if (cur.rate === r) b.classList.add('cur', 'on');
           b.onclick = () => startTrial(o.name, curMode.mode, r);
           rates.append(b);
         }
-        card.append(lbl2, rates);
+        card.append(el('div', 'lbl', 'Refresh rate'), rates);
       }
-      box.append(card);
     }
+    if ((setState.values || {}).node_shape && setState.values.node_shape !== nodeShape) { applyShape(setState.values.node_shape); return; }
+    skyFromSettings();
     renderBackground();
     renderFields();
     for (const [key, , , , , network] of setState.fields || []) {
@@ -861,33 +1159,41 @@
     const min = setState.youtube_close_after_paused_min || 0;
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
+  // Home's photo (Focus) or the first retro picture that's on, far behind everything.
+  function skyFromSettings() {
+    const bg = setState && setState.background;
+    if (!bg) return;
+    const retro = bg.source === 'retro' && (bg.retro.find(r => r.on) || bg.retro[0]);
+    setSkyPhoto(retro ? '/api/retro/thumb/' + retro.id : '/api/themes/focus.jpg');
+  }
   function renderBackground() {
     const bg = setState.background || {source: 'photos', retro: []};
-    document.querySelectorAll('#bg-source button').forEach(b => b.classList.toggle('on', b.dataset.src === bg.source));
     const list = $('bg-list');
     list.replaceChildren();
     $('bg-retro').hidden = !bg.retro.length || bg.source !== 'retro';
     for (const button of document.querySelectorAll('#bg-source button')) {
-      button.querySelector('img')?.remove();
-      const src = button.dataset.src === 'photos' ? '/api/themes/focus.jpg' : bg.retro[0] ? '/api/retro/thumb/' + bg.retro[0].id : null;
-      if (src) { const preview = document.createElement('img'); preview.src = src; preview.alt = ''; preview.onerror = () => preview.remove(); button.prepend(preview); }
-      button.setAttribute('aria-pressed', String(button.dataset.src === bg.source));
+      const on = button.dataset.src === bg.source;
+      const first = bg.retro.find(r => r.on) || bg.retro[0];
+      const src = button.dataset.src === 'photos' ? '/api/themes/focus.jpg' : first ? '/api/retro/thumb/' + first.id : '';
+      const url = src ? `url("${src}")` : '';
+      if (button.style.backgroundImage !== url) button.style.backgroundImage = url;
+      button.classList.toggle('on', on);
+      button.setAttribute('aria-pressed', String(on));
     }
+    $('bg-retro-sub').textContent = bg.retro.length ? `${bg.retro.length} picture${bg.retro.length === 1 ? '' : 's'}` : 'Add your own pictures';
     const active = bg.retro.filter(r => r.on).length;
     $('bg-count').textContent = active + ' of ' + bg.retro.length + ' on';
     for (const r of bg.retro) {
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'bgitem';
+      const b = el('button', 'bgitem'); b.type = 'button';
       b.classList.toggle('on', r.on);
       b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(r.on));
-      const i = document.createElement('img'); i.alt = ''; i.loading = 'lazy'; i.src = '/api/retro/thumb/' + r.id; b.append(i);
-      const tick = document.createElement('i'); tick.className = 'bgtick'; tick.textContent = r.on ? '✓' : ''; b.append(tick);
-      const n = document.createElement('span'); n.textContent = r.name; b.append(n);
-      const m = document.createElement('small'); m.textContent = r.width + ' × ' + r.height; b.append(m);
+      const i = el('img'); i.alt = ''; i.loading = 'lazy'; i.src = '/api/retro/thumb/' + r.id;
+      b.append(i, el('i', 'hcheck'), el('span', '', r.name), el('small', '', r.width + ' × ' + r.height));
       b.onclick = () => settingsCall('retro_toggle', {id: r.id, enabled: !r.on});
-      const d = document.createElement('button'); d.type = 'button'; d.className = 'bgdel'; d.textContent = '✕';
+      const d = el('button', 'bgdel', '✕'); d.type = 'button';
       d.setAttribute('aria-label', 'Remove ' + r.name);
       d.onclick = ev => { ev.stopPropagation(); if (confirm('Remove "' + r.name + '"?')) settingsCall('retro_remove', {id: r.id}); };
-      const item = document.createElement('div'); item.className = 'bgentry'; item.append(b, d); list.append(item);
+      const item = el('div', 'bgentry'); item.append(b, d); list.append(item);
     }
     $('bg-note').textContent = bg.wanted === 'retro' && !bg.retro.length ? 'No retro pictures yet, so Focus is showing.' : '';
   }
@@ -953,10 +1259,25 @@
       $('settings-' + key).hidden = !active;
       if (active) { if (focus) b.focus(); b.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
     });
+    $('settings-sub').textContent = CATEGORY_SUB[id] || '';
   }
+  // The TV's subtitles and glyphs for each category, so both screens say the same thing.
+  const CATEGORY_SUB = {appearance: 'Make it yours. Shape the look and choose a lighter experience.',
+    ambient: 'Set the mood for the moments between watching.', display: 'A comfortable picture, matched to your screen.',
+    playback: 'Your languages, quality and watching preferences.', connections: 'Keep your phone and streaming services close.',
+    system: 'Everything you need to keep your TV running smoothly.'};
+  const CATEGORY_GLYPH = {
+    appearance: '<circle cx="12" cy="12" r="7"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/>',
+    ambient: '<path d="M16.5 15.8A6.6 6.6 0 0 1 9.2 6a6.6 6.6 0 1 0 7.3 9.8z"/>',
+    display: '<rect x="4" y="5.5" width="16" height="10.5" rx="1.5"/><path d="M9.5 19.5h5M12 16v3.5"/>',
+    playback: '<circle cx="12" cy="12" r="7.5"/><path d="M10.3 9v6l5-3z"/>',
+    connections: '<rect x="5" y="5" width="7" height="14" rx="1.6"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7.5a6.5 6.5 0 0 1 0 9"/>',
+    system: '<circle cx="12" cy="12" r="2.6"/><path d="M12 4.5v2.2M12 17.3v2.2M4.5 12h2.2M17.3 12h2.2M6.7 6.7l1.6 1.6M15.7 15.7l1.6 1.6M6.7 17.3l1.6-1.6M15.7 8.3l1.6-1.6"/>'};
   categories.forEach((c, i) => {
     const b = document.createElement('button'); b.type = 'button'; b.id = 'category-' + c.toLowerCase();
-    b.textContent = c; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', 'settings-' + c.toLowerCase());
+    b.innerHTML = `<span class="badge" aria-hidden="true"><svg viewBox="0 0 24 24">${CATEGORY_GLYPH[c.toLowerCase()]}</svg></span><span>${c}</span>`;
+    paintBadge(b);
+    b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', 'settings-' + c.toLowerCase());
     b.onclick = () => selectCategory(c.toLowerCase());
     b.onkeydown = e => {
       const next = e.key === 'ArrowRight' ? (i + 1) % 6 : e.key === 'ArrowLeft' ? (i + 5) % 6 : e.key === 'Home' ? 0 : e.key === 'End' ? 5 : null;
@@ -997,74 +1318,125 @@
     draw(); content.querySelector('button:not(:disabled)')?.focus();
   }
 
+  // Section labels as on the TV: a heading starts at its first key.
+  const HEADINGS = {transparency: 'Surfaces & motion', style: 'Home screen', interval: 'Timing', visualizer: 'While idle',
+    sub_default: 'Languages & quality', autoplay_next: 'Episodes'};
+  const WIDGET_NAMES = {clock: 'Clock', weather: 'Weather', pairing: 'Pairing', continue: 'Continue watching', apps: 'Apps'};
+  function switchRow(title, sub, on, fn) {
+    const b = el('button', 'row'); b.type = 'button'; b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(on));
+    const v = el('span', 'rv', on ? 'On' : 'Off');
+    b.append(rowText(title, sub), v, el('i', 'htog'));
+    // The toggle answers the finger at once; the reload after the save confirms it.
+    b.onclick = () => { const now = b.getAttribute('aria-checked') !== 'true'; b.setAttribute('aria-checked', String(now)); v.textContent = now ? 'On' : 'Off'; fn(now); };
+    return b;
+  }
   function renderFields() {
     for (const category of ['appearance', 'ambient', 'playback']) {
       const container = $('fields-' + category);
-      // Keep focused edits intact during the display countdown poll.
-      if (container.contains(document.activeElement)) continue;
+      // Keep a half-typed value intact during the display countdown poll.
+      const active = document.activeElement;
+      if (container.contains(active) && active.matches('input, select')) continue;
       container.replaceChildren();
+      let card = null;
       for (const [key, group, title, kind, options, network] of setState.fields || []) {
         if (group.toLowerCase() !== category) continue;
-        const row = document.createElement('div'); row.className = 'setting-row kind-' + kind;
-        const label = document.createElement('label'); label.htmlFor = 'setting-' + key; label.id = 'label-' + key; label.textContent = title;
+        if (!card || HEADINGS[key]) card = section(container, HEADINGS[key] || 'General');
         const value = setState.values[key];
-        let control;
         const save = value => settingsCall('setting_set', {key, value});
+        const parked = network && setState.values.style === 'bubbles';
+        const sub = parked ? 'Available with the Network layout. Your choice is kept.' : '';
+        let row, control;
         if (kind === 'bool') {
-          control = document.createElement('button'); control.type = 'button'; control.setAttribute('role', 'switch');
-          control.setAttribute('aria-labelledby', 'label-' + key);
-          control.setAttribute('aria-checked', String(value)); control.textContent = value ? 'On' : 'Off'; control.onclick = () => save(!value);
+          row = control = switchRow(title, sub, !!value, save);
         } else if (kind === 'choice') {
-          control = document.createElement('select');
-          for (const v of options) { const o = document.createElement('option'); o.value = v; o.textContent = settingLabel(v); control.append(o); }
+          row = el('label', 'row');
+          control = el('select');
+          for (const v of options) { const o = el('option', '', settingLabel(v)); o.value = v; control.append(o); }
           control.value = value; control.onchange = () => save(control.value);
+          control.setAttribute('aria-label', title);
+          row.append(rowText(title, sub), el('span', 'rv', settingLabel(value)), el('i', 'chev'), control);
         } else if (kind === 'order' || kind === 'languages') {
-          control = document.createElement('button'); control.type = 'button'; control.textContent = value.map(v => LANG[v] || v).join(' → ');
-          control.onclick = () => orderPicker(key, title, value, kind === 'languages', save);
+          row = control = actionRow(title, sub, () => orderPicker(key, title, value, kind === 'languages', save));
+          row.insertBefore(el('span', 'rv', value.map(v => LANG[v] || v).join(' → ')), row.lastChild);
         } else if (kind === 'multi') {
-          control = document.createElement('div');
+          row = el('div', 'row static');
+          row.append(rowText(title, sub), el('span', 'rv', `${value.filter(v => options.includes(v)).length} of ${options.length}`));
+          card.append(row);
+          control = el('div', 'multi');
           for (const v of options) {
-            const b = document.createElement('button'); b.type = 'button'; b.textContent = v;
-            b.setAttribute('role', 'switch'); b.setAttribute('aria-label', title + ': ' + v); b.setAttribute('aria-checked', String(value.includes(v)));
-            b.onclick = () => save(value.includes(v) ? value.filter(x => options.includes(x) && x !== v) : [...value.filter(x => options.includes(x)), v]); control.append(b);
+            const on = value.includes(v);
+            const b = switchRow(WIDGET_NAMES[v] || settingLabel(v), '', on, now => save(now ? [...value.filter(x => options.includes(x)), v] : value.filter(x => options.includes(x) && x !== v)));
+            b.classList.add('sub'); b.setAttribute('aria-label', title + ': ' + v);
+            card.append(b);
           }
+          row = null;
         } else {
-          control = document.createElement('input'); control.type = kind === 'number' ? 'number' : 'text';
+          row = el('label', 'row');
+          control = el('input', 'rv'); control.type = kind === 'number' ? 'number' : 'text';
           control.value = Array.isArray(value) ? value.join(', ') : value;
-          if (kind === 'number') { control.min = options[0]; control.max = options[1]; control.step = key === 'still_watching_hours' ? '0.1' : '1'; }
-          const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Save'; apply.setAttribute('aria-label', 'Save ' + title);
-          apply.onclick = () => { if (control.reportValidity()) save(kind === 'number' ? Number(control.value) : ['languages', 'order'].includes(kind) ? control.value.split(',').map(v => v.trim()) : control.value.trim()); };
-          row.append(apply);
+          control.setAttribute('aria-label', title);
+          if (kind === 'number') { control.min = options[0]; control.max = options[1]; control.step = key === 'still_watching_hours' ? '0.1' : '1'; control.inputMode = 'decimal'; }
+          else { control.autocapitalize = 'off'; control.spellcheck = false; control.maxLength = 3; }
+          control.enterKeyHint = 'done';
+          // Saved when the value is committed (keyboard Done or leaving the field), like a TV row.
+          control.onchange = () => { if (control.reportValidity()) save(kind === 'number' ? Number(control.value) : control.value.trim().toLowerCase()); };
+          control.onkeydown = e => { if (e.key === 'Enter') control.blur(); };
+          row.append(rowText(title, sub), control);
         }
         control.id = 'setting-' + key;
-        if (network && setState.values.style === 'bubbles') { control.disabled = true; const note = document.createElement('p'); note.className = 'muted'; note.textContent = 'Available with Network layout. Your selection is saved.'; row.append(note); }
-        row.prepend(label, control); container.append(row);
+        if (parked) control.disabled = true;
+        if (row) card.append(row);
       }
     }
+    renderConnections();
+    renderSystem();
+  }
+  // Connections: the TV's glass QR card says "scan to connect"; here the same card shows the link it made.
+  function renderConnections() {
     const access = $('phone-access'); access.replaceChildren();
-    const info = document.createElement('p'); info.className = 'muted'; info.textContent = 'This phone is paired. Pair another phone using the QR code on TV Home.'; access.append(info);
-    for (const [title, mode, question] of [['Disconnect other phones', 'other_phones', 'Disconnect every other paired phone?'], ['Disable legacy link', 'old_link', 'Disable the old remote link? Phones using it must pair again.']]) {
-      const b = document.createElement('button'); b.type = 'button'; b.textContent = title; b.disabled = mode === 'old_link' && state && !state.old_link_active;
-      b.onclick = async () => { if (!confirm(question)) return; try { await api('/api/revoke', {mode}); refresh(); } catch (e) { message(e.message); } }; access.append(b);
+    const card = el('div', 'glass linkcard' + (online ? '' : ' offline'));
+    const sig = el('div', 'sigline'), bars = el('span', 'sig');
+    for (let i = 0; i < 4; i++) bars.append(el('i', online || i === 0 ? '' : 'dim'));
+    sig.append(bars, el('span', '', online ? 'iMac TV · paired' : 'iMac TV · not reachable'));
+    const L = [44, 48], R = [256, 48], r = 30;
+    const node = ([x, y], lit) => `<polygon class="node${lit ? ' lit' : ''}" points="${ptsAttr(polyPts(r, x, y))}"/>`;
+    const dots = [[104, 40], [150, 55], [196, 41]];
+    const wire = [[L[0] + r, L[1]], ...dots, [R[0] - r, R[1]]];
+    const art = `<svg class="linkart" viewBox="0 0 300 96" aria-hidden="true">` +
+      wire.slice(1).map((p, i) => `<line class="wire${online ? '' : ' off'}" x1="${wire[i][0]}" y1="${wire[i][1]}" x2="${p[0]}" y2="${p[1]}"/>`).join('') +
+      dots.map(([x, y]) => `<path class="dot" d="M${x} ${y - 2.6}l2.6 2.6-2.6 2.6-2.6-2.6z"/>`).join('') +
+      node(L, online) + node(R, online) +
+      `<rect class="gl" x="${L[0] - 5.5}" y="${L[1] - 10}" width="11" height="20" rx="2.2"/><path class="gl" d="M${L[0] - 1.5} ${L[1] + 6.5}h3"/>` +
+      `<rect class="gl" x="${R[0] - 11}" y="${R[1] - 8.5}" width="22" height="14" rx="1.6"/><path class="gl" d="M${R[0] - 4.5} ${R[1] + 9.5}h9"/></svg>`;
+    const wrap = el('div'); wrap.innerHTML = art;
+    card.append(sig, wrap.firstChild, el('h4', '', online ? 'This phone is connected' : 'Reconnecting…'),
+      el('p', 'meta', 'Pair another phone with the QR code on TV Home.'));
+    const rows = el('div', 'glass rows');
+    for (const [title, sub, mode, question] of [['Disconnect other phones', 'Every phone except this one pairs again', 'other_phones', 'Disconnect every other paired phone?'],
+      ['Disable legacy link', 'Phones on the old link must pair again', 'old_link', 'Disable the old remote link? Phones using it must pair again.']]) {
+      const b = actionRow(title, sub, async () => { if (!confirm(question)) return; try { await api('/api/revoke', {mode}); refresh(); } catch (e) { message(e.message); } });
+      b.disabled = mode === 'old_link' && state && !state.old_link_active;
+      rows.append(b);
     }
+    access.append(card, rows);
+  }
+  function renderSystem() {
     const system = $('settings-system'); system.replaceChildren();
-    const hapticRow = document.createElement('div'); hapticRow.className = 'setting-row kind-bool';
-    const hapticLabel = document.createElement('label'); hapticLabel.id = 'haptics-label'; hapticLabel.textContent = 'Remote haptics'; hapticLabel.htmlFor = 'haptics';
-    const hapticSwitch = document.createElement('button'); hapticSwitch.type = 'button'; hapticSwitch.id = 'haptics';
-    hapticSwitch.setAttribute('role', 'switch'); hapticSwitch.setAttribute('aria-labelledby', 'haptics-label');
-    hapticSwitch.setAttribute('aria-checked', String(haptics)); hapticSwitch.textContent = haptics ? 'On' : 'Off';
-    hapticSwitch.onclick = () => {
-      haptics = !haptics;
-      try { localStorage.setItem('remote-haptics', haptics ? 'on' : 'off'); } catch (e) {}
-      hapticSwitch.setAttribute('aria-checked', String(haptics)); hapticSwitch.textContent = haptics ? 'On' : 'Off';
-    };
-    hapticRow.append(hapticLabel, hapticSwitch); system.append(hapticRow);
-    const hapticNote = document.createElement('p'); hapticNote.className = 'muted'; hapticNote.textContent = 'A light tap on this phone, where supported.'; system.append(hapticNote);
-    for (const [title, action] of [['Restart current app', 'restart_app'], ['Recover TV Home', 'recover'], ['Restart desktop session', 'restart_session']]) {
-      const b = document.createElement('button'); b.type = 'button'; b.textContent = title;
-      b.onclick = () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }; system.append(b);
+    const feel = section(system, 'This phone');
+    const sw = switchRow('Remote haptics', canVibrate ? 'One light tap as you press' : 'This browser cannot vibrate', haptics, on => {
+      haptics = on;
+      try { localStorage.setItem('remote-haptics', on ? 'on' : 'off'); } catch (e) {}
+      haptic('press');
+    });
+    sw.id = 'haptics'; feel.append(sw);
+    const fix = section(system, 'Maintenance');
+    for (const [title, sub, action] of [['Restart current app', 'Closes and reopens what is on screen', 'restart_app'],
+      ['Recover TV Home', 'Brings Home back to the front', 'recover'], ['Restart desktop session', 'Stops the current video', 'restart_session']]) {
+      fix.append(actionRow(title, sub, () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }));
     }
-    const status = document.createElement('p'); status.className = 'muted'; status.textContent = `Connection: ${online ? 'connected' : 'offline'} · CPU: ${state?.temperature ?? 'unknown'}°C · GPU: ${state?.gpu_temperature ?? 'unknown'}°C`; system.append(status);
+    system.append(el('h3', '', 'Status'));
+    const deg = v => (v == null ? '—' : Math.round(v) + '°C');
+    system.append(el('p', 'note', `${online ? 'Connected' : 'Offline'} · CPU ${deg(state && state.temperature)} · GPU ${deg(state && state.gpu_temperature)}`));
   }
 
   const data = r => (r && r.result) || {};
@@ -1108,7 +1480,7 @@
       if (!r) throw new Error('Not connected');
       const list = data(r).items || [];
       items[type] = more ? items[type].concat(list) : list;
-      fill(pane.querySelector('.grid'), list, more);
+      fill(pane.querySelector('.pbrowse .grid'), list, more);
       loaded[type] = true;
       pane.querySelector('.more').hidden = !list.length;
       if (jobs[1]) await jobs[1];
@@ -1171,9 +1543,9 @@
       if (seasons.length) { draw(); el.append(chipBox, eps); }
       else { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No episodes found.'; el.append(p); }
     } else if (t.resume > 0) {
-      el.append(btn(`▶ Resume from ${fmt(t.resume)}`, () => play({})), btn('Start over', () => play({start: 0})));
+      el.append(btn(`Resume from ${fmt(t.resume)}`, () => play({})), btn('Start over', () => play({start: 0})));
     } else {
-      el.append(btn('▶ Play on TV', () => play({})));
+      el.append(btn('Play on TV', () => play({})));
     }
     content.replaceChildren(el);
   }
@@ -1252,6 +1624,9 @@
   });
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+  applyShape(nodeShape);
+  drawSky(true);
+  tickClock();
   checkAutoPair();
   refresh(); setInterval(refresh, 2000);
 })();
