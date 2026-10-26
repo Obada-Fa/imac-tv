@@ -81,8 +81,13 @@ torrent is removed when playback ends. Continue Watching comes from
 With a TorBox key, Torrentio returns TorBox direct links. Cached ones play at once
 and are tried before torrents; torrents remain the fallback.
 
-**From the phone:** tap Play with no key set and a popup asks for it (or use the
-TorBox setting to change or remove it). The controller checks the key against
+**From the phone:** open **Settings → TorBox → Add API key**. You can change or
+remove the key there too. Play also prompts when no key is set.
+**From TV Home on a laptop or PC:** open **Settings → TorBox**, paste the key
+and select **Save API key** (or press Enter). Both screens configure the same
+computer; saving on the paired phone applies immediately to that computer's
+playback without restarting. Separate computers each need their own setup.
+The controller checks the key against
 `api.torbox.app` over HTTPS, stores it as `~/.local/share/imactv/torbox.key`
 (mode 600, written atomically), clears the cached source lists and uses it from
 then on. Only paired phones can do this, and key entry is limited to 5 tries per

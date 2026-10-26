@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import backgrounds  # noqa: E402
 import display  # noqa: E402
 import widgets  # noqa: E402
-from screens import Screen, text_label  # noqa: E402
+from screens import Screen, text_label, cmd  # noqa: E402
+from media import config as media_config  # noqa: E402
 
 PER_ROW = 5
 MIN_WIDTH = 640
@@ -102,6 +103,7 @@ class SettingsScreen(Screen):
         px = shell.px
         self.get_style_context().add_class("set-page")
         self.rows = []
+        self.torbox_busy = False
         self.loading = False
         self.outputs = None
         self.busy = False
@@ -209,6 +211,7 @@ class SettingsScreen(Screen):
             self.content.remove(c)
             c.destroy()
         self.rows = []
+        self.render_torbox()
         self.render_background()
         sec = text_label("DISPLAY", "set-section")
         sec.set_margin_top(px(30))
@@ -246,6 +249,65 @@ class SettingsScreen(Screen):
             foot.set_margin_top(px(26))
             self.content.pack_start(foot, False, False, 0)
         self.content.show_all()
+
+    def render_torbox(self):
+        px = self.shell.px
+        self.content.pack_start(text_label("TORBOX", "set-section"), False, False, 0)
+        self.torbox_status = text_label("", "set-note")
+        self.content.pack_start(self.torbox_status, False, False, 0)
+        self.torbox_entry = Gtk.Entry()
+        self.torbox_entry.set_visibility(False)
+        self.torbox_entry.set_max_length(128)
+        self.torbox_entry.set_placeholder_text("Paste your TorBox API key")
+        self.torbox_entry.get_style_context().add_class("search-entry")
+        self.torbox_entry.set_size_request(-1, px(70))
+        self.torbox_entry.sel_key = ("torbox", "key")
+        self.torbox_entry.connect("activate", lambda *_: self.save_torbox())
+        self.content.pack_start(self.torbox_entry, False, False, 0)
+        self.rows.append([self.torbox_entry])
+        self.torbox_save = self.button("Save API key", "Checked with TorBox", False, ("torbox", "save"), self.save_torbox)
+        self.torbox_remove = self.button("Remove key", "Disconnect TorBox", False, ("torbox", "remove"),
+                                         lambda: self.change_torbox("torbox_remove"))
+        self.grid([self.torbox_save, self.torbox_remove])
+        self.update_torbox(bool(media_config.read_key()))
+        self.content.pack_start(text_label("You can also add or change this key from your phone's Settings.", "set-note"),
+                                False, False, 0)
+
+    def update_torbox(self, configured):
+        self.torbox_status.set_text("TorBox: " + ("connected" if configured else "not connected"))
+        self.torbox_remove.set_sensitive(configured and not self.torbox_busy)
+
+    def save_torbox(self):
+        key = self.torbox_entry.get_text().strip()
+        self.torbox_entry.set_text("")
+        if not key:
+            self.shell.toast("Paste your TorBox API key first", 4)
+            return
+        self.change_torbox("torbox_key", {"key": key})
+
+    def change_torbox(self, action, params=None):
+        if self.torbox_busy:
+            return
+        self.torbox_busy = True
+        for w in (self.torbox_entry, self.torbox_save, self.torbox_remove):
+            w.set_sensitive(False)
+        self.shell.toast("Checking with TorBox…" if action == "torbox_key" else "Removing key…", 3)
+
+        def work():
+            result = cmd(action, params, timeout=15)
+            GLib.idle_add(self.torbox_changed, result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def torbox_changed(self, result):
+        self.torbox_busy = False
+        self.torbox_entry.set_sensitive(True)
+        self.torbox_save.set_sensitive(True)
+        self.update_torbox(bool(media_config.read_key()))
+        ok = result and result.get("ok")
+        self.shell.toast("TorBox settings saved" if ok else (result or {}).get("error", "Couldn't reach the controller"),
+                         3 if ok else 6)
+        self.torbox_save.grab_focus()
+        return False
 
     def render_background(self):
         px = self.shell.px

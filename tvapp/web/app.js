@@ -47,6 +47,7 @@
   }
 
   function render(s) {
+    renderTorboxRow('set-torbox-row', s.torbox);
     state = s;
     pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
@@ -515,33 +516,40 @@
       }
       skipSet(false);
       if (state) state.torbox = {configured: true};
+      renderTorboxRow('set-torbox-row', {configured: true});
       if (sheetName === 'torbox') closeSheet();
       if (done) done();
       refresh();
     };
   }
 
-  function renderTorboxRow() {
-    const row = $('torbox-row');
-    if (!row || !state || !state.torbox) { if (row) row.replaceChildren(); return; }
-    const on = !!state.torbox.configured;
+  function renderTorboxRow(id = 'torbox-row', torbox = state && state.torbox) {
+    const row = $(id);
+    if (!row || !torbox) return;
+    const on = !!torbox.configured;
     if (row.dataset.on === String(on)) return;
     row.dataset.on = String(on);
     const p = document.createElement('p'); p.textContent = on ? 'TorBox: connected' : 'TorBox: not connected';
     const r = document.createElement('div'); r.className = 'sheet-row';
+    const connect = document.createElement('button'); connect.type = 'button';
+    connect.textContent = on ? 'Change API key' : 'Add API key';
+    connect.onclick = () => openTorbox(null);
+    r.append(connect);
     const b = document.createElement('button'); b.type = 'button';
     if (on) {
       b.textContent = 'Remove key';
       b.onclick = async () => {
         if (!confirm('Remove the TorBox key from the TV?')) return;
-        try { await send('torbox_remove'); if (state) state.torbox = {configured: false}; renderTorboxRow(); }
+        try {
+          await send('torbox_remove');
+          if (state) state.torbox = {configured: false};
+          renderTorboxRow(); renderTorboxRow('set-torbox-row', {configured: false});
+        }
         catch (e) { message(e.message); }
       };
-    } else {
-      b.textContent = 'Connect TorBox';
-      b.onclick = () => { skipSet(false); openTorbox(null); };
     }
-    r.append(b); row.replaceChildren(p, r);
+    if (on) r.append(b);
+    row.replaceChildren(p, r);
   }
 
   function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
@@ -784,6 +792,7 @@
     } catch (err) { $('set-error').textContent = err.message; }
   }
   function renderSettings() {
+    renderTorboxRow('set-torbox-row', setState.torbox);
     const t = setState.trial || {active: false};
     $('trial').hidden = !t.active;
     if (t.active) {

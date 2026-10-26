@@ -715,6 +715,9 @@ class Home(Gtk.Window):
         if not state:
             return False
         self.set_remote(state.get("remote"))
+        settings = self.tops.get("settings")
+        if settings and not settings.torbox_busy and "torbox" in state:
+            settings.update_torbox(state["torbox"]["configured"])
         GLib.idle_add(self.notify_pair)
         app, phase = state.get("app"), state.get("phase")
         if phase == "buffering":

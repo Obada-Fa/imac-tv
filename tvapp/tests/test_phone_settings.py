@@ -8,7 +8,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 
-from test_torbox import TorboxCase, server
+from test_torbox import TorboxCase, server, KEY
 
 OUT = {"name": "HDMI-1", "connected": True, "current": {"mode": "1920x1080", "rate": 60.0},
        "modes": [{"mode": "1920x1080", "rates": [60.0, 50.0]}]}
@@ -50,6 +50,17 @@ class SettingsTests(TorboxCase):
         s = self.c.settings()
         self.assertEqual(s["outputs"], [])
         self.assertIn("xrandr missing", s["display_error"])
+
+    def test_torbox_settings_share_the_controller_key_without_exposing_it(self):
+        self.patch(fake_display())
+        self.assertEqual(self.c.settings()["torbox"], {"configured": False})
+        with self.good():
+            self.c.action("torbox_key", {"key": KEY})
+        saved = self.c.settings()
+        self.assertEqual(saved["torbox"], {"configured": True})
+        self.assertNotIn(KEY, json.dumps(saved))
+        self.c.action("torbox_remove", {})
+        self.assertEqual(self.c.settings()["torbox"], {"configured": False})
 
     def test_start_confirm_revert(self):
         d = self.patch(fake_display())

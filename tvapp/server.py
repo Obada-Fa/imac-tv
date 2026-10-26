@@ -1518,6 +1518,7 @@ class Controller:
     def settings(self):
         """Phone Settings tab: outputs and trial (xrandr, ~1 s) plus the YouTube auto-close setting."""
         out = {"outputs": [], "trial": {"active": False}, "display_error": "", "background": self.background_state(),
+               "torbox": {"configured": bool(media_config.read_key())},
                "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
         if display is None:
             out["display_error"] = "Display control is not available"
