@@ -90,6 +90,9 @@ window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "
 .progress progress {{ min-height: {round(6 * scale)}px; background: #fff; }}
 .tv-scrollbar {{ opacity: 0; }}
 button {{ outline: none; }}
+.update-notice {{ background: #182c43; color: #e1efff; border: {round(2 * scale)}px solid #82baff;
+  border-radius: {round(18 * scale)}px; padding: {round(12 * scale)}px {round(24 * scale)}px; font-size: {round(22 * scale)}px; }}
+.update-notice:focus {{ background: #285077; box-shadow: 0 0 0 {round(3 * scale)}px #c3dfff; }}
 """.encode() + screens.build_css(scale).encode() + home_css(scale).encode() + settings_css(scale).encode() + theme_css(scale, preferences).encode()
 
 
@@ -158,6 +161,15 @@ class Home(Gtk.Window):
         self.header = self.make_header()
         self.header.set_valign(Gtk.Align.START)
         root.add_overlay(self.header)
+        self.update_notice = Gtk.Button(label='Update available · Update now')
+        self.update_notice.get_style_context().add_class('update-notice')
+        self.update_notice.set_halign(Gtk.Align.CENTER)
+        self.update_notice.set_valign(Gtk.Align.START)
+        self.update_notice.set_margin_top(self.px(104))
+        self.update_notice.set_no_show_all(True)
+        self.update_notice.set_tooltip_text('Install the update and restart the TV app. Playback will stop.')
+        self.update_notice.connect('clicked', lambda *_: self.install_update())
+        root.add_overlay(self.update_notice)
         self.buffering = BufferingOverlay(self)
         self.buffering.connect("map", lambda *_: self.covered(True))
         self.buffering.connect("unmap", lambda *_: self.covered(False))
@@ -241,6 +253,7 @@ class Home(Gtk.Window):
             settings.remember()
         self.sw, self.sh = w, h
         self.scale = ui_scale(h)
+        self.update_notice.set_margin_top(self.px(104))
         self.close_sheet()
         self.load_css()
         for child in list(self.stack.get_children()):
@@ -478,6 +491,8 @@ class Home(Gtk.Window):
             return [[w for w in row if w.get_visible()] for row in self.sheet["rows"]]
         screen = self.current()
         rows = [self.header_row] if screen and screen.header else []
+        if self.update_notice.get_visible() and self.update_notice.get_sensitive():
+            rows.append([self.update_notice])
         rows += screen.focus_groups() if screen else []
         return [[w for w in row if w.get_visible()] for row in rows]
 
@@ -721,6 +736,15 @@ class Home(Gtk.Window):
         if not state:
             return False
         self.settings_status = state
+        updates = state.get('updates') or {}
+        self.update_notice.set_visible(bool(updates.get('available') or updates.get('status') in ('queued', 'updating', 'restarting')))
+        self.update_notice.set_sensitive(bool(updates.get('can_update')) and not updates.get('busy'))
+        self.update_notice.set_label('Updating TV…' if updates.get('status') in ('queued', 'updating', 'restarting')
+                                     else 'Checking for updates…' if updates.get('busy') else 'Update available · Update now')
+        target = updates.get('latest')
+        if updates.get('available') and target != getattr(self, 'update_seen', None):
+            self.update_seen = target
+            self.toast('A TV update is available. Select Update now to install and restart.', 8)
         settings = self.tops.get("settings")
         if settings and settings.category == "System":
             settings.update_system_status(state)
@@ -748,6 +772,16 @@ class Home(Gtk.Window):
         self.prev_app = app
         self.state_seen = True
         return False
+
+    def install_update(self):
+        self.update_notice.set_sensitive(False)
+
+        def work():
+            result = screens.cmd('update_install', timeout=15)
+            if not result or not result.get('ok'):
+                GLib.idle_add(self.toast, (result or {}).get('error', 'Could not reach the controller'), 6)
+            threading.Thread(target=self.poll_state, daemon=True).start()
+        threading.Thread(target=work, daemon=True).start()
 
     def sync_home_settings(self):
         home = self.tops.get('home')

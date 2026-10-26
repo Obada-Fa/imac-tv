@@ -27,6 +27,7 @@ BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 import settings_model
+import updater
 import backgrounds
 import nowplaying
 import widgets
@@ -377,6 +378,7 @@ class Controller:
         self.lock = threading.RLock()
         self.action_lock = threading.RLock()
         self.settings_lock = threading.Lock()
+        self.updater = updater.Updater(BASE.parent, DATA, running="", notify=self._notify_update)
         self.retro = backgrounds.Backgrounds(DATA)
         threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
         self.home_lock = threading.Lock()
@@ -621,10 +623,20 @@ class Controller:
         except (OSError, RuntimeError, ValueError, TimeoutError):
             pass
 
+    def _notify_update(self):
+        try:
+            command(["notify-send", "--app-name=iMac TV", "--icon=software-update-available",
+                     "TV update available", "Open TV Home or your phone remote and select Update now to install and restart."], timeout=3)
+            return True
+        except (RuntimeError, OSError, subprocess.TimeoutExpired):
+            return False  # The in-app notice also works on desktops without a notification daemon.
+
     def _watch(self):
+        self.updater.capture_running()
         threading.Thread(target=self._check_audio, daemon=True).start()
         while True:
             time.sleep(2)
+            self.updater.tick()
             if time.monotonic() - self._yt_check_at >= 60:
                 self._yt_check_at = time.monotonic()
                 threading.Thread(target=self._close_youtube_if_long_paused, daemon=True).start()
@@ -1488,6 +1500,7 @@ class Controller:
                 "gui": gui, "volume": percent, "muted": muted,
                 "audio_warning": self.audio_warning,
                 "old_link_active": bool(self.legacy_secret),
+                "updates": self.updater.status(),
                 "torbox": {"configured": bool(media_config.read_key())},
                 "playback": player, "remote": self.remote_state(), "youtube_now": yt_now,
                 "youtube_mode": (yt_now or {}).get("youtube_mode"), "youtube_reason": (yt_now or {}).get("youtube_reason"),
@@ -1634,6 +1647,10 @@ class Controller:
             raise RuntimeError(str(exc)[:200])
 
     def action(self, action, params):
+        if action == "update_check":
+            return self.updater.check()
+        if action == "update_install":
+            return self.updater.apply()
         if action in self.SETTINGS_ACTIONS:
             return self.settings_action(action, params)
         with self.action_lock:

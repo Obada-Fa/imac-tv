@@ -108,6 +108,28 @@ class SettingsTests(TorboxCase):
 
 
 class SettingsHttpTests(TorboxCase):
+    def test_update_commands_require_pairing_and_dispatch_to_fixed_updater(self):
+        server.CONTROL = self.c
+        httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        base = f'http://127.0.0.1:{httpd.server_address[1]}'
+        with mock.patch.object(self.c.updater, 'check', return_value={'status': 'checking'}) as check, \
+                mock.patch.object(self.c.updater, 'apply', return_value={'status': 'queued'}) as apply:
+            for action, fn in [('update_check', check), ('update_install', apply)]:
+                body = json.dumps({'action': action, 'params': {'repo': '/untrusted/path'}}).encode()
+                req = urllib.request.Request(base + '/api/commands', data=body,
+                                             headers={'Content-Type': 'application/json'})
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    urllib.request.urlopen(req, timeout=5)
+                self.assertEqual(ctx.exception.code, 401)
+                fn.assert_not_called()
+                with mock.patch.object(server.Handler, 'authorised', return_value=True):
+                    result = json.loads(urllib.request.urlopen(req, timeout=5).read())
+                self.assertTrue(result['ok'])
+                fn.assert_called_once_with()
+
     def test_unpaired_401_and_error_json(self):
         server.CONTROL = self.c
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)

@@ -29,6 +29,44 @@ can revoke other paired phones or disable the old `?k=` link after migration.
 Power Off is full shutdown;
 the physical power button is required to start the iMac again.
 
+## App updates
+
+The controller checks `origin/main` on GitHub at startup and every 30 minutes.
+Every new commit on main is an update; a GitHub release/tag alone does not trigger one.
+When an update is available, the desktop shows a notification (when `notify-send`
+and a desktop notification service are available), and TV Home shows an **Update now**
+button. The phone's Remote tab shows the same button. On either device,
+**Settings → System → Software updates** shows progress, errors, a manual
+**Check for updates**, and **Update now**.
+
+One click downloads and validates the code, fast-forwards main, runs
+`tvapp/deploy/install.sh` to refresh the controller service and Home autostart,
+then restarts the TV app. Playback stops and the remote reconnects automatically.
+Settings, pairing and playback history remain in `~/.local/share/imactv`.
+This updates the TV app; system packages, VacuumTube and the streaming engine
+are managed by the full installer separately.
+
+Updates require a Git checkout on `main`, Git access to `origin`, and a running
+user systemd session. Local edits, untracked files, local commits outside
+origin/main, or rewritten remote history block installation with an explanation;
+the updater never resets, stashes, pushes, or discards local work. If offline,
+the check reports the connection problem and can be retried. It never installs
+an update without a click. Only the local TV and paired phones can trigger it.
+
+To enable this feature on an existing iMac installation, pull this version once
+and redeploy from the repository directory:
+
+```bash
+git pull --ff-only origin main
+bash tvapp/deploy/install.sh
+```
+
+The apply worker uses a separate `imactv-update.service` transient user unit so
+restarting `tvremote.service` cannot kill it. Progress is stored in
+`~/.local/share/imactv/update.json`; logs are available with
+`journalctl --user -u imactv-update.service`. If deployment fails after download,
+the error offers a retry; the downloaded code is retained.
+
 ## Home and ambient mode
 
 Home keeps its rotating photo background, clock and launcher widgets during normal use. After the

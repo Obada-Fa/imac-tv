@@ -104,6 +104,8 @@ if [ "$SKIP_APT" = true ]; then
 else
   APT_PKGS=(
     python3
+    git
+    libnotify-bin
     python3-gi
     gir1.2-gtk-3.0
     gir1.2-gdkpixbuf-2.0

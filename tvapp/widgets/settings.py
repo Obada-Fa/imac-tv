@@ -801,6 +801,13 @@ class SettingsScreen(Screen):
         threading.Thread(target=work, daemon=True).start()
 
     def render_system(self):
+        self.section('Software updates')
+        self.update_status = self.note('', top=0)
+        self.update_check = self.button('Check for updates', 'Checks GitHub for a new TV version', False,
+                                        ('update_check',), lambda: self.apply_setting('update_check', {}))
+        self.update_install = self.button('Update now', 'Installs the update and restarts the TV app; playback stops', False,
+                                          ('update_install',), lambda: self.apply_setting('update_install', {}))
+        self.grid([self.update_check, self.update_install])
         self.section('Maintenance')
         for title, sub, action in [('Restart current app', 'Close and reopen what is playing', 'restart_app'),
                                    ('Recover TV Home', 'Bring the TV back to this screen', 'recover'),
@@ -818,6 +825,10 @@ class SettingsScreen(Screen):
         self.update_system_status(state)
 
     def update_system_status(self, state):
+        updates = state.get('updates') or {}
+        self.update_status.set_text(updates.get('message', 'Waiting for the controller…'))
+        self.update_check.set_sensitive(bool(updates) and not updates.get('busy'))
+        self.update_install.set_sensitive(bool(updates.get('can_update')) and not updates.get('busy'))
         self.system_status.set_text('Controller %s  ·  CPU %s  ·  GPU %s' % (
             'connected' if state else 'unavailable',
             str(state.get('temperature') or '–') + '°C', str(state.get('gpu_temperature') or '–') + '°C'))

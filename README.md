@@ -32,6 +32,8 @@
   - Upload or replace Retro images from the phone under Appearance. Both devices can enable, disable, or remove images.
   - Network-only controls are disabled in Bubbles layout while retaining their saved values. Display changes still require timed Keep/Revert confirmation.
 
+- **One-click app updates**: checks GitHub's `origin/main` at startup and every 30 minutes. A TV notice and phone button offer **Update now**; **Settings → System → Software updates** also offers a manual check. Updating downloads the new commits, refreshes the controller/autostart setup, and restarts the TV app. Playback stops during installation, and local edits or conflicting commits block the update safely. See [app updates](tvapp/README.md#app-updates).
+
 - 🍿 **Playback**:
   - **mpv** plays everything; the headless **stremio-service** engine (`imactv-engine.service`, `127.0.0.1:11470`) streams torrents over HTTP.
   - **Subtitles**: Arabic, Nederlands and English are fetched automatically and always selectable.

@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const remote = $('remote'), pair = $('pair'), sheet = $('sheet'), browser = $('browser'), tabbar = $('tabbar');
   let state = null, online = false, mode = 'dpad', sheetName = '', draggingSeek = false;
-  let draggingBrightness = false, brightnessReason = '';
+  let draggingBrightness = false, brightnessReason = '', updatePending = false;
   const phoneMedia = new TVMediaControls({button: $('phone-media'), send, message,
     readState: async () => {
       const s = await api('/api/state');
@@ -326,6 +326,7 @@
     remoteLabel = label.replace(/^●\s*/, '');
     tickClock();
     document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => b.disabled = !value);
+    renderUpdateStatus();
   }
 
   function showPair() {
@@ -692,7 +693,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       
-      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
@@ -1430,6 +1431,13 @@
   }
   function renderSystem() {
     const system = $('settings-system'); system.replaceChildren();
+    const updates = section(system, 'Software updates');
+    const updateText = el('p', 'note'); updateText.id = 'update-status'; updateText.setAttribute('role', 'status');
+    updates.append(updateText);
+    const check = actionRow('Check for updates', 'Checks GitHub for a new TV version', () => fire('update_check'));
+    check.id = 'update-check'; updates.append(check);
+    const install = actionRow('Update now', 'Installs and restarts the TV app; playback stops', installUpdate);
+    install.id = 'update-install'; updates.append(install);
     const feel = section(system, 'This phone');
     const sw = switchRow('Remote haptics', canVibrate ? 'One light tap as you press' : 'This browser cannot vibrate', haptics, on => {
       haptics = on;
@@ -1445,6 +1453,29 @@
     system.append(el('h3', '', 'Status'));
     const deg = v => (v == null ? '—' : Math.round(v) + '°C');
     system.append(el('p', 'note', `${online ? 'Connected' : 'Offline'} · CPU ${deg(state && state.temperature)} · GPU ${deg(state && state.gpu_temperature)}`));
+    renderUpdateStatus();
+  }
+
+  async function installUpdate() {
+    if (updatePending) return;
+    updatePending = true;
+    renderUpdateStatus();
+    try { await send('update_install'); }
+    catch (err) { /* send displays the error */ }
+    finally { updatePending = false; renderUpdateStatus(); }
+  }
+  $('update-notice').onclick = installUpdate;
+  function renderUpdateStatus() {
+    const u = (state && state.updates) || {};
+    const busy = Boolean(u.busy || updatePending);
+    const notice = $('update-notice');
+    notice.hidden = !(u.available || updatePending || ['queued', 'updating', 'restarting'].includes(u.status));
+    notice.disabled = !online || busy || !u.can_update;
+    notice.textContent = busy ? (u.message || 'Starting update…') : 'TV update available · Update now';
+    notice.title = 'Installs the update and restarts the TV app. Playback will stop.';
+    if ($('update-status')) $('update-status').textContent = u.message || 'Waiting for the controller…';
+    if ($('update-check')) $('update-check').disabled = !online || busy || !state?.updates;
+    if ($('update-install')) $('update-install').disabled = !online || busy || !u.can_update;
   }
 
   const data = r => (r && r.result) || {};

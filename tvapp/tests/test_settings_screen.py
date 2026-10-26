@@ -131,6 +131,21 @@ class CategoryNavigationTest(unittest.TestCase):
         self.assertEqual(restored.last_focus.sel_key, key)
         restored.destroy()
 
+    def test_update_controls_follow_live_status(self):
+        from unittest import mock
+        screen = self.screen
+        screen.select_category('System')
+        screen.update_system_status({'updates': {'message': 'One update available', 'can_update': True}})
+        self.assertEqual(screen.update_status.get_text(), 'One update available')
+        self.assertTrue(screen.update_check.get_sensitive())
+        self.assertTrue(screen.update_install.get_sensitive())
+        with mock.patch.object(screen, 'apply_setting') as action:
+            screen.update_install.press()
+            action.assert_called_once_with('update_install', {})
+        screen.update_system_status({'updates': {'message': 'Restarting…', 'busy': True}})
+        self.assertFalse(screen.update_check.get_sensitive())
+        self.assertFalse(screen.update_install.get_sensitive())
+
     def test_drawn_rail_and_rows(self):
         from widgets import glass
         screen = self.screen
