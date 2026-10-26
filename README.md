@@ -24,6 +24,13 @@
   - **System Controls**: Hardware volume, mute, display brightness, screen blanking, sleep timer, and clean power-off.
   - **Security & Pairing**: Pair once using the on-screen 6-digit code or QR code; secure device cookie migration.
 
+- **Settings on TV and phone**:
+  - Six categories: Appearance, Ambient, Display, Playback, Connections, and System.
+  - On TV, use Up/Down in the category rail, OK/Right to enter controls, and Back to return to the rail. Categories remember focus and scroll position.
+  - On the phone, the gear opens Settings; the three-dot button opens Quick actions for timers, playback controls, and power-off.
+  - Upload or replace Retro images from the phone under Appearance. Both devices can enable, disable, or remove images.
+  - Network-only controls are disabled in Bubbles layout while retaining their saved values. Display changes still require timed Keep/Revert confirmation.
+
 - 🍿 **Playback**:
   - **mpv** plays everything; the headless **stremio-service** engine (`imactv-engine.service`, `127.0.0.1:11470`) streams torrents over HTTP.
   - **Subtitles**: Arabic, Nederlands and English are fetched automatically and always selectable.

@@ -52,6 +52,10 @@ class CategoryNavigationTest(unittest.TestCase):
         patch_media = mock.patch.dict('os.environ', {'IMACTV_DATA_DIR': self.tmp.name})
         patch_media.start()
         self.addCleanup(patch_media.stop)
+        from gi.repository import Gdk
+        provider = Gtk.CssProvider()
+        provider.load_from_data(settings.settings_css(2 / 3).encode())
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), provider, 600)
         self.shell = Gtk.Window()
         self.shell.px = lambda v: round(v * 2 / 3)
         self.shell.tops = {}
@@ -100,6 +104,7 @@ class CategoryNavigationTest(unittest.TestCase):
         for category in settings.settings_model.CATEGORIES:
             self.screen.select_category(category)
             self.drain()
+        self.assertLessEqual(self.screen.get_preferred_height().minimum_height, 720)
         cfg = widgets.load_config(display.DATA)
         self.assertEqual(cfg['node_shape'], 'octagon')
         self.assertTrue(cfg['visualizer'])

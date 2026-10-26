@@ -36,7 +36,7 @@ def settings_css(scale=1.0):
 .set-btn:focus {{ background: rgba(255,255,255,0.26); border-color: #fff; box-shadow: 0 0 0 {p(3)}px rgba(255,255,255,0.28); }}
 .set-current {{ border-color: #a8cfff; background: rgba(96,165,250,0.16); }}
 .set-btn-main {{ font-size: {p(26)}px; font-weight: 700; color: #fff; }}
-.set-btn-sub {{ font-size: {p(16)}px; font-weight: 600; color: rgba(255,255,255,0.6); }}
+.set-btn-sub {{ font-size: {p(20)}px; font-weight: 600; color: rgba(255,255,255,0.6); }}
 .set-current .set-btn-sub {{ color: #93c5fd; }}
 .set-count {{ font-size: {p(30)}px; font-weight: 700; color: #facc15; }}
 """
@@ -123,7 +123,7 @@ class SettingsScreen(Screen):
         for category in settings_model.CATEGORIES:
             b = self.button(category, '', category == self.category, ('category', category),
                             lambda c=category: self.enter_category(c))
-            b.connect('focus-in-event', lambda _b, _e, c=category: self.select_category(c))
+            b.connect('focus-in-event', lambda _b, _e, c=category: self.select_category(c) if self.shell.current() is self else False)
             rail.pack_start(b, False, False, 0)
             self.tabs.append(b)
         layout.pack_start(rail, False, False, 0)
@@ -146,7 +146,8 @@ class SettingsScreen(Screen):
 
     # ---- Screen API
     def focus_groups(self):
-        return [[b] for b in self.tabs] + [r for r in self.rows if r]
+        controls = [[b for b in row if b.get_sensitive()] for row in self.rows]
+        return [[b] for b in self.tabs] + [row for row in controls if row]
 
     def first_focus(self, flat):
         return self.tabs[settings_model.CATEGORIES.index(self.category)]

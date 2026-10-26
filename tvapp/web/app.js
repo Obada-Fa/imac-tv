@@ -739,14 +739,17 @@
     tabbar.hidden = !pair.hidden || !sheet.hidden || findFocused;
   }
   function applyTab() {
+    const settingsWasHidden = $('tab-settings').hidden;
     remote.hidden = tab !== 'remote';
     browser.hidden = tab === 'remote';
     for (const id of ['movie', 'series', 'search', 'settings']) $('tab-' + id).hidden = tab !== id;
     tabbar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     updateTabbar();
     if ((tab === 'movie' || tab === 'series') && online && !loaded[tab]) loadTab(tab);
-    if (tab === 'settings' && online) loadSettings();
-    else stopTrialPoll();
+    if (tab === 'settings' && online) {
+      loadSettings();
+      if (settingsWasHidden) requestAnimationFrame(() => document.querySelector('#settings-tabs [aria-selected=true]')?.scrollIntoView({block: 'nearest', inline: 'nearest'}));
+    } else stopTrialPoll();
   }
   function showTab(name) {
     if (name === tab) { applyTab(); return; }
@@ -830,6 +833,10 @@
     }
     renderBackground();
     renderFields();
+    for (const [key, , , , , network] of setState.fields || []) {
+      const control = $("setting-" + key);
+      if (network && control) control.disabled = !online || setState.values.style === "bubbles";
+    }
     const min = setState.youtube_close_after_paused_min || 0;
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
