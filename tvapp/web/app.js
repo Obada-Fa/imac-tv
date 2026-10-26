@@ -25,7 +25,14 @@
     clearTimeout(toastTimer);
     if (text) toastTimer = setTimeout(() => { if ($('message').textContent === text) message(''); }, 6000);
   }
-  const buzz = ms => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} };
+  let haptics = true;
+  try { haptics = localStorage.getItem('remote-haptics') !== 'off'; } catch (e) {}
+  // Feedback belongs to the gesture, never to a delayed network response.
+  const buzz = (ms = 6) => { try { if (haptics && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} };
+  document.addEventListener('click', e => {
+    const button = e.target.closest('button');
+    if (button && !button.disabled && !button.matches('[data-action]')) buzz();
+  }, true);
 
   function connected(value, label) {
     online = value;
@@ -88,7 +95,7 @@
     }
     $('fullscreen').classList.toggle('active', Boolean(s.fullscreen));
     $('fullscreen').setAttribute('aria-pressed', String(Boolean(s.fullscreen)));
-    if (s.error) { if (s.error !== lastError) { lastError = s.error; buzz([30, 40, 30]); message(s.error); } }
+    if (s.error) { if (s.error !== lastError) { lastError = s.error; message(s.error); } }
     else {
       lastError = '';
       if ($('message').textContent === 'Reconnecting to the TV…') message('');
@@ -126,7 +133,7 @@
 
   function chip(label, on, fn) {
     const b = document.createElement('button');
-    b.type = 'button'; b.textContent = label; b.classList.toggle('on', on); b.onclick = () => { buzz(8); fn(); };
+    b.type = 'button'; b.textContent = label; b.classList.toggle('on', on); b.onclick = () => { fn(); };
     return b;
   }
   function labelled(tracks) {
@@ -186,14 +193,14 @@
     catch (e) { if (onFail) onFail(); }
   }
   document.querySelectorAll('#yt [data-yt]').forEach(b => b.onclick = async () => {
-    buzz(8);
+    
     const play = $('yt-play'), before = play.textContent;
     if (b === play) { play.textContent = before === '⏸' ? '▶' : '⏸'; ytPending = Date.now() + 2500; }
     await ytSend({cmd: b.dataset.yt}, () => { if (b === play) play.textContent = before; });
     ytPending = 0;
   });
   [[$('yt-back'), -10], [$('yt-fwd'), 10]].forEach(([b, offset]) => b.onclick = () => {
-    buzz(8);
+    
     if (ytState && ytState.position != null) { ytState.position = Math.max(0, ytPosition() + offset); ytAt = Date.now(); ytTick(); }
     ytSend({cmd: 'seek', offset});
   });
@@ -205,16 +212,16 @@
     ytSend({cmd: 'set_position', position}).then(() => { ytDragging = false; });
   });
   $('yt-mode').onclick = async () => {
-    buzz(8);
+    
     try { const r = await send('youtube_mode', {mode: $('yt-mode').dataset.mode}); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
     catch (e) {}
   };
-  [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { buzz(8); send('select', {app: 'youtube'}).catch(() => {}); });
+  [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { send('select', {app: 'youtube'}).catch(() => {}); });
 
   // Playback prompts: each button is one server action; the TV answers the same prompts with OK / Back.
   [['np-skip', 'skip_segment', {}], ['un-play', 'upnext', {choice: 'play'}], ['un-cancel', 'upnext', {choice: 'cancel'}],
    ['st-continue', 'still_watching', {choice: 'continue'}], ['st-stop', 'still_watching', {choice: 'stop'}]]
-    .forEach(([id, action, params]) => $(id).onclick = () => { buzz(8); send(action, params).then(() => refresh()).catch(() => {}); });
+    .forEach(([id, action, params]) => $(id).onclick = () => { send(action, params).then(() => refresh()).catch(() => {}); });
 
   const VIZ_NAMES = {edgeflow: 'Edge flow', ridge: 'Ridge', constellation: 'Constellation', terrain: 'Terrain',
     prism: 'Prism', circuit: 'Circuit', aurora: 'Aurora'};
@@ -223,7 +230,7 @@
     $('viz-next').hidden = !on;
     if (on) $('viz-mode').textContent = VIZ_NAMES[viz.mode] || viz.mode || '';
   }
-  $('viz-next').onclick = () => { buzz(8); send('viz_next').then(() => setTimeout(refresh, 600)).catch(() => {}); };
+  $('viz-next').onclick = () => { send('viz_next').then(() => setTimeout(refresh, 600)).catch(() => {}); };
 
   function renderView(s, pb, name) {
     const view = pb.active ? 'playing' : s.phase === 'buffering' ? 'buffering' : 'browse';
@@ -311,7 +318,7 @@
     } catch (e) { /* toast already shown */ }
   }
   async function openSearch() {
-    buzz(10);
+    
     searching = true;
     $('search-box').hidden = false; $('search-input').value = ''; sent = '';
     $('search-input').focus();  // inside the tap so the native keyboard opens
@@ -335,7 +342,7 @@
     fire('seek', {seconds: Math.max(0, Math.min(p.duration || 86400, (p.position || 0) + Number(b.dataset.skip)))});
   });
   const delayText = () => `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
-  $('np-next').onclick = () => { buzz(10); fire('next_episode'); };
+  $('np-next').onclick = () => { fire('next_episode'); };
   $('pick-sub').onclick = () => openSheet('subs');
   $('pick-audio').onclick = () => openSheet('audio');
 
@@ -392,7 +399,7 @@
     try {
       const result = await api('/api/commands', {action, params});
       message('');
-      buzz(8);
+      
       if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
@@ -579,7 +586,8 @@
   document.addEventListener('pointerdown', e => {
     const b = e.target.closest('[data-action]');
     if (!b || b.disabled) return;
-    e.preventDefault(); buzz(8);
+    e.preventDefault(); buzz();
+    b.classList.add('pressed');
     const action = b.dataset.action;
     const params = action === 'volume' ? {direction: Number(b.dataset.direction)} : {};
     fire(action, params);
@@ -595,14 +603,27 @@
   function release(e) {
     const b = e.target.closest('[data-action]');
     if (!b) return;
+    b.classList.remove('pressed');
     const h = held.get(b);
     if (h) { clearTimeout(h.delay); clearInterval(h.interval); held.delete(b); }
   }
   document.addEventListener('pointerup', release);
   document.addEventListener('pointercancel', release);
+  document.addEventListener('lostpointercapture', release);
+  function releaseAll() {
+    for (const [button, timer] of held) {
+      clearTimeout(timer.delay); clearInterval(timer.interval);
+      button.classList.remove('pressed');
+    }
+    held.clear();
+    document.querySelectorAll('.pressed').forEach(b => b.classList.remove('pressed'));
+  }
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]');
-    if (b && e.detail === 0) {
+    if (b && !b.disabled && e.detail === 0) {
+      buzz();
       fire(b.dataset.action, b.dataset.action === 'volume' ? {direction: Number(b.dataset.direction)} : {});
     }
   });
@@ -697,7 +718,7 @@
     if (!touches.delete(e.pointerId) || !gesture) return;
     if (touches.size) return;
     clearTimeout(gesture.hold);
-    if (!cancelled && !gesture.moved && !gesture.right && !gesture.multi) { buzz(8); quiet('click', {}); }
+    if (!cancelled && !gesture.moved && !gesture.right && !gesture.multi) { quiet('click', {}); }
     gesture = null; scrollAcc = 0; remX = remY = 0;
   }
   pad.addEventListener('pointerup', e => endTouch(e, false));
@@ -761,7 +782,7 @@
   // A tap on Movies/Series also puts the matching screen on the TV (fire-and-forget; the server ignores it while something is playing).
   const tvScreen = {movie: 'movies', series: 'series'};
   tabbar.querySelectorAll('button').forEach(b => b.onclick = () => {
-    buzz(8);
+    
     const changed = b.dataset.tab !== tab;
     showTab(b.dataset.tab);
     if (changed && tvScreen[b.dataset.tab]) {
@@ -845,7 +866,7 @@
     document.querySelectorAll('#bg-source button').forEach(b => b.classList.toggle('on', b.dataset.src === bg.source));
     const list = $('bg-list');
     list.replaceChildren();
-    $('bg-retro').hidden = !bg.retro.length;
+    $('bg-retro').hidden = !bg.retro.length || bg.source !== 'retro';
     for (const button of document.querySelectorAll('#bg-source button')) {
       button.querySelector('img')?.remove();
       const src = button.dataset.src === 'photos' ? '/api/themes/focus.jpg' : bg.retro[0] ? '/api/retro/thumb/' + bg.retro[0].id : null;
@@ -913,10 +934,10 @@
       setState = s; renderSettings();
     } catch (err) { /* keep counting; the TV reverts on its own */ }
   }
-  $('trial-keep').onclick = () => { buzz(8); settingsCall('display_keep'); };
-  $('trial-revert').onclick = () => { buzz(8); settingsCall('display_revert'); };
+  $('trial-keep').onclick = () => { settingsCall('display_keep'); };
+  $('trial-revert').onclick = () => { settingsCall('display_revert'); };
   document.querySelectorAll('#yt-close button').forEach(b => b.onclick = () => {
-    buzz(8); settingsCall('youtube_close', {minutes: Number(b.dataset.min)});
+    settingsCall('youtube_close', {minutes: Number(b.dataset.min)});
   });
 
   $('settings-open').onclick = () => showTab('settings');
@@ -944,7 +965,7 @@
     $('settings-tabs').append(b);
   });
   selectCategory(settingsCategory);
-  const settingLabel = v => ({photo: 'Photo outlines', 'photo+animals': 'Photo outlines and animals', off: 'Off'}[v] || String(v));
+  const settingLabel = v => ({network: 'Network', bubbles: 'Bubbles', rounded: 'Rounded', chamfer: 'Chamfer', hexagon: 'Hexagon', octagon: 'Octagon', glass: 'Glass', light: 'Light', photo: 'Photo outlines', 'photo+animals': 'Photo outlines and animals', off: 'Off'}[v] || String(v));
   function orderPicker(key, title, value, languages, save) {
     let ordered = [...value];
     sheetName = 'setting'; sheet.hidden = false; updateTabbar();
@@ -984,13 +1005,14 @@
       container.replaceChildren();
       for (const [key, group, title, kind, options, network] of setState.fields || []) {
         if (group.toLowerCase() !== category) continue;
-        const row = document.createElement('div'); row.className = 'setting-row';
-        const label = document.createElement('label'); label.htmlFor = 'setting-' + key; label.textContent = title;
+        const row = document.createElement('div'); row.className = 'setting-row kind-' + kind;
+        const label = document.createElement('label'); label.htmlFor = 'setting-' + key; label.id = 'label-' + key; label.textContent = title;
         const value = setState.values[key];
         let control;
         const save = value => settingsCall('setting_set', {key, value});
         if (kind === 'bool') {
           control = document.createElement('button'); control.type = 'button'; control.setAttribute('role', 'switch');
+          control.setAttribute('aria-labelledby', 'label-' + key);
           control.setAttribute('aria-checked', String(value)); control.textContent = value ? 'On' : 'Off'; control.onclick = () => save(!value);
         } else if (kind === 'choice') {
           control = document.createElement('select');
@@ -1026,6 +1048,18 @@
       b.onclick = async () => { if (!confirm(question)) return; try { await api('/api/revoke', {mode}); refresh(); } catch (e) { message(e.message); } }; access.append(b);
     }
     const system = $('settings-system'); system.replaceChildren();
+    const hapticRow = document.createElement('div'); hapticRow.className = 'setting-row kind-bool';
+    const hapticLabel = document.createElement('label'); hapticLabel.id = 'haptics-label'; hapticLabel.textContent = 'Remote haptics'; hapticLabel.htmlFor = 'haptics';
+    const hapticSwitch = document.createElement('button'); hapticSwitch.type = 'button'; hapticSwitch.id = 'haptics';
+    hapticSwitch.setAttribute('role', 'switch'); hapticSwitch.setAttribute('aria-labelledby', 'haptics-label');
+    hapticSwitch.setAttribute('aria-checked', String(haptics)); hapticSwitch.textContent = haptics ? 'On' : 'Off';
+    hapticSwitch.onclick = () => {
+      haptics = !haptics;
+      try { localStorage.setItem('remote-haptics', haptics ? 'on' : 'off'); } catch (e) {}
+      hapticSwitch.setAttribute('aria-checked', String(haptics)); hapticSwitch.textContent = haptics ? 'On' : 'Off';
+    };
+    hapticRow.append(hapticLabel, hapticSwitch); system.append(hapticRow);
+    const hapticNote = document.createElement('p'); hapticNote.className = 'muted'; hapticNote.textContent = 'A light tap on this phone, where supported.'; system.append(hapticNote);
     for (const [title, action] of [['Restart current app', 'restart_app'], ['Recover TV Home', 'recover'], ['Restart desktop session', 'restart_session']]) {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = title;
       b.onclick = () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }; system.append(b);
@@ -1052,7 +1086,7 @@
       const i = document.createElement('i'); i.style.width = Math.min(100, item.position / item.duration * 100) + '%';
       p.append(i); b.append(p);
     }
-    b.onclick = () => { buzz(8); openTitle(item); };
+    b.onclick = () => { openTitle(item); };
     return b;
   }
   function fill(el, list, append) {
@@ -1111,7 +1145,7 @@
     const type = t.type || item.type, id = t.id || item.id;
     const play = async params => {
       if (needsTorbox()) { openTorbox(() => play(params)); return; }
-      buzz(12);
+      
       try { await send('play_media', Object.assign({type, id}, params)); } catch (e) { return; }
       closeSheet(); showTab('remote'); refresh();
     };

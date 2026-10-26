@@ -11,24 +11,52 @@ def theme_css(scale=1.0, preferences=None):
 .brand, .hero-kicker, .set-section {{ color: #a8d7eb; }}
 .nav-button {{ color: #9eafc1; }}
 .nav-button:focus, .nav-current {{ color: #e5f6ff; border-bottom-color: #a8d7eb; }}
-.set-rail {{ background: rgba(17,31,46,0.72); border: 1px solid #304457;
-             border-radius: {p(24)}px; padding: {p(20)}px; }}
-.set-rail .set-btn {{ background: transparent; border-color: transparent; min-width: {p(180)}px; }}
-.set-rail .set-current {{ background: #263f53; border-color: #57788d; }}
-.set-rail .set-btn:focus {{ background: #36546b; border-color: #c0e8f8; }}
-.set-title {{ font-size: {p(40)}px; font-weight: 600; }}
-.set-output {{ font-size: {p(38)}px; font-weight: 600; }}
-.set-note {{ color: #acbdcd; }}
-.set-btn, .src-row {{ background: rgba(28,44,60,0.88); border: {p(2)}px solid #34495c;
-                     border-radius: {p(18)}px; padding: {p(16)}px {p(24)}px; }}
-.set-btn-main {{ font-size: {p(24)}px; font-weight: 600; }}
-.set-btn-sub {{ font-size: {p(20)}px; color: #aac9dc; }}
-.set-btn:focus, .src-row:focus, .card:focus {{
-    background: #294459; border-color: #c0e8f8;
-    box-shadow: 0 0 0 {p(3)}px rgba(168,215,235,0.22);
-}}
-.set-btn:disabled {{ background: #141e2a; border-color: #253442; }}
+/* Settings use space and typography; only keyboard focus has an outline. */
+.set-rail {{ background: transparent; border: none; padding: 0; }}
+.set-rail .set-btn {{ background: transparent; border-color: transparent; min-width: {p(230)}px;
+                     padding: {p(18)}px {p(22)}px; }}
+.set-rail .set-current {{ background: #1c3042; }}
+.set-rail .set-btn-main {{ color: #9baebf; }}
+.set-rail .set-current .set-btn-main {{ color: #e5f6ff; }}
+.set-title {{ font-size: {p(38)}px; font-weight: 500; padding-left: {p(22)}px; }}
+.set-output {{ font-size: {p(46)}px; font-weight: 500; }}
+.set-section {{ font-size: {p(16)}px; letter-spacing: 2px; font-weight: 600; color: #829bad; }}
+.set-note {{ font-size: {p(20)}px; color: #99adbf; }}
+.set-btn {{ background: transparent; border: {p(2)}px solid transparent;
+            border-radius: {p(12)}px; padding: {p(16)}px {p(20)}px; box-shadow: none; }}
+.set-btn-main {{ font-size: {p(24)}px; font-weight: 500; color: #e3ecf3; }}
+.set-btn-sub {{ font-size: {p(20)}px; font-weight: 400; color: #9eb6c9; }}
+.set-current {{ background: #172a3b; }}
+.set-btn:focus, .set-rail .set-btn:focus {{ background: #233e52; border-color: #c0e8f8; box-shadow: none; }}
+.set-btn:disabled {{ background: transparent; border-color: transparent; }}
 .set-btn:disabled label {{ color: #718496; }}
+.set-toggle-on, .set-toggle-off {{ border-radius: {p(18)}px; padding: {p(3)}px {p(16)}px; }}
+.set-toggle-on {{ background: #29495c; color: #d7f0fc; }}
+.set-toggle-off {{ background: #1b2936; color: #91a4b4; }}
+.set-picture {{ padding: {p(10)}px; background: transparent; }}
+.set-picture.set-current {{ background: #1b3041; }}
+.set-picture-art {{ background-image: linear-gradient(140deg, #34485b, #18273a 55%, #574c61);
+                    border-radius: {p(12)}px; }}
+.set-picture .set-btn-main {{ font-size: {p(22)}px; }}
+.set-picture .set-btn-sub {{ font-size: {p(18)}px; }}
+.src-row {{ background: rgba(28,44,60,0.88); border: {p(2)}px solid #34495c;
+            border-radius: {p(18)}px; padding: {p(16)}px {p(24)}px; }}
+.src-row:focus, .card:focus {{ background: #294459; border-color: #c0e8f8;
+    box-shadow: 0 0 0 {p(3)}px rgba(168,215,235,0.22); }}
+.conn-pill, .conn-btn {{ background: transparent; border: {p(2)}px solid transparent;
+                       box-shadow: none; border-radius: {p(12)}px; }}
+.conn-pill:focus, .conn-btn:focus {{ background: #233e52; border-color: #c0e8f8; box-shadow: none; }}
+.conn-ip {{ color: #d3e4ef; font-size: {p(18)}px; font-weight: 500; }}
+.conn-code, .conn-wifi {{ color: #94acbf; font-size: {p(17)}px; font-weight: 400;
+                          font-family: inherit; letter-spacing: 0; }}
+.conn-wifi-off {{ color: #d7a7a0; }}
+.conn-status-icon {{ color: #a8d7eb; }}
+.pair-sheet {{ background: #142333; border: none; box-shadow: none; }}
+.pair-sheet .ah-dtitle {{ font-size: {p(42)}px; font-weight: 500; }}
+.pair-sheet .ah-dcode {{ color: #d9effa; font-size: {p(42)}px; font-weight: 500; }}
+.pair-sheet .ah-daddr {{ color: #adc4d5; }}
+.pair-sheet .ah-dbtn {{ border: {p(2)}px solid transparent; background: #294459; }}
+.pair-sheet .ah-dbtn:focus {{ border-color: #c0e8f8; }}
 .rail-title {{ font-size: {p(28)}px; font-weight: 600; color: #d8e8f3; }}
 .card {{ background: #152333; border-color: #25394b; border-radius: {p(18)}px; }}
 .card:hover {{ background: #21374a; }}
@@ -40,20 +68,19 @@ def theme_css(scale=1.0, preferences=None):
 .hero-primary {{ background: #c0e8f8; border-color: #c0e8f8; color: #102536; }}
 .hero-secondary, .pill {{ background: #203549; border-color: #57788d; color: #e5f6ff; }}
 .search-entry {{ background: #172a3b; border-color: #425e74; }}
-.buffer-overlay {{ background: rgba(7,14,23,0.94); }}
-.buffer-card {{ background: #142536; border: {p(2)}px solid #3a566c;
-                border-radius: {p(32)}px; padding: {p(48)}px {p(64)}px;
-                box-shadow: 0 {p(18)}px {p(50)}px rgba(0,0,0,0.3); }}
-.buffer-mark {{ font-size: {p(20)}px; letter-spacing: 3px; font-weight: 700; color: #a8d7eb; }}
-.buffer-title {{ font-size: {p(42)}px; font-weight: 600; }}
-.buffer-line {{ font-size: {p(20)}px; color: #aabfcf; }}
-.buffer-status {{ font-size: {p(24)}px; color: #d1e8f6; }}
-.buffer-overlay spinner {{ color: #a8d7eb; min-width: {p(48)}px; min-height: {p(48)}px; -gtk-icon-transform: none; }}
+.buffer-overlay {{ background: rgba(7,14,23,0.96); }}
+.buffer-card {{ background: transparent; border: none; padding: 0; box-shadow: none; }}
+.buffer-mark {{ font-size: {p(18)}px; letter-spacing: 3px; font-weight: 500; color: #8faabc; }}
+.buffer-title {{ font-size: {p(62)}px; font-weight: 500; color: #f0f6fa; }}
+.buffer-line {{ font-size: {p(20)}px; color: #8fa5b7; }}
+.buffer-status {{ font-size: {p(24)}px; font-weight: 400; color: #c3d9e8; }}
+.buffer-overlay spinner {{ color: #a8d7eb; min-width: {p(26)}px; min-height: {p(26)}px; -gtk-icon-transform: none; }}
+
 """
     if not cfg.get('transparency', True):
         css += """
 .header-bar, .buffer-overlay, .set-page, .ah-scrim { background: #0b121c; }
-.set-rail, .set-btn, .src-row, .conn-pill, .conn-btn, .app-button,
+.src-row, .app-button,
 .hero-secondary, .toast, .qr-dialog, .ah-sheet, .ah-dbtn, .ah-cardbtn { background: #1c2c3c; }
 .hero-fade { background-image: linear-gradient(90deg, #0b121c 0%, #0b121c 44%, transparent 80%); }
 """

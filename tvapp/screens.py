@@ -1389,35 +1389,33 @@ class BufferingOverlay(Gtk.Box):
         self.set_valign(Gtk.Align.FILL)
         self.set_no_show_all(True)
         self.spinner = Gtk.Spinner()
-        self.spinner.set_size_request(px(48), px(48))
-        self.spinner.set_halign(Gtk.Align.CENTER)
+        self.spinner.set_size_request(px(26), px(26))
+        self.spinner.set_valign(Gtk.Align.CENTER)
         self.title = text_label("", "buffer-title", wrap=True)
-        self.title.set_halign(Gtk.Align.CENTER)
-        self.title.set_justify(Gtk.Justification.CENTER)
         self.source = text_label("", "buffer-line")
-        self.source.set_halign(Gtk.Align.CENTER)
         self.status = text_label("Connecting…", "buffer-status")
-        self.status.set_halign(Gtk.Align.CENTER)
         self.hint = text_label("Press Back to cancel", "buffer-line")
-        self.hint.set_halign(Gtk.Align.CENTER)
+        self.metrics = text_label("", "buffer-line")
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(22))
         card.get_style_context().add_class("buffer-card")
-        card.set_halign(Gtk.Align.CENTER)
-        card.set_margin_start(px(64))
-        card.set_margin_end(px(64))
-        mark = text_label("◇  IMAC TV  /  NOW PLAYING", "buffer-mark")
-        mark.set_halign(Gtk.Align.CENTER)
-        for label in (self.title, self.source, self.status):
+        card.set_halign(Gtk.Align.FILL)
+        card.set_margin_start(px(160))
+        card.set_margin_end(px(160))
+        mark = text_label("GETTING READY", "buffer-mark")
+        for label in (self.title, self.source, self.status, self.metrics):
             label.set_max_width_chars(58)
             label.set_line_wrap(True)
-            label.set_justify(Gtk.Justification.CENTER)
         self.title.set_max_width_chars(32)
+        progress = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(18))
+        progress.set_margin_top(px(24))
+        progress.pack_start(self.spinner, False, False, 0)
+        progress.pack_start(self.status, False, False, 0)
+        self.hint.set_margin_top(px(54))
         top, bottom = Gtk.Box(), Gtk.Box()
         self.pack_start(top, True, True, 0)
-        for w in (mark, self.spinner, self.title, self.status, self.source):
+        for w in (mark, self.title, self.source, progress, self.metrics, self.hint):
             card.pack_start(w, False, False, 0)
         self.pack_start(card, False, False, 0)
-        self.pack_start(self.hint, False, False, px(18))
         self.pack_start(bottom, True, True, 0)
 
     def show_for(self, state):
@@ -1429,13 +1427,17 @@ class BufferingOverlay(Gtk.Box):
         self.title.set_text(name or "Starting playback")
         self.source.set_text(buf.get("source") or "")
         stage = buf.get("stage") or "Connecting…"
-        if buf.get("source"):  # past source picking: peers and speed mean something now
+        metrics = ""
+        if buf.get("source") and any(buf.get(k) for k in ('peers', 'speed', 'downloaded')):
             speed = (buf.get("speed") or 0) / 1_000_000
             got = (buf.get("downloaded") or 0) / 1_000_000
-            stage += f"  ·  {int(buf.get('peers') or 0)} peers  ·  {speed:.1f} MB/s"
+            metrics = f"{speed:.1f} MB/s"
+            if buf.get('peers'):
+                metrics += f"  ·  {int(buf['peers'])} peers"
             if got >= 1:
-                stage += f"  ·  {got:.0f} MB"
+                metrics += f"  ·  {got:.0f} MB ready"
         self.status.set_text(stage)
+        self.metrics.set_text(metrics)
         if not self.get_visible():
             self.show()
             for c in self.get_children():

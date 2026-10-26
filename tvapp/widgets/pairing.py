@@ -212,22 +212,44 @@ def show_pairing_sheet(shell):
     """Full-size pairing view. Closes with Back / Escape / Done / the remote's Home, and by itself when a phone
     connects."""
     p = shell.px
+    # Home keeps its photo-backed glass presentation. Content screens use the
+    # same QR renderer in a quieter horizontal layout.
+    content_screen = getattr(shell.current(), 'sname', 'home') != 'home'
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=p(12))
     box.get_style_context().add_class("ah-sheet")
+    if content_screen:
+        box.get_style_context().add_class('pair-sheet')
     title = text_label("Connect your phone", "ah-dtitle")
     sub = text_label("Point your camera at the code, or open the address below.", "ah-dsub")
-    qr = QRTile(shell, p(11), qr_style(shell))
+    qr = QRTile(shell, p(7) if content_screen else p(11), qr_style(shell))
     code_lbl = text_label("", "ah-dcode")
     addr = text_label("", "ah-daddr")
     note = text_label("The code refreshes every five minutes.", "ah-dsub")
     done = _glass_button("Done", True)
     done.set_halign(Gtk.Align.CENTER)
     done.connect("clicked", lambda *_: shell.close_sheet())
-    for w in (title, sub, code_lbl, addr, note):
-        w.set_halign(Gtk.Align.CENTER)
-    for w in (title, sub, qr, code_lbl, addr, note):
-        box.pack_start(w, False, False, 0)
-    box.pack_start(done, False, False, p(10))
+    if content_screen:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=p(40))
+        copy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=p(18))
+        copy.set_valign(Gtk.Align.CENTER)
+        sub.set_text('Scan with your camera.\nKeep your phone on the same Wi-Fi as your TV.')
+        sub.set_line_wrap(True)
+        sub.set_max_width_chars(38)
+        note.set_text('Or open the address and enter this code.')
+        note.set_max_width_chars(38)
+        note.set_line_wrap(True)
+        for w in (title, sub, note, addr, code_lbl, done):
+            w.set_halign(Gtk.Align.START)
+            copy.pack_start(w, False, False, 0)
+        row.pack_start(qr, False, False, 0)
+        row.pack_start(copy, False, False, 0)
+        box.pack_start(row, False, False, 0)
+    else:
+        for w in (title, sub, code_lbl, addr, note):
+            w.set_halign(Gtk.Align.CENTER)
+        for w in (title, sub, qr, code_lbl, addr, note):
+            box.pack_start(w, False, False, 0)
+        box.pack_start(done, False, False, p(10))
 
     def refresh():
         net, code = shell.net or {}, shell.code or "------"

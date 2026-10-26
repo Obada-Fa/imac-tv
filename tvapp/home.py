@@ -310,7 +310,7 @@ class Home(Gtk.Window):
 
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(16))
         right.set_valign(Gtk.Align.CENTER)
-        self.wifi_label = text_label("📶 Detecting Wi-Fi…", "conn-wifi")
+        self.wifi_label = text_label("Connecting…", "conn-wifi")
         right.pack_start(self.wifi_label, False, False, self.px(4))
 
         self.conn_pill = Gtk.Button()
@@ -318,16 +318,13 @@ class Home(Gtk.Window):
         self.conn_pill.get_style_context().add_class("conn-pill")
         self.conn_pill.connect("clicked", lambda *_: self.show_pairing())
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(12))
-        frame = Gtk.EventBox()
-        frame.get_style_context().add_class("conn-qr-frame")
-        self.qr_image = Gtk.Image()
-        self.qr_image.set_size_request(self.px(68), self.px(68))
-        frame.add(self.qr_image)
-        content.pack_start(frame, False, False, 0)
+        icon = Gtk.Image.new_from_icon_name('phone-symbolic', Gtk.IconSize.LARGE_TOOLBAR)
+        icon.get_style_context().add_class('conn-status-icon')
+        content.pack_start(icon, False, False, 0)
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.px(2))
         info.set_valign(Gtk.Align.CENTER)
-        self.ip_label = text_label("Connecting…", "conn-ip")
-        self.code_label = text_label("Code: ------", "conn-code")
+        self.ip_label = text_label("Connect phone", "conn-ip")
+        self.code_label = text_label("Scan to pair", "conn-code")
         info.pack_start(self.ip_label, False, False, 0)
         info.pack_start(self.code_label, False, False, 0)
         content.pack_start(info, False, False, 0)
@@ -670,34 +667,24 @@ class Home(Gtk.Window):
             self.sheet["refresh"]()
         if net.get("type") == "wifi" and net.get("connected"):
             ssid = net.get("ssid", "Wi-Fi")
-            signal = net.get("signal", 0)
-            self.wifi_label.set_text(f"📶 {ssid[:14]} {signal}%")
+            self.wifi_label.set_text(f"{ssid[:14]}")
             self.wifi_label.get_style_context().remove_class("conn-wifi-off")
             self.wifi_label.get_style_context().add_class("conn-wifi")
         elif net.get("type") == "ethernet" and net.get("connected"):
-            self.wifi_label.set_text("🖧 Wired")
+            self.wifi_label.set_text("Ethernet")
             self.wifi_label.get_style_context().remove_class("conn-wifi-off")
             self.wifi_label.get_style_context().add_class("conn-wifi")
         elif net.get("connected"):
-            self.wifi_label.set_text("🌐 Online")
+            self.wifi_label.set_text("Online")
             self.wifi_label.get_style_context().remove_class("conn-wifi-off")
             self.wifi_label.get_style_context().add_class("conn-wifi")
         else:
-            self.wifi_label.set_text("⚠ Offline")
+            self.wifi_label.set_text("Offline")
             self.wifi_label.get_style_context().remove_class("conn-wifi")
             self.wifi_label.get_style_context().add_class("conn-wifi-off")
 
-        ip = net.get("ip", "127.0.0.1")
-        self.ip_label.set_text(f"{ip}:8765")
-        formatted_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
-        self.code_label.set_text(f"Code: {formatted_code}")
-
-        url = f"http://{ip}:8765/?pair={code}"
-        if url != self.last_qr_text:
-            self.last_qr_text = url
-            pb = make_qr_pixbuf(url, round(68 * self.scale))
-            if pb:
-                self.qr_image.set_from_pixbuf(pb)
+        self.ip_label.set_text("Phone connected" if remote_connected(self.remote, lambda: False) else "Connect phone")
+        self.code_label.set_text("Scan to pair another" if remote_connected(self.remote, lambda: False) else "Scan to pair")
 
         return False
 
@@ -710,6 +697,9 @@ class Home(Gtk.Window):
         """Presence controls pairing UI; only a newly paired device gets a connected toast."""
         was = None if self.remote is None else remote_connected(self.remote, lambda: False)
         self.remote = remote if isinstance(remote, dict) else None
+        connected = remote_connected(self.remote, lambda: False)
+        self.ip_label.set_text("Phone connected" if connected else "Connect phone")
+        self.code_label.set_text("Scan to pair another" if connected else "Scan to pair")
         now = remote_connected(self.remote, lambda: False)
         paired_at = (self.remote or {}).get("paired_at")
         newly_paired = False

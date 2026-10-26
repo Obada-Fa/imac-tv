@@ -6,6 +6,7 @@
 <div id="message" class="toast" role="alert" hidden></div>
 <div id="connection" class="connection" role="status" aria-label="Connecting" title="Connecting…"></div>
 <main id="remote" class="shell" hidden>
+  <header class="remote-heading"><div><small>IMAC TV</small><h1>Remote</h1></div><span>Make yourself comfortable.</span></header>
   <div id="notice" class="notice" role="status" hidden></div>
   <div id="yt" class="yt" hidden>
     <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
@@ -57,14 +58,14 @@
     </div>
     <div id="browse" class="browse">
       <div id="dpad" class="dpad">
-        <button data-action="up" class="up" aria-label="Up">▲</button>
-        <button data-action="left" class="left" aria-label="Left">◀</button>
+        <button data-action="up" class="up" aria-label="Up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button>
+        <button data-action="left" class="left" aria-label="Left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 7-5 5 5 5"/></svg></button>
         <button data-action="ok" class="ok" aria-label="Select">OK</button>
-        <button data-action="right" class="right" aria-label="Right">▶</button>
-        <button data-action="down" class="down" aria-label="Down">▼</button>
+        <button data-action="right" class="right" aria-label="Right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 7 5 5-5 5"/></svg></button>
+        <button data-action="down" class="down" aria-label="Down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button>
       </div>
       <div id="pad" class="pad" hidden><span>Move your finger to point</span><small>Tap to click · Hold for right click · Two fingers to scroll</small></div>
-      <div class="transport"><button data-action="back" aria-label="Back">↩<span>Back</span></button><button data-action="home" aria-label="Home">⌂<span>Home</span></button><button id="search-open" class="accent" aria-label="Type on TV">⌕<span>Type on TV</span></button></div>
+      <div class="transport"><button data-action="back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 5-7 7 7 7M3 12h12a6 6 0 0 1 6 6"/></svg><span>Back</span></button><button data-action="home" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"/></svg><span>Home</span></button><button id="search-open" class="accent" aria-label="Type on TV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v14H3zM7 9h.01M11 9h.01M15 9h.01M18 9h.01M7 13h.01M11 13h.01M15 13h.01M7 16h10"/></svg><span>Type on TV</span></button></div>
       <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" aria-label="Backspace">⌫</button></form>
     </div>
     <div class="volume"><button data-action="volume" data-direction="-1" aria-label="Volume down">−</button><button data-action="mute" id="volume-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" aria-label="Volume up">＋</button></div>
@@ -105,26 +106,26 @@
     </div>
   </section>
   <section id="tab-settings" class="pane" hidden>
-    <h2 class="ptitle">Settings</h2><div id="settings-tabs" role="tablist" aria-label="Settings categories"></div>
+    <div class="settings-heading"><small>YOUR TV, YOUR WAY</small><h2 class="ptitle">Settings</h2></div><div id="settings-tabs" role="tablist" aria-label="Settings categories"></div>
     <div id="trial" class="prompt trial" hidden><div class="ptext"><small>TRYING <span id="trial-mode"></span> · <span id="trial-sec">15</span> s</small><b>Is the picture OK?</b></div><div class="prow"><button id="trial-keep" type="button" class="go">Keep</button><button id="trial-revert" type="button">Revert</button></div></div>
     <p id="set-error" class="tb-error" role="alert"></p>
     <div id="settings-connections" role="tabpanel" aria-labelledby="category-connections" hidden><h3>TorBox</h3>
     <div class="card setcard"><div id="set-torbox-row"></div><p class="muted small">Save your API key here to use TorBox on this TV or computer. Changes apply immediately.</p></div>
     <div id="phone-access"></div></div><div id="settings-display" role="tabpanel" aria-labelledby="category-display" hidden><h3>Display</h3>
     <div id="set-display"></div>
-    </div><div id="settings-appearance" role="tabpanel" aria-labelledby="category-appearance"><h3>Themes</h3>
-    <div class="card setcard"><div class="lbl">Theme</div><div id="bg-source" class="chips"><button type="button" data-src="photos">Focus</button><button type="button" data-src="retro">Retro</button></div>
-      <div id="bg-retro" hidden><div class="lbl">Retro backgrounds · <span id="bg-count"></span></div><p class="muted small">Tap a picture to switch it on or off. Home rotates through the ones that are on.</p><div id="bg-list" class="bglist"></div></div>
+    </div><div id="settings-appearance" role="tabpanel" aria-labelledby="category-appearance"><h3>Background</h3>
+    <div class="card setcard theme-gallery"><div id="bg-source" class="chips"><button type="button" data-src="photos">Focus</button><button type="button" data-src="retro">Retro</button></div>
+      <div id="bg-retro" hidden><div class="lbl">Retro backgrounds · <span id="bg-count"></span></div><p class="muted small">Choose the pictures Home rotates through.</p><div id="bg-list" class="bglist"></div></div>
       <p id="bg-note" class="muted"></p>
       <input id="bg-file" type="file" accept="image/*" hidden><button id="bg-add" type="button">Add a picture</button>
-      <p class="muted small">Pictures are kept at full size. Sending one with the same name and more pixels replaces it.</p></div>
+      <p class="muted small">Upload a sharper image with the same name to replace a picture.</p></div>
     <div id="fields-appearance"></div></div><div id="settings-ambient" role="tabpanel" aria-labelledby="category-ambient" hidden><div id="fields-ambient"></div></div><div id="settings-playback" role="tabpanel" aria-labelledby="category-playback" hidden><div id="fields-playback"></div><h3>YouTube</h3>
     <div class="card setcard"><div class="lbl">Close YouTube after it's been paused</div><div id="yt-close" class="chips"><button type="button" data-min="0">Off</button><button type="button" data-min="30">30 min</button><button type="button" data-min="60">60 min</button></div></div>
     </div><div id="settings-system" role="tabpanel" aria-labelledby="category-system" hidden></div>
   </section>
 </main>
 
-<section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown along the bottom of TV Home.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
+<section id="pair" class="pair" hidden><div class="pair-card"><div class="mark">⌂</div><small>IMAC TV</small><h1>Connect your phone</h1><p>Enter the six-digit code shown on your TV.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
 
 <section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" aria-label="Close">✕</button></div><div id="sheet-content"></div></div></section>
 <nav id="tabbar" class="tabbar" aria-label="Sections" hidden><button type="button" data-tab="remote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="7" y="2.5" width="10" height="19" rx="3"/><circle cx="12" cy="9" r="2"/><path d="M10 15h4"/></svg><span>Remote</span></button><button type="button" data-tab="movie"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 10h4M3 14h4M17 10h4M17 14h4"/></svg><span>Movies</span></button><button type="button" data-tab="series"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 21h8M12 18v3"/></svg><span>Series</span></button><button type="button" data-tab="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 5 5"/></svg><span>Search</span></button><button type="button" data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m9 3-1 3-3 1-2 4 2 2v3l4 3 3-1 3 1 4-3v-3l2-2-2-4-3-1-1-3z"/><circle cx="12" cy="12" r="3"/></svg><span>Settings</span></button></nav>

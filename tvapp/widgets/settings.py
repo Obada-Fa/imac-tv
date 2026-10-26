@@ -16,7 +16,7 @@ import backgrounds  # noqa: E402
 import display  # noqa: E402
 import settings_model
 import widgets  # noqa: E402
-from screens import Screen, text_label, cmd  # noqa: E402
+from screens import Screen, text_label, cmd, cover_pixbuf, round_pixbuf, ASSETS  # noqa: E402
 from media import config as media_config  # noqa: E402
 
 PER_ROW = 5
@@ -112,8 +112,8 @@ class SettingsScreen(Screen):
         self.memory = getattr(shell, 'settings_memory', {'category': 'Appearance', 'controls': {}, 'scroll': {}})
         shell.settings_memory = self.memory
         self.category = self.memory['category']
-        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(36))
-        layout.set_margin_top(px(140))
+        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(72))
+        layout.set_margin_top(px(160))
         layout.set_margin_start(px(64))
         layout.set_margin_end(px(64))
         layout.set_margin_bottom(px(40))
@@ -121,7 +121,7 @@ class SettingsScreen(Screen):
         rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
         rail.get_style_context().add_class("set-rail")
         rail.set_valign(Gtk.Align.START)
-        rail.pack_start(text_label("Settings", "set-title"), False, False, px(12))
+        rail.pack_start(text_label("Settings", "set-title"), False, False, px(24))
         self.tabs = []
         for category in settings_model.CATEGORIES:
             b = self.button(category, '', category == self.category, ('category', category),
@@ -134,7 +134,7 @@ class SettingsScreen(Screen):
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
         self.scroll = scroll
-        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(16))
+        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(12))
         self.body.set_margin_bottom(px(80))
         scroll.add(self.body)
         layout.pack_start(scroll, True, True, 0)
@@ -142,7 +142,8 @@ class SettingsScreen(Screen):
         self.body.pack_start(self.title, False, False, 0)
         self.subtitle = text_label("", "set-note", wrap=True)
         self.body.pack_start(self.subtitle, False, False, 0)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(12))
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
+        self.content.set_margin_top(px(20))
         self.body.pack_start(self.content, False, False, 0)
         self.render()
         if self.memory.get("in_content"):
@@ -201,12 +202,25 @@ class SettingsScreen(Screen):
                 self.tabs[settings_model.CATEGORIES.index(self.category)].grab_focus()
                 return True
             if key in ('Up', 'Down'):
-                flat = [b for row in self.rows for b in row if b.get_sensitive()]
-                if focus in flat:
-                    i = flat.index(focus)
-                    target = flat[max(0, min(len(flat) - 1, i + (1 if key == 'Down' else -1)))]
+                rows = [[b for b in row if b.get_sensitive()] for row in self.rows]
+                rows = [row for row in rows if row]
+                index = next((i for i, row in enumerate(rows) if focus in row), None)
+                if index is not None:
+                    column = rows[index].index(focus)
+                    row = rows[max(0, min(len(rows) - 1, index + (1 if key == 'Down' else -1)))]
+                    target = row[min(column, len(row) - 1)]
                     target.grab_focus()
                     self.reveal(target)
+                    return True
+            if key in ('Left', 'Right'):
+                row = next((row for row in self.rows if focus in row), [])
+                if row and not isinstance(focus, Gtk.Entry):
+                    index = row.index(focus) + (1 if key == 'Right' else -1)
+                    if 0 <= index < len(row):
+                        row[index].grab_focus()
+                    elif key == 'Left':
+                        self.remember()
+                        self.tabs[settings_model.CATEGORIES.index(self.category)].grab_focus()
                     return True
         return False
 
@@ -266,11 +280,11 @@ class SettingsScreen(Screen):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(2))
         m = text_label(main, "set-btn-main", wrap=True)
         m.set_max_width_chars(44)
-        m.set_halign(Gtk.Align.CENTER)
+        m.set_halign(Gtk.Align.START)
         box.pack_start(m, False, False, 0)
         s = text_label(sub or " ", "set-btn-sub", wrap=True)
         s.set_max_width_chars(54)
-        s.set_halign(Gtk.Align.CENTER)
+        s.set_halign(Gtk.Align.START)
         if sub:
             box.pack_start(s, False, False, 0)
         b.add(box)
@@ -278,13 +292,13 @@ class SettingsScreen(Screen):
         b.connect("clicked", lambda *_: on_click())
         return b
 
-    def grid(self, buttons):
+    def grid(self, buttons, columns=1):
         px = self.shell.px
-        for line in chunk(buttons, 1):
+        for line in chunk(buttons, columns):
             hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(18))
             for b in line:
                 hb.pack_start(b, True, True, 0)
-            self.content.pack_start(hb, False, False, px(4))
+            self.content.pack_start(hb, False, False, 0)
             self.rows.append(line)
 
     def render(self):
@@ -306,14 +320,9 @@ class SettingsScreen(Screen):
             ctx = b.get_style_context()
             (ctx.add_class if b.sel_key[1] == self.category else ctx.remove_class)('set-current')
         if self.category == 'Appearance':
-            self.content.pack_start(text_label(
-                "Turn off Transparent surfaces for solid panels. Turn off Visual effects "
-                "to pause decorative motion, photo fades and ambient visualizers.",
-                "set-note", wrap=True), False, False, px(8))
+            self.render_background()
         if self.category in ('Appearance', 'Ambient', 'Playback'):
             self.render_fields()
-        if self.category == "Appearance":
-            self.render_background()
         if self.category == 'Playback':
             cfg = media_config.load()
             self.grid([self.button('YouTube paused auto-close', 'Off' if not cfg['youtube_close_after_paused_min'] else str(cfg['youtube_close_after_paused_min']) + ' min', False, ('youtube',),
@@ -435,35 +444,68 @@ class SettingsScreen(Screen):
         cfg = widgets.load_config(display.DATA)
         lib = self.retro.list()
         use_retro = cfg["background"] == "retro" and bool(lib)
-        self.content.pack_start(text_label("THEMES", "set-section"), False, False, 0)
-        self.grid([self.button("Focus", "Nature photos", not use_retro, ("bg", "photos"),
-                               lambda: self.choose_background("photos")),
-                   self.button("Retro", ("%d pictures" % len(lib)) if lib else "None added yet", use_retro,
-                               ("bg", "retro"), lambda: self.choose_background("retro"))])
         home = self.shell.tops.get('home')
         photo = getattr(home, 'current_item', None) or {}
-        for row in self.rows:
-            for button in row:
-                if button.sel_key == ('bg', 'photos'):
-                    self.add_thumbnail(button, photo.get('path'))
-                elif button.sel_key == ('bg', 'retro') and lib:
-                    self.add_thumbnail(button, self.retro.thumb_path(lib[0]['id']))
-        if lib:
+        self.section('BACKGROUND')
+        self.grid([
+            self.picture_button('Focus', 'Nature photography', not use_retro, ('bg', 'photos'),
+                                lambda: self.choose_background('photos'),
+                                photo.get('path') or ASSETS / 'preview-youtube-nature.png'),
+            self.picture_button('Retro', '%d pictures' % len(lib) if lib else 'Add pictures from your phone',
+                                use_retro, ('bg', 'retro'), lambda: self.choose_background('retro'),
+                                self.retro.thumb_path(lib[0]['id']) if lib else None),
+        ], columns=2)
+        if lib and use_retro:
             off = set(cfg["retro_off"])
             on = {i["id"] for i in lib} - off or {i["id"] for i in lib}
-            hdr = text_label("RETRO BACKGROUNDS · %d OF %d ON" % (len(on), len(lib)), "set-section")
-            hdr.set_margin_top(px(16))
-            self.content.pack_start(hdr, False, False, 0)
+            self.section('YOUR PICTURES · %d OF %d ON' % (len(on), len(lib)))
+            pictures = []
             for item in lib:
                 bid = item['id']
-                button = self.button(item['name'], 'On' if bid in on else 'Off', bid in on,
-                                     ('bg', 'pic', bid), lambda b=bid: self.toggle_retro(b))
-                self.add_thumbnail(button, self.retro.thumb_path(bid))
-                self.grid([button, self.button('Remove ' + item['name'], '', False, ('remove', bid),
-                                              lambda b=bid: self.confirm_remove(b))])
-        note = ("Add pictures from your phone (Settings, Appearance)." if not lib else
-                "Select a picture to switch it on or off. Add or replace pictures from your phone.")
-        self.content.pack_start(text_label(note, "set-note"), False, False, 0)
+                pictures.append(self.picture_button(item['name'], 'In rotation' if bid in on else 'Paused',
+                                bid in on, ('bg', 'pic', bid), lambda b=bid: self.picture_options(b),
+                                self.retro.thumb_path(bid), width=280, height=158))
+            self.grid(pictures, columns=3)
+
+    def section(self, title):
+        label = text_label(title, 'set-section')
+        label.set_margin_top(self.shell.px(20))
+        label.set_margin_bottom(self.shell.px(12))
+        self.content.pack_start(label, False, False, 0)
+
+    def picture_button(self, title, sub, current, key, action, path, width=420, height=190):
+        b = self.button(title, ('Selected · ' if current and key[1] != 'pic' else '') + sub,
+                        current, key, action)
+        b.get_style_context().add_class('set-picture')
+        box = b.get_child()
+        box.set_spacing(self.shell.px(8))
+        for label in box.get_children():
+            label.set_max_width_chars(24)
+            label.set_line_wrap(False)
+            from gi.repository import Pango
+            label.set_ellipsize(Pango.EllipsizeMode.END)
+        image = Gtk.Image()
+        image.set_size_request(self.shell.px(width), self.shell.px(height))
+        image.set_halign(Gtk.Align.START)
+        image.get_style_context().add_class('set-picture-art')
+        if path:
+            try:
+                image.set_from_pixbuf(round_pixbuf(cover_pixbuf(path, self.shell.px(width),
+                                        self.shell.px(height)), self.shell.px(12)))
+            except (GLib.Error, OSError):
+                pass
+        box.pack_start(image, False, False, 0)
+        box.reorder_child(image, 0)
+        return b
+
+    def picture_options(self, bid):
+        item = next((item for item in self.retro.list() if item['id'] == bid), None)
+        if not item:
+            return
+        enabled = bid not in widgets.load_config(display.DATA)['retro_off']
+        self.choice_sheet(item['name'], ['toggle', 'remove'], None,
+                          lambda action: self.toggle_retro(bid) if action == 'toggle' else self.confirm_remove(bid),
+                          labels=['Pause in rotation' if enabled else 'Include in rotation', 'Remove picture…'])
 
     def toggle_retro(self, bid):
         lib = self.retro.list()
@@ -538,6 +580,11 @@ class SettingsScreen(Screen):
         for key, category, title, kind, options, network in settings_model.FIELDS:
             if category != self.category:
                 continue
+            headings = {'transparency': 'SURFACES & MOTION', 'style': 'HOME SCREEN',
+                        'interval': 'TIMING', 'visualizer': 'WHILE IDLE',
+                        'sub_default': 'LANGUAGES & QUALITY', 'autoplay_next': 'EPISODES'}
+            if key in headings:
+                self.section(headings[key])
             disabled = network and cfg['style'] == 'bubbles'
             value = values[key]
             b = self.button(title, 'Available with Network; saved: ' + settings_model.label(value) if disabled else settings_model.label(value),
@@ -552,6 +599,8 @@ class SettingsScreen(Screen):
             labels[1].set_halign(Gtk.Align.END)
             labels[1].set_xalign(1)
             labels[1].set_max_width_chars(34)
+            if kind == 'bool':
+                labels[1].get_style_context().add_class('set-toggle-on' if value else 'set-toggle-off')
             b.set_sensitive(not disabled)
             self.grid([b])
 
