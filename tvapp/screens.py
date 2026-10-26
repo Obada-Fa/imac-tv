@@ -681,6 +681,7 @@ class Screen(Gtk.Box):
     def __init__(self, shell):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.shell = shell
+        self.get_style_context().add_class("page")
         self.last_focus = None
 
     def focus_groups(self):
@@ -1388,7 +1389,7 @@ class BufferingOverlay(Gtk.Box):
         self.set_valign(Gtk.Align.FILL)
         self.set_no_show_all(True)
         self.spinner = Gtk.Spinner()
-        self.spinner.set_size_request(px(96), px(96))
+        self.spinner.set_size_request(px(48), px(48))
         self.spinner.set_halign(Gtk.Align.CENTER)
         self.title = text_label("", "buffer-title", wrap=True)
         self.title.set_halign(Gtk.Align.CENTER)
@@ -1399,10 +1400,24 @@ class BufferingOverlay(Gtk.Box):
         self.status.set_halign(Gtk.Align.CENTER)
         self.hint = text_label("Press Back to cancel", "buffer-line")
         self.hint.set_halign(Gtk.Align.CENTER)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(22))
+        card.get_style_context().add_class("buffer-card")
+        card.set_halign(Gtk.Align.CENTER)
+        card.set_margin_start(px(64))
+        card.set_margin_end(px(64))
+        mark = text_label("◇  IMAC TV  /  NOW PLAYING", "buffer-mark")
+        mark.set_halign(Gtk.Align.CENTER)
+        for label in (self.title, self.source, self.status):
+            label.set_max_width_chars(58)
+            label.set_line_wrap(True)
+            label.set_justify(Gtk.Justification.CENTER)
+        self.title.set_max_width_chars(32)
         top, bottom = Gtk.Box(), Gtk.Box()
         self.pack_start(top, True, True, 0)
-        for w in (self.spinner, self.title, self.source, self.status, self.hint):
-            self.pack_start(w, False, False, 0)
+        for w in (mark, self.spinner, self.title, self.status, self.source):
+            card.pack_start(w, False, False, 0)
+        self.pack_start(card, False, False, 0)
+        self.pack_start(self.hint, False, False, px(18))
         self.pack_start(bottom, True, True, 0)
 
     def show_for(self, state):
@@ -1424,7 +1439,7 @@ class BufferingOverlay(Gtk.Box):
         if not self.get_visible():
             self.show()
             for c in self.get_children():
-                c.show()
+                c.show_all()
             self.spinner.start()
 
     def hide_now(self):

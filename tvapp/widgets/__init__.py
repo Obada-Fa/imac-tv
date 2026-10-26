@@ -18,6 +18,8 @@ DEFAULT_CONFIG = {
     "weather": {},
     "ambient": {"interval": 90, "idle": 120, "idle_music": 30},   # idle_music: while YouTube plays
     "style": "network",
+    "transparency": True,
+    "visual_effects": True,
     "node_shape": "hexagon",
     "tile_shape": "rounded",
     "shapes": "photo",
@@ -95,8 +97,12 @@ def parse_config(raw):
            "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
            "qr_style": DEFAULT_CONFIG["qr_style"], "background": DEFAULT_CONFIG["background"],
            "retro_off": []}
+    cfg.update(transparency=True, visual_effects=True)
     if not isinstance(raw, dict):
         return cfg
+    for key in ("transparency", "visual_effects"):
+        if isinstance(raw.get(key), bool):
+            cfg[key] = raw[key]
     if raw.get("style") in STYLES:
         cfg["style"] = raw["style"]
     if raw.get("node_shape") in NODE_SHAPES:

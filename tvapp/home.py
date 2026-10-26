@@ -26,6 +26,7 @@ from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
+from theme import theme_css
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
 import display  # noqa: E402
 
@@ -38,7 +39,7 @@ def ui_scale(height):
     return max(0.5, height / 1080.0)
 
 
-def build_css(scale=1.0):
+def build_css(scale=1.0, preferences=None):
     return f"""
 window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "Noto Sans Arabic", sans-serif; }}
 .page {{ background: #000; }}
@@ -88,7 +89,7 @@ window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "
 .progress progress {{ min-height: {round(6 * scale)}px; background: #fff; }}
 .tv-scrollbar {{ opacity: 0; }}
 button {{ outline: none; }}
-""".encode() + screens.build_css(scale).encode() + home_css(scale).encode() + settings_css(scale).encode()
+""".encode() + screens.build_css(scale).encode() + home_css(scale).encode() + settings_css(scale).encode() + theme_css(scale, preferences).encode()
 
 
 
@@ -174,7 +175,7 @@ class Home(Gtk.Window):
         if self.css:
             Gtk.StyleContext.remove_provider_for_screen(screen, self.css)
         self.css = Gtk.CssProvider()
-        self.css.load_from_data(build_css(self.scale))
+        self.css.load_from_data(build_css(self.scale, widgets.load_config(DATA)))
         Gtk.StyleContext.add_provider_for_screen(screen, self.css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def target_size(self):
@@ -765,7 +766,7 @@ class Home(Gtk.Window):
             return
         self.settings_stamp = stamp
         cfg = widgets.load_config(DATA)
-        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'shapes', 'visualizer')
+        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'shapes', 'visualizer', 'transparency', 'visual_effects')
         if not any(cfg[k] != home.cfg[k] for k in structural):
             home.cfg = cfg
             self.home_cfg = cfg
@@ -773,6 +774,7 @@ class Home(Gtk.Window):
             home.idle_quiet = cfg['ambient']['idle']
             home.idle_music = cfg['ambient']['idle_music']
             return
+        self.load_css()
         was_current = self.current() is home
         # Pairing listeners belong to the old Home widgets.
         old_listeners = {getattr(w, 'render', None) for w in home.items}

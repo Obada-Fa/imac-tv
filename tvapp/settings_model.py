@@ -5,6 +5,8 @@ import re
 CATEGORIES = ('Appearance', 'Ambient', 'Display', 'Playback', 'Connections', 'System')
 # key, category, label, kind, choices/range, Network-only
 FIELDS = [
+    ('transparency', 'Appearance', 'Transparent surfaces', 'bool', [], False),
+    ('visual_effects', 'Appearance', 'Visual effects', 'bool', [], False),
     ('style', 'Appearance', 'Home layout', 'choice', ['network', 'bubbles'], False),
     ('widgets', 'Appearance', 'Visible widgets', 'multi', ['clock', 'weather', 'pairing', 'continue', 'apps'], False),
     ('node_shape', 'Appearance', 'Node shape', 'choice', ['hexagon', 'octagon'], True),

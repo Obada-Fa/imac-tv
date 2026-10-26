@@ -36,6 +36,12 @@ class SettingsTests(TorboxCase):
         self.addCleanup(p.stop)
         return d
 
+    def test_appearance_preferences_are_shared_with_phone(self):
+        self.patch(fake_display())
+        for key in ("transparency", "visual_effects"):
+            self.c.settings_action("setting_set", {"key": key, "value": False})
+            self.assertFalse(self.c.settings()["values"][key])
+
     def test_get_lists_outputs_trial_and_youtube(self):
         d = self.patch(fake_display())
         s = self.c.settings()

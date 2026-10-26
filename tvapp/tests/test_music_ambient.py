@@ -52,7 +52,7 @@ class AmbientMusicTests(unittest.TestCase):
         self.assertEqual(center_rgb(), (0, 255, 0))
 
     def test_titleless_audio_starts_listening_and_can_form_visualizer(self):
-        screen = SimpleNamespace(style="network", idle=SimpleNamespace(ambient=True),
+        screen = SimpleNamespace(cfg={"visual_effects": True}, style="network", idle=SimpleNamespace(ambient=True),
                                  viz_on=True, chrome=0.0, shaped=False, audio=None,
                                  fake_levels=False, audio_retry_due=0,
                                  active=lambda: True, begin_shapes=mock.Mock(),
@@ -122,7 +122,7 @@ class AmbientMusicTests(unittest.TestCase):
     def test_photo_swap_does_not_reform_music_geometry(self):
         item = {"path": "unused", "caption": "Other photo"}
         target = object()
-        screen = SimpleNamespace(pending=(item, (object(), object())),
+        screen = SimpleNamespace(cfg={"visual_effects": True}, pending=(item, (object(), object())),
                                  canvas=mock.Mock(cur=object()), now_state=None,
                                  idle=SimpleNamespace(ambient=True), photo_due=0, interval=90,
                                  shaped=True, morph=SimpleNamespace(kind="constellation", target=target), viz=None,
@@ -138,7 +138,7 @@ class AmbientMusicTests(unittest.TestCase):
         self.assertEqual(len(homescreen.load_surface(path, 320, 180)), 2)
 
     def test_visualizer_off_does_not_start_audio(self):
-        screen = SimpleNamespace(style="network", idle=SimpleNamespace(ambient=True),
+        screen = SimpleNamespace(cfg={"visual_effects": True}, style="network", idle=SimpleNamespace(ambient=True),
                                  viz_on=False, chrome=0.0, shaped=False, audio=None,
                                  fake_levels=False, audio_retry_due=0,
                                  active=lambda: True, begin_shapes=mock.Mock(),
@@ -157,7 +157,7 @@ class QuietFieldTests(unittest.TestCase):
     def make(self, music):
         import random
         from widgets import shapes
-        screen = SimpleNamespace(style="network", idle=SimpleNamespace(ambient=True), chrome=0.0,
+        screen = SimpleNamespace(cfg={"visual_effects": True}, style="network", idle=SimpleNamespace(ambient=True), chrome=0.0,
                                  active=lambda: True, shell=SimpleNamespace(sw=1920, sh=1080, scale=1.0),
                                  rng=random.Random(1), field=None, field_geom=None, field_cells=set(),
                                  music=music, invalidate_cells=mock.Mock())

@@ -119,6 +119,9 @@ class SettingsScreen(Screen):
         layout.set_margin_bottom(px(40))
         self.pack_start(layout, True, True, 0)
         rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
+        rail.get_style_context().add_class("set-rail")
+        rail.set_valign(Gtk.Align.START)
+        rail.pack_start(text_label("Settings", "set-title"), False, False, px(12))
         self.tabs = []
         for category in settings_model.CATEGORIES:
             b = self.button(category, '', category == self.category, ('category', category),
@@ -137,6 +140,8 @@ class SettingsScreen(Screen):
         layout.pack_start(scroll, True, True, 0)
         self.title = text_label(self.category, 'set-output')
         self.body.pack_start(self.title, False, False, 0)
+        self.subtitle = text_label("", "set-note", wrap=True)
+        self.body.pack_start(self.subtitle, False, False, 0)
         self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(12))
         self.body.pack_start(self.content, False, False, 0)
         self.render()
@@ -289,13 +294,26 @@ class SettingsScreen(Screen):
             c.destroy()
         self.rows = []
         self.title.set_text(self.category)
+        self.subtitle.set_text({
+            "Appearance": "Make it yours. Shape the look and choose a lighter experience.",
+            "Ambient": "Set the mood for the moments between watching.",
+            "Display": "A comfortable picture, matched to your screen.",
+            "Playback": "Your languages, quality and watching preferences.",
+            "Connections": "Keep your phone and streaming services close.",
+            "System": "Everything you need to keep your TV running smoothly.",
+        }[self.category])
         for b in self.tabs:
             ctx = b.get_style_context()
             (ctx.add_class if b.sel_key[1] == self.category else ctx.remove_class)('set-current')
         if self.category == 'Appearance':
-            self.render_background()
+            self.content.pack_start(text_label(
+                "Turn off Transparent surfaces for solid panels. Turn off Visual effects "
+                "to pause decorative motion, photo fades and ambient visualizers.",
+                "set-note", wrap=True), False, False, px(8))
         if self.category in ('Appearance', 'Ambient', 'Playback'):
             self.render_fields()
+        if self.category == "Appearance":
+            self.render_background()
         if self.category == 'Playback':
             cfg = media_config.load()
             self.grid([self.button('YouTube paused auto-close', 'Off' if not cfg['youtube_close_after_paused_min'] else str(cfg['youtube_close_after_paused_min']) + ' min', False, ('youtube',),

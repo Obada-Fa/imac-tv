@@ -149,6 +149,10 @@ def blur_pixbuf(pb):
 
 def paint_frost(cr, base, widget, photo):
     """Fill the current clip with the blurred, screen-fixed crop of the photo behind `widget`."""
+    if photo is not None and not getattr(photo, "transparency", True):
+        cr.set_source_rgb(0.075, 0.105, 0.15)
+        cr.paint()
+        return
     layers = photo.blur_layers() if photo else []
     if not layers:
         cr.set_source_rgba(0.14, 0.17, 0.24, 0.7)
@@ -234,7 +238,8 @@ class Node(Gtk.DrawingArea):
             return False
         base = cr.get_matrix()
         dx, dy = self.offset()
-        f = self.focus_amt
+        effects = getattr(self.shell, "home_cfg", {}).get("visual_effects", True)
+        f = self.focus_amt if effects else float(self.has_focus())
         sc = 1 + (FOCUS_SCALE - 1) * f
         cr.translate(self.cx + dx, self.cy + dy)
         cr.scale(sc, sc)

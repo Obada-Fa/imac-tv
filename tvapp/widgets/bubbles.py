@@ -301,7 +301,8 @@ class Bubble(Gtk.DrawingArea):
             return False
         if self.body is None:
             self.body = self.render_body()
-        f = self.focus_amt
+        effects = getattr(self.shell, "home_cfg", {}).get("visual_effects", True)
+        f = self.focus_amt if effects else float(self.has_focus())
         s = self.shell.scale
         t = self.t
         cx = self.side / 2 + self.lean + math.sin(t * self.speed[0] + self.phase[0]) * 5 * s
@@ -331,7 +332,7 @@ class Bubble(Gtk.DrawingArea):
         cr.scale(k, k)
         cr.set_source_surface(self.body, 0, 0)
         cr.get_source().set_filter(cairo.FILTER_BILINEAR)
-        cr.paint_with_alpha(0.93 + 0.07 * f)
+        cr.paint_with_alpha(0.93 + 0.07 * f if getattr(self.shell, "home_cfg", {}).get("transparency", True) else 1.0)
         cr.restore()
         # progress ring
         if self.progress:

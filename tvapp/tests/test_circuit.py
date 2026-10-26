@@ -162,7 +162,7 @@ class CacheTests(unittest.TestCase):
         from types import SimpleNamespace
         item = dict(reactive_paths=PATHS, palette=[(1, 0.8, 0.4)])
         viz = mock.Mock()
-        screen = SimpleNamespace(pending=(item, (object(), object())), viz=viz,
+        screen = SimpleNamespace(cfg={"visual_effects": True}, pending=(item, (object(), object())), viz=viz,
                                  canvas=mock.Mock(cur=object()), interval=90,
                                  update_bottom_label=mock.Mock(), base_shape=mock.Mock(return_value={'pts': []}),
                                  start_anim=mock.Mock(), preload=mock.Mock())

@@ -191,3 +191,17 @@ To remove the TV controller and engine services, autostart entries, and sudoers 
 ./uninstall.sh
 ```
 *(VacuumTube, mpv and stremio-service packages are kept).*
+
+
+### Appearance and lighter rendering
+
+TV Settings → Appearance (also available in the phone Settings tab) includes:
+- **Transparent surfaces:** turn off for solid menu panels and Home tiles.
+- **Visual effects:** turn off decorative Home motion, photo crossfades, ambient
+  shapes/visualizers, and menu shadows/transitions. Focus remains visible and the
+  playback spinner still communicates activity. Your saved ambient choices are
+  retained when effects are turned back on.
+
+Settings, movie/series browsing, details, sources and stream startup share the
+Home-inspired midnight-blue palette, rounded surfaces and pale-blue focus accent.
+Preferences persist in `home.json` and apply without restarting.

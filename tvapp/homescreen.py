@@ -531,8 +531,8 @@ class AmbientHomeScreen(Screen):
         self.dust = []
         self.geom = None
         self.prev_cells = set()
-        self.shapes_mode = self.cfg["shapes"] if self.style == "network" else "off"
-        self.viz_on = self.cfg["visualizer"] and self.style == "network"
+        self.shapes_mode = self.cfg["shapes"] if self.style == "network" and self.cfg["visual_effects"] else "off"
+        self.viz_on = self.cfg["visualizer"] and self.style == "network" and self.cfg["visual_effects"]
         self.morph = shapes.Morph()
         self.trace = None              # the current photo's sky-line (normalised), or None
         self.reactive_paths = []       # normalised paths on the displayed crop
@@ -577,6 +577,7 @@ class AmbientHomeScreen(Screen):
             overlay.connect("draw", self.perf_draw_begin)
             overlay.connect_after("draw", self.perf_draw_end)
         self.canvas = PhotoCanvas()
+        self.canvas.transparency = self.cfg["transparency"]
         overlay.add(self.canvas)
         shell.photo_canvas = self.canvas
         if self.style == "network":
@@ -786,7 +787,7 @@ class AmbientHomeScreen(Screen):
         self.palette = item.get("palette") if item else None
         self.reactive_paths = item.get("reactive_paths", []) if item else []
         self.update_bottom_label()
-        self.canvas.show_surface(surf, blur, animate=self.canvas.cur is not None)
+        self.canvas.show_surface(surf, blur, animate=self.canvas.cur is not None and self.cfg["visual_effects"])
         self.photo_due = time.monotonic() + self.interval
         if self.viz:
             self.viz.set_paths(self.reactive_paths)
@@ -1002,7 +1003,7 @@ class AmbientHomeScreen(Screen):
     # ---- quiet floating particles
     def field_target(self):
         """1 while ambient is fully faded in and nothing plays; the field needs no photo trace."""
-        return 1.0 if (self.style == "network" and self.idle.ambient and self.chrome <= 0.0
+        return 1.0 if (self.cfg.get("visual_effects", True) and self.style == "network" and self.idle.ambient and self.chrome <= 0.0
                        and self.active() and not self.music_active()) else 0.0
 
     def sync_field(self):
@@ -1608,6 +1609,9 @@ class AmbientHomeScreen(Screen):
         cr.restore()
 
     def needs_anim(self):
+        if not self.cfg.get("visual_effects", True):
+            target = 0.0 if self.idle.ambient else 1.0
+            return self.canvas.fading() or self.chrome != target or self.widget_fading()
         fading = self.canvas.fading() and not (self.idle.ambient and self.shape_drives())
         return ((not self.idle.ambient) or fading or self.chrome > 0.0
                 or (self.style == "network" and self.dust_amt > 0.0 and self.morph.target is None
@@ -1649,11 +1653,11 @@ class AmbientHomeScreen(Screen):
             self.dust_amt = fade_step(self.dust_amt, 1.0 if hold else target, dt, 2.2)
         pw = next((w for w in self.items if hasattr(w, "drop_rect")), None)
         self.shell.avoid_rect = pw.drop_rect() if pw else None
-        if self.chrome > 0.0:
+        if self.chrome > 0.0 and self.cfg["visual_effects"]:
             for w in self.items:
                 w.animate(dt, now)
         if self.style == "network":
-            self.update_links(now)
+            self.update_links(now if self.cfg["visual_effects"] else 0.0)
             if self.morph.target is not None and not self.shape_id:
                 self.step_shape(dt, now)           # waking up: the dots are gliding back to their drift
             self.begin_shapes(now)
