@@ -156,6 +156,9 @@ def save_keys(data_dir, updates):
             raw = {}
         if not isinstance(raw, dict):
             raw = {}
+        updates = dict(updates)
+        if isinstance(updates.get("ambient"), dict) and isinstance(raw.get("ambient"), dict):
+            updates["ambient"] = dict(raw["ambient"], **updates["ambient"])
         raw.update(updates)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))

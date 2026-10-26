@@ -224,3 +224,39 @@ class VizRemoteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(homescreen is None, 'GTK bindings unavailable')
+class SettingsReloadTest(unittest.TestCase):
+    def test_ambient_values_update_without_rebuilding_home(self):
+        import widgets
+        old = widgets.parse_config({})
+        new = widgets.parse_config({'ambient': {'interval': 180, 'idle': 240, 'idle_music': 60}})
+        home = mock.Mock(cfg=old)
+        home.home_stamp.return_value = 12
+        shell = mock.Mock(tops={'home': home}, settings_stamp=11)
+        with mock.patch.object(shell_module.widgets, 'load_config', return_value=new), mock.patch.object(shell_module, 'AmbientHomeScreen') as build:
+            shell_module.Home.sync_home_settings(shell)
+        build.assert_not_called()
+        self.assertEqual((home.interval, home.idle_quiet, home.idle_music), (180, 240, 60))
+        self.assertEqual(shell.home_cfg, new)
+
+    def test_layout_change_preserves_settings_and_removes_old_pairing_listener(self):
+        import widgets
+        old = mock.Mock(cfg=widgets.parse_config({}))
+        old.home_stamp.return_value = 12
+        pairing = mock.Mock()
+        old.items = [pairing]
+        settings = object()
+        shell = mock.Mock(tops={'home': old, 'settings': settings}, back=[old, settings],
+                          settings_stamp=11, seq=1, pair_listeners=[pairing.render])
+        shell.current.return_value = settings
+        replacement = mock.Mock()
+        with mock.patch.object(shell_module.widgets, 'load_config', return_value=widgets.parse_config({'style': 'bubbles'})), mock.patch.object(shell_module, 'AmbientHomeScreen', return_value=replacement):
+            shell_module.Home.sync_home_settings(shell)
+        self.assertEqual(shell.back, [replacement, settings])
+        self.assertIs(shell.tops['settings'], settings)
+        self.assertEqual(shell.pair_listeners, [])
+        old.dispose.assert_called_once()
+        old.destroy.assert_called_once()
+        shell.activate.assert_not_called()

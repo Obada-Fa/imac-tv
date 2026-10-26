@@ -1,9 +1,7 @@
-"""TV Settings screen (Display: resolution and refresh rate) and the "Keep this resolution?" sheet.
+"""Category settings for the TV and the shared timed display confirmation.
 
-Both go through display.py's contract (list_outputs / start_trial / confirm_trial / revert_trial /
-trial_state), the same calls the phone Settings uses. xrandr runs on worker threads; the GTK side only
-builds buttons. The countdown sheet is driven by the shell's tick from display.trial_state(), so a trial
-started from the phone shows here too, and the sheet survives the re-layout a mode change causes.
+Display operations run on workers; the shell owns the confirmation countdown so
+it survives resolution changes and trials initiated by a paired phone.
 """
 import sys
 import threading
@@ -16,6 +14,7 @@ from gi.repository import Gtk, GLib
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import backgrounds  # noqa: E402
 import display  # noqa: E402
+import settings_model
 import widgets  # noqa: E402
 from screens import Screen, text_label, cmd  # noqa: E402
 from media import config as media_config  # noqa: E402
@@ -27,15 +26,15 @@ MIN_WIDTH = 640
 def settings_css(scale=1.0):
     p = lambda n: max(1, round(n * scale))
     return f"""
-.set-page {{ background-image: linear-gradient(160deg, #10141f 0%, #07080c 70%); }}
+.set-page {{ background: #11151c; }}
 .set-title {{ font-size: {p(52)}px; font-weight: 300; color: #fff; }}
 .set-section {{ font-size: {p(20)}px; font-weight: 800; letter-spacing: 2px; color: #93a4c3; }}
 .set-output {{ font-size: {p(30)}px; font-weight: 700; color: #fff; }}
 .set-note {{ font-size: {p(20)}px; color: rgba(255,255,255,0.62); }}
-.set-btn {{ background: rgba(255,255,255,0.07); border: {p(2)}px solid rgba(255,255,255,0.18); border-radius: {p(22)}px;
-           color: #fff; padding: {p(12)}px {p(26)}px; box-shadow: none; min-width: {p(190)}px; }}
+.set-btn {{ background: rgba(255,255,255,0.07); border: {p(2)}px solid rgba(255,255,255,0.18); border-radius: {p(10)}px;
+           color: #fff; padding: {p(12)}px {p(26)}px; box-shadow: none; min-width: {p(150)}px; }}
 .set-btn:focus {{ background: rgba(255,255,255,0.26); border-color: #fff; box-shadow: 0 0 0 {p(3)}px rgba(255,255,255,0.28); }}
-.set-current {{ border-color: #60a5fa; background: rgba(96,165,250,0.16); }}
+.set-current {{ border-color: #a8cfff; background: rgba(96,165,250,0.16); }}
 .set-btn-main {{ font-size: {p(26)}px; font-weight: 700; color: #fff; }}
 .set-btn-sub {{ font-size: {p(16)}px; font-weight: 600; color: rgba(255,255,255,0.6); }}
 .set-current .set-btn-sub {{ color: #93c5fd; }}
@@ -102,44 +101,115 @@ class SettingsScreen(Screen):
         super().__init__(shell)
         px = shell.px
         self.get_style_context().add_class("set-page")
+        self.disposed = False
+        self.connect("destroy", lambda *_: setattr(self, "disposed", True))
         self.rows = []
         self.torbox_busy = False
         self.loading = False
         self.outputs = None
         self.busy = False
         self.retro = backgrounds.Backgrounds(display.DATA)
+        self.memory = getattr(shell, 'settings_memory', {'category': 'Appearance', 'controls': {}, 'scroll': {}})
+        shell.settings_memory = self.memory
+        self.category = self.memory['category']
+        layout = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(36))
+        layout.set_margin_top(px(140))
+        layout.set_margin_start(px(64))
+        layout.set_margin_end(px(64))
+        layout.set_margin_bottom(px(40))
+        self.pack_start(layout, True, True, 0)
+        rail = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(8))
+        self.tabs = []
+        for category in settings_model.CATEGORIES:
+            b = self.button(category, '', category == self.category, ('category', category),
+                            lambda c=category: self.enter_category(c))
+            b.connect('focus-in-event', lambda _b, _e, c=category: self.select_category(c))
+            rail.pack_start(b, False, False, 0)
+            self.tabs.append(b)
+        layout.pack_start(rail, False, False, 0)
         scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_shadow_type(Gtk.ShadowType.NONE)
         self.scroll = scroll
-        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(10))
-        self.body.set_margin_top(px(140))
-        self.body.set_margin_start(px(96))
-        self.body.set_margin_end(px(96))
-        self.body.set_margin_bottom(px(120))
+        self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(16))
+        self.body.set_margin_bottom(px(80))
         scroll.add(self.body)
-        self.pack_start(scroll, True, True, 0)
-        self.title = text_label("Settings", "set-title")
+        layout.pack_start(scroll, True, True, 0)
+        self.title = text_label(self.category, 'set-output')
         self.body.pack_start(self.title, False, False, 0)
-        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(10))
-        self.body.pack_start(self.content, False, False, px(20))
+        self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(12))
+        self.body.pack_start(self.content, False, False, 0)
         self.render()
+        if self.memory.get("in_content"):
+            key = self.memory["controls"].get(self.category)
+            self.last_focus = next((b for row in self.rows for b in row if b.sel_key == key), None)
 
     # ---- Screen API
     def focus_groups(self):
-        return [r for r in self.rows if r]
+        return [[b] for b in self.tabs] + [r for r in self.rows if r]
 
     def first_focus(self, flat):
-        for row in self.rows:
-            for b in row:
-                if b.get_style_context().has_class("set-current"):
-                    return b
-        return flat[0] if flat else None
+        return self.tabs[settings_model.CATEGORIES.index(self.category)]
+
+    def track_focus(self, widget):
+        self.memory["in_content"] = widget not in self.tabs
+        if widget in [b for row in self.rows for b in row]:
+            self.memory["controls"][self.category] = widget.sel_key
+
+    def remember(self):
+        focus = self.shell.get_focus()
+        if focus in [b for row in self.rows for b in row]:
+            self.memory['controls'][self.category] = focus.sel_key
+        self.memory['scroll'][self.category] = self.scroll.get_vadjustment().get_value()
+
+    def select_category(self, category):
+        if category != self.category:
+            self.remember()
+            self.category = category
+            self.memory['category'] = category
+            self.render()
+        return False
+
+    def enter_category(self, category):
+        self.select_category(category)
+        flat = [b for row in self.rows for b in row if b.get_sensitive()]
+        key = self.memory['controls'].get(category)
+        target = next((b for b in flat if b.sel_key == key), flat[0] if flat else None)
+        if target:
+            target.grab_focus()
+            self.reveal(target)
+
+    def handle_key(self, key):
+        focus = self.shell.get_focus()
+        if focus in self.tabs:
+            index = self.tabs.index(focus)
+            if key in ('Up', 'Down'):
+                self.tabs[max(0, min(len(self.tabs) - 1, index + (1 if key == 'Down' else -1)))].grab_focus()
+                return True
+            if key in ('Right', 'Return', 'KP_Enter', 'space'):
+                self.enter_category(self.category)
+                return True
+        elif focus and focus.is_ancestor(self):
+            if key in ('Escape', 'BackSpace', 'XF86Back', 'Back') and not (isinstance(focus, Gtk.Entry) and key == 'BackSpace' and focus.get_text()):
+                self.remember()
+                self.tabs[settings_model.CATEGORIES.index(self.category)].grab_focus()
+                return True
+            if key in ('Up', 'Down'):
+                flat = [b for row in self.rows for b in row if b.get_sensitive()]
+                if focus in flat:
+                    i = flat.index(focus)
+                    target = flat[max(0, min(len(flat) - 1, i + (1 if key == 'Down' else -1)))]
+                    target.grab_focus()
+                    self.reveal(target)
+                    return True
+        return False
 
     def on_enter(self, returning):
         self.load()
 
     def reveal(self, widget):
+        if widget in self.tabs:
+            return
         adj = self.scroll.get_vadjustment()
         pos = widget.translate_coordinates(self.body, 0, 0)
         if not pos:
@@ -166,12 +236,15 @@ class SettingsScreen(Screen):
         threading.Thread(target=work, daemon=True).start()
 
     def loaded(self, outs):
+        if self.disposed:
+            return False
         self.loading = False
         self.outputs = outs
         had = self.shell.get_focus()
         key = getattr(had, "sel_key", None) if had and had.is_ancestor(self) else None
+        self.remember()
         self.render()
-        self.last_focus = next((b for row in self.rows for b in row if b.sel_key == key), None) if key else None
+        self.last_focus = next((b for row in self.focus_groups() for b in row if b.sel_key == key), None) if key else None
         if self.shell.current() is self and not self.shell.sheet:
             self.shell.focus_screen(self)
         return False
@@ -185,12 +258,15 @@ class SettingsScreen(Screen):
         if current:
             b.get_style_context().add_class("set-current")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(2))
-        m = text_label(main, "set-btn-main")
+        m = text_label(main, "set-btn-main", wrap=True)
+        m.set_max_width_chars(44)
         m.set_halign(Gtk.Align.CENTER)
         box.pack_start(m, False, False, 0)
-        s = text_label(sub or " ", "set-btn-sub")
+        s = text_label(sub or " ", "set-btn-sub", wrap=True)
+        s.set_max_width_chars(54)
         s.set_halign(Gtk.Align.CENTER)
-        box.pack_start(s, False, False, 0)
+        if sub:
+            box.pack_start(s, False, False, 0)
         b.add(box)
         b.sel_key = key
         b.connect("clicked", lambda *_: on_click())
@@ -198,10 +274,10 @@ class SettingsScreen(Screen):
 
     def grid(self, buttons):
         px = self.shell.px
-        for line in chunk(buttons, PER_ROW):
+        for line in chunk(buttons, 1):
             hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(18))
             for b in line:
-                hb.pack_start(b, False, False, 0)
+                hb.pack_start(b, True, True, 0)
             self.content.pack_start(hb, False, False, px(4))
             self.rows.append(line)
 
@@ -211,8 +287,29 @@ class SettingsScreen(Screen):
             self.content.remove(c)
             c.destroy()
         self.rows = []
-        self.render_torbox()
-        self.render_background()
+        self.title.set_text(self.category)
+        for b in self.tabs:
+            ctx = b.get_style_context()
+            (ctx.add_class if b.sel_key[1] == self.category else ctx.remove_class)('set-current')
+        if self.category == 'Appearance':
+            self.render_background()
+        if self.category in ('Appearance', 'Ambient', 'Playback'):
+            self.render_fields()
+        if self.category == 'Playback':
+            cfg = media_config.load()
+            self.grid([self.button('YouTube paused auto-close', 'Off' if not cfg['youtube_close_after_paused_min'] else str(cfg['youtube_close_after_paused_min']) + ' min', False, ('youtube',),
+                                   lambda: self.choice_sheet('YouTube paused auto-close', [0, 30, 60], cfg['youtube_close_after_paused_min'], lambda v: self.apply_setting('youtube_close', {'minutes': v})))])
+        if self.category == 'Connections':
+            self.render_torbox()
+            self.grid([self.button('Phone pairing', 'Show QR code and pairing code', False, ('pairing',), self.shell.show_pairing),
+                       self.button('Disconnect other phones', '', False, ('access', 'other_phones'), lambda: self.confirm_access('other_phones')),
+                       self.button('Disable legacy link', '', False, ('access', 'old_link'), lambda: self.confirm_access('old_link'))])
+        if self.category == 'System':
+            self.render_system()
+        if self.category != 'Display':
+            self.content.show_all()
+            GLib.idle_add(self.restore_scroll)
+            return
         sec = text_label("DISPLAY", "set-section")
         sec.set_margin_top(px(30))
         self.content.pack_start(sec, False, False, 0)
@@ -249,6 +346,7 @@ class SettingsScreen(Screen):
             foot.set_margin_top(px(26))
             self.content.pack_start(foot, False, False, 0)
         self.content.show_all()
+        GLib.idle_add(self.restore_scroll)
 
     def render_torbox(self):
         px = self.shell.px
@@ -274,6 +372,8 @@ class SettingsScreen(Screen):
                                 False, False, 0)
 
     def update_torbox(self, configured):
+        if self.category != "Connections":
+            return
         self.torbox_status.set_text("TorBox: " + ("connected" if configured else "not connected"))
         self.torbox_remove.set_sensitive(configured and not self.torbox_busy)
 
@@ -300,6 +400,8 @@ class SettingsScreen(Screen):
 
     def torbox_changed(self, result):
         self.torbox_busy = False
+        if self.category != "Connections":
+            return False
         self.torbox_entry.set_sensitive(True)
         self.torbox_save.set_sensitive(True)
         self.update_torbox(bool(media_config.read_key()))
@@ -319,16 +421,28 @@ class SettingsScreen(Screen):
                                lambda: self.choose_background("photos")),
                    self.button("Retro", ("%d pictures" % len(lib)) if lib else "None added yet", use_retro,
                                ("bg", "retro"), lambda: self.choose_background("retro"))])
+        home = self.shell.tops.get('home')
+        photo = getattr(home, 'current_item', None) or {}
+        for row in self.rows:
+            for button in row:
+                if button.sel_key == ('bg', 'photos'):
+                    self.add_thumbnail(button, photo.get('path'))
+                elif button.sel_key == ('bg', 'retro') and lib:
+                    self.add_thumbnail(button, self.retro.thumb_path(lib[0]['id']))
         if lib:
             off = set(cfg["retro_off"])
             on = {i["id"] for i in lib} - off or {i["id"] for i in lib}
             hdr = text_label("RETRO BACKGROUNDS · %d OF %d ON" % (len(on), len(lib)), "set-section")
             hdr.set_margin_top(px(16))
             self.content.pack_start(hdr, False, False, 0)
-            self.grid([self.button(i["name"][:18], ("On · " if i["id"] in on else "Off · ") + "%d × %d" % (i["width"], i["height"]),
-                                   i["id"] in on, ("bg", "pic", i["id"]), lambda b=i["id"]: self.toggle_retro(b))
-                       for i in lib])
-        note = ("Add pictures from your phone (Settings, Themes)." if not lib else
+            for item in lib:
+                bid = item['id']
+                button = self.button(item['name'], 'On' if bid in on else 'Off', bid in on,
+                                     ('bg', 'pic', bid), lambda b=bid: self.toggle_retro(b))
+                self.add_thumbnail(button, self.retro.thumb_path(bid))
+                self.grid([button, self.button('Remove ' + item['name'], '', False, ('remove', bid),
+                                              lambda b=bid: self.confirm_remove(b))])
+        note = ("Add pictures from your phone (Settings, Appearance)." if not lib else
                 "Select a picture to switch it on or off. Add or replace pictures from your phone.")
         self.content.pack_start(text_label(note, "set-note"), False, False, 0)
 
@@ -360,6 +474,176 @@ class SettingsScreen(Screen):
         widgets.save_keys(display.DATA, {"background": source})
         self.shell.toast("Theme: " + ("Retro" if source == "retro" else "Focus"), 3)
         self.rerender(("bg", "retro" if source == "retro" else "photos"))
+
+    def restore_scroll(self):
+        if self.disposed:
+            return False
+        self.scroll.get_vadjustment().set_value(self.memory['scroll'].get(self.category, 0))
+        return False
+
+    def add_thumbnail(self, button, path):
+        if not path:
+            return
+        from gi.repository import GdkPixbuf
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(str(path), self.shell.px(180), self.shell.px(90), True)
+            image = Gtk.Image.new_from_pixbuf(pix)
+            button.get_child().pack_start(image, False, False, 0)
+            button.get_child().reorder_child(image, 0)
+        except Exception:
+            pass
+
+    def confirm_remove(self, bid):
+        self.choice_sheet('Remove this picture?', [False, True], False,
+                          lambda yes: self.apply_setting('retro_remove', {'id': bid}) if yes else None,
+                          labels=['Cancel', 'Remove'])
+
+    def choice_sheet(self, title, choices, current, save, labels=None):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(12))
+        box.get_style_context().add_class('ah-sheet')
+        box.pack_start(text_label(title, 'set-output'), False, False, 0)
+        buttons = []
+        def choose(value):
+            self.shell.close_sheet()
+            save(value)
+        for i, value in enumerate(choices):
+            b = self.button(labels[i] if labels else settings_model.label(value), '', value == current,
+                            ('choice', i), lambda v=value: choose(v))
+            box.pack_start(b, False, False, 0)
+            buttons.append(b)
+        self.shell.open_sheet('setting', box, [[b] for b in buttons], default=buttons[choices.index(current)] if current in choices else buttons[0])
+
+    def render_fields(self):
+        cfg = widgets.load_config(display.DATA)
+        values = settings_model.values(cfg, media_config.load())
+        for key, category, title, kind, options, network in settings_model.FIELDS:
+            if category != self.category:
+                continue
+            disabled = network and cfg['style'] == 'bubbles'
+            value = values[key]
+            b = self.button(title, 'Available with Network; saved: ' + settings_model.label(value) if disabled else settings_model.label(value),
+                            False, ('setting', key), lambda k=key, v=value, t=title, typ=kind, opts=options: self.edit_setting(k, v, t, typ, opts))
+            box = b.get_child()
+            box.set_orientation(Gtk.Orientation.HORIZONTAL)
+            labels = box.get_children()
+            labels[0].set_halign(Gtk.Align.START)
+            labels[0].set_xalign(0)
+            labels[0].set_max_width_chars(34)
+            box.set_child_packing(labels[0], True, True, 0, Gtk.PackType.START)
+            labels[1].set_halign(Gtk.Align.END)
+            labels[1].set_xalign(1)
+            labels[1].set_max_width_chars(34)
+            b.set_sensitive(not disabled)
+            self.grid([b])
+
+    def edit_setting(self, key, value, title, kind, options, reorder=True):
+        save = lambda v: self.apply_setting('setting_set', {'key': key, 'value': v}, ('setting', key))
+        if kind in ('order', 'languages') and reorder:
+            self.order_sheet(key, value, title, kind, options)
+            return
+        if kind in ('choice', 'bool'):
+            self.choice_sheet(title, options if kind == 'choice' else [False, True], value, save)
+            return
+        if kind == 'multi':
+            self.choice_sheet(title, options, None,
+                              lambda v: save([x for x in value if x in options and x != v] if v in value else [x for x in value if x in options] + [v]),
+                              labels=[('On · ' if v in value else 'Off · ') + v for v in options])
+            return
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(16))
+        box.get_style_context().add_class('ah-sheet')
+        box.pack_start(text_label(title, 'set-note'), False, False, 0)
+        note = 'Comma separated, first preferred' if kind in ('languages', 'order') else ('Range: %s–%s' % tuple(options) if kind == 'number' else 'Use a two or three letter language code, e.g. eng')
+        box.pack_start(text_label(note, 'set-note'), False, False, 0)
+        entry = Gtk.Entry()
+        entry.set_text(', '.join(value) if isinstance(value, list) else str(value))
+        box.pack_start(entry, False, False, 0)
+        def submit():
+            try:
+                raw = entry.get_text().strip()
+                v = float(raw) if kind == 'number' else [v.strip() for v in raw.split(',')] if kind in ('languages', 'order') else raw
+                settings_model.validate(key, v)
+            except ValueError as exc:
+                self.shell.toast(str(exc), 4)
+                return
+            self.shell.close_sheet()
+            save(v)
+        b = self.button('Save', '', False, ('save',), submit)
+        entry.connect('activate', lambda *_: submit())
+        box.pack_start(b, False, False, 0)
+        self.shell.open_sheet('setting', box, [[entry], [b]], default=entry)
+
+    def order_sheet(self, key, value, title, kind, options):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(10))
+        box.get_style_context().add_class('ah-sheet')
+        box.pack_start(text_label(title, 'set-output'), False, False, 0)
+        box.pack_start(text_label('First is preferred. Select an item to move it to first.', 'set-note'), False, False, 0)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_max_content_height(self.shell.px(400))
+        scroll.set_propagate_natural_height(True)
+        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(8))
+        scroll.add(items)
+        box.pack_start(scroll, True, True, 0)
+        buttons = []
+        for index, item in enumerate(value):
+            b = self.button('%d. %s' % (index + 1, settings_model.label(item)), 'Move to first', False, ('order', item),
+                            lambda v=item: self.order_sheet(key, [v] + [x for x in value if x != v], title, kind, options))
+            items.pack_start(b, False, False, 0)
+            buttons.append(b)
+        if kind == 'languages':
+            edit = self.button('Edit language codes', 'Add or remove languages', False, ('edit',),
+                               lambda: self.edit_setting(key, value, title, kind, options, reorder=False))
+            box.pack_start(edit, False, False, 0)
+            buttons.append(edit)
+        def save():
+            self.shell.close_sheet()
+            self.apply_setting('setting_set', {'key': key, 'value': value}, ('setting', key))
+        done = self.button('Save order', '', False, ('save',), save)
+        box.pack_start(done, False, False, 0)
+        buttons.append(done)
+        self.shell.open_sheet('setting', box, [[b] for b in buttons], default=buttons[0])
+
+    def apply_setting(self, action, params, key=None):
+        self.remember()
+        def work():
+            result = cmd(action, params, timeout=15)
+            GLib.idle_add(done, result)
+        def done(result):
+            if not result or not result.get('ok'):
+                self.shell.toast((result or {}).get('error', 'Could not reach the controller'), 5)
+            self.rerender(key)
+            return False
+        threading.Thread(target=work, daemon=True).start()
+
+    def confirm_access(self, mode):
+        self.choice_sheet('Disconnect other phones?' if mode == 'other_phones' else 'Disable legacy link?', [False, True], False,
+                          lambda yes: self.revoke_access(mode) if yes else None, labels=['Cancel', 'Confirm'])
+
+    def revoke_access(self, mode):
+        def work():
+            from screens import post_local
+            result = post_local('/api/revoke', {'mode': mode})
+            GLib.idle_add(self.shell.toast, 'Phone access updated' if result and result.get('ok') else 'Could not update phone access', 4)
+        threading.Thread(target=work, daemon=True).start()
+
+    def render_system(self):
+        for title, action in [('Restart current app', 'restart_app'), ('Recover TV Home', 'recover'), ('Restart desktop session', 'restart_session')]:
+            def invoke(a=action):
+                if a == 'restart_session':
+                    self.choice_sheet('Restart desktop and stop playback?', [False, True], False,
+                                      lambda yes: self.apply_setting(a, {'confirm': True}) if yes else None, labels=['Cancel', 'Restart'])
+                else:
+                    self.apply_setting(a, {})
+            self.grid([self.button(title, '', False, (action,), invoke)])
+        state = getattr(self.shell, 'settings_status', {}) or {}
+        self.system_status = text_label("", "set-note")
+        self.content.pack_start(self.system_status, False, False, 0)
+        self.update_system_status(state)
+
+    def update_system_status(self, state):
+        self.system_status.set_text('Controller: %s · CPU: %s · GPU: %s' % (
+            'connected' if state else 'unavailable',
+            str(state.get('temperature') or 'unknown') + '°C', str(state.get('gpu_temperature') or 'unknown') + '°C'))
 
     # ---- actions
     def pick(self, output, mode, rate):

@@ -125,3 +125,17 @@ footer{gap:7px;grid-auto-flow:column;grid-template-columns:none;grid-auto-column
 .bgitem small{display:block;padding:0 8px 6px;font-size:11px;color:#9dacbd}.bgdel{position:absolute;top:4px;right:4px;width:30px;height:30px;min-height:0;padding:0;border-radius:15px;background:rgba(0,0,0,.6);font-size:14px}
 .addbtn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:22px;border:1px solid #3a5272;font-weight:650;font-size:14px;cursor:pointer}.small{font-size:12px}
 .bgitem:not(.on) img{opacity:.38;filter:grayscale(.6)}.bgtick{position:absolute;top:6px;left:6px;width:24px;height:24px;border-radius:12px;background:rgba(0,0,0,.55);border:2px solid #fff;color:#fff;font-style:normal;font-size:14px;line-height:20px;text-align:center}.bgitem.on .bgtick{background:#2f7ad8}
+/* Category settings share the remote's surfaces and focus treatment. */
+#settings-tabs{position:sticky;top:0;z-index:3;display:flex;overflow-x:auto;gap:6px;padding:8px 0;background:#11151c}
+#settings-tabs button{flex:0 0 auto;white-space:nowrap;min-height:48px;padding:0 16px;border-radius:10px}
+#settings-tabs [aria-selected=true]{background:#314865;border-color:#a8cfff}
+#tab-settings [role=tabpanel]{display:flex;flex-direction:column;gap:16px;min-width:0}
+.setting-row{display:flex;flex-direction:column;gap:10px;padding:16px 0;border-bottom:1px solid #303d4f}
+.setting-row label{font-size:16px}.setting-row input,.setting-row select{font:inherit;background:#222c39;color:#f5f4f0;border:1px solid #3c4b5d;border-radius:10px;min-height:48px;padding:10px;max-width:100%}
+.setting-row select:focus-visible{outline:3px solid #add4ff;outline-offset:2px}
+#tab-settings button,.chips button{min-height:48px}#phone-access{display:flex;flex-direction:column;gap:12px}
+#settings-system{padding-bottom:env(safe-area-inset-bottom)}footer svg{width:24px;height:24px}#settings-open{display:flex;align-items:center;justify-content:center;gap:8px}
+.bgentry{position:relative}.bgentry .bgitem{width:100%}.bgentry .bgdel{position:absolute;right:4px;top:4px;min-width:48px;min-height:48px}
+#bg-source button{display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px;flex:1;border-radius:10px}#bg-source img{width:100%;max-width:180px;aspect-ratio:16/9;object-fit:cover;border-radius:6px}
+.order-row{display:flex;align-items:center;gap:8px;margin:12px 0}.order-row span{flex:1;min-width:0}.order-row button{min-width:48px;padding:6px}.setting-row>button{overflow-wrap:anywhere}
+.setting-row [role=switch][aria-checked=true]{background:#314865;border-color:#a8cfff}.setting-row [role=switch]{margin:2px}.setting-row input:disabled,.setting-row select:disabled{opacity:.5}

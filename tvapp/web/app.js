@@ -97,6 +97,12 @@
     const remembered = sessionStorage.getItem('mode-' + s.app);
     if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
+    if (tab === 'settings' && setState) {
+      for (const [key, , , , , network] of setState.fields || []) {
+        const control = $('setting-' + key);
+        if (control && network) control.disabled = !online || setState.values.style === 'bubbles';
+      }
+    }
   }
 
   const LANG = {ara: 'Arabic', ar: 'Arabic', dut: 'Dutch', nld: 'Dutch', nl: 'Dutch', eng: 'English', en: 'English',
@@ -407,7 +413,7 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', more: 'More', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
@@ -427,21 +433,8 @@
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
       $('off-cancel').onclick = closeSheet;
     } else {
-      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div id="subtitles"></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><label>Recovery</label><div class="sheet-row"><button data-action="restart_app">Restart app</button><button data-action="recover">Recover TV Home</button></div><div class="sheet-row"><button id="restart-desktop">Restart desktop session</button></div><label>TorBox</label><div id="torbox-row"></div><label>Phone access</label><div class="sheet-row"><button id="revoke-others">Disconnect other phones</button><button id="retire-link">Disable old link</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div><p id="heat-info"></p>`;
+      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div id="subtitles"></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
       $('turn-off').onclick = () => openSheet('off');
-      $('restart-desktop').onclick = () => {
-        if (confirm('Restart the TV desktop? This stops the current video.')) fire('restart_session', {confirm: true});
-      };
-      $('revoke-others').onclick = async () => {
-        if (!confirm('Disconnect every other paired phone?')) return;
-        try { await api('/api/revoke', {mode: 'other_phones'}); message('Other phones disconnected'); }
-        catch (err) { message(err.message); }
-      };
-      $('retire-link').onclick = async () => {
-        if (!confirm('Disable the old remote link? Phones using it must pair again.')) return;
-        try { await api('/api/revoke', {mode: 'old_link'}); message('Old link disabled'); refresh(); }
-        catch (err) { message(err.message); }
-      };
       content.querySelectorAll('[data-minutes]').forEach(b => b.onclick = () => {
         send('timer', {minutes: Number(b.dataset.minutes) || null}).then(refresh).catch(() => {});
       });
@@ -453,10 +446,6 @@
     if (!state || sheetName !== 'more') return;
     const timer = state.timer;
     $('timer-status').textContent = timer.active ? `Turns off at ${new Date(timer.deadline * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}` : 'No timer set';
-    $('heat-info').textContent = state.thermal_warning ? 'The iMac is running hot. Stop playback and let it cool.' :
-      `CPU: ${state.temperature == null ? 'unknown' : Math.round(state.temperature) + '°C'} · GPU: ${state.gpu_temperature == null ? 'unknown' : Math.round(state.gpu_temperature) + '°C'}`;
-    $('retire-link').hidden = !state.old_link_active;
-    renderTorboxRow();
     const sub = $('subtitles'); sub.replaceChildren();
     if (!state.capabilities.subtitles) {
       sub.textContent = 'Subtitle tracks appear while MPV plays a video.';
@@ -818,7 +807,7 @@
       const lbl1 = document.createElement('div'); lbl1.className = 'lbl'; lbl1.textContent = 'Resolution';
       const res = document.createElement('div'); res.className = 'chips';
       for (const m of modes) {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = sizeText(m.mode);
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = sizeText(m.mode) + (o.preferred && o.preferred.mode === m.mode ? ' · Recommended' : '');
         if (cur && cur.mode === m.mode) b.classList.add('cur', 'on');
         const t0 = (cur && cur.mode === m.mode && m.rates.includes(cur.rate)) ? cur.rate : m.rates[0];
         b.onclick = () => startTrial(o.name, m.mode, t0);
@@ -840,6 +829,7 @@
       box.append(card);
     }
     renderBackground();
+    renderFields();
     const min = setState.youtube_close_after_paused_min || 0;
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
@@ -849,6 +839,12 @@
     const list = $('bg-list');
     list.replaceChildren();
     $('bg-retro').hidden = !bg.retro.length;
+    for (const button of document.querySelectorAll('#bg-source button')) {
+      button.querySelector('img')?.remove();
+      const src = button.dataset.src === 'photos' ? '/api/themes/focus.jpg' : bg.retro[0] ? '/api/retro/thumb/' + bg.retro[0].id : null;
+      if (src) { const preview = document.createElement('img'); preview.src = src; preview.alt = ''; preview.onerror = () => preview.remove(); button.prepend(preview); }
+      button.setAttribute('aria-pressed', String(button.dataset.src === bg.source));
+    }
     const active = bg.retro.filter(r => r.on).length;
     $('bg-count').textContent = active + ' of ' + bg.retro.length + ' on';
     for (const r of bg.retro) {
@@ -863,7 +859,7 @@
       const d = document.createElement('button'); d.type = 'button'; d.className = 'bgdel'; d.textContent = '✕';
       d.setAttribute('aria-label', 'Remove ' + r.name);
       d.onclick = ev => { ev.stopPropagation(); if (confirm('Remove "' + r.name + '"?')) settingsCall('retro_remove', {id: r.id}); };
-      b.append(d); list.append(b);
+      const item = document.createElement('div'); item.className = 'bgentry'; item.append(b, d); list.append(item);
     }
     $('bg-note').textContent = bg.wanted === 'retro' && !bg.retro.length ? 'No retro pictures yet, so Focus is showing.' : '';
   }
@@ -872,6 +868,7 @@
     if (b.dataset.src === 'retro' && !(bg.retro || []).length) { $('bg-note').textContent = 'Add a picture first.'; return; }
     settingsCall('background_set', {source: b.dataset.src});
   });
+  $('bg-add').onclick = () => $('bg-file').click();
   $('bg-file').onchange = async ev => {
     const f = ev.target.files[0]; ev.target.value = '';
     if (!f || setBusy) return;
@@ -914,6 +911,120 @@
   document.querySelectorAll('#yt-close button').forEach(b => b.onclick = () => {
     buzz(8); settingsCall('youtube_close', {minutes: Number(b.dataset.min)});
   });
+
+  $('settings-open').onclick = () => showTab('settings');
+  const categories = ['Appearance', 'Ambient', 'Display', 'Playback', 'Connections', 'System'];
+  let settingsCategory = 'appearance';
+  try { const saved = sessionStorage.getItem('settings-category'); if (categories.some(c => c.toLowerCase() === saved)) settingsCategory = saved; } catch (e) {}
+  function selectCategory(id, focus = false) {
+    settingsCategory = id;
+    try { sessionStorage.setItem('settings-category', id); } catch (e) {}
+    categories.forEach(c => {
+      const key = c.toLowerCase(), b = $('category-' + key), active = key === id;
+      b.setAttribute('aria-selected', String(active)); b.tabIndex = active ? 0 : -1;
+      $('settings-' + key).hidden = !active;
+      if (active) { if (focus) b.focus(); b.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
+    });
+  }
+  categories.forEach((c, i) => {
+    const b = document.createElement('button'); b.type = 'button'; b.id = 'category-' + c.toLowerCase();
+    b.textContent = c; b.setAttribute('role', 'tab'); b.setAttribute('aria-controls', 'settings-' + c.toLowerCase());
+    b.onclick = () => selectCategory(c.toLowerCase());
+    b.onkeydown = e => {
+      const next = e.key === 'ArrowRight' ? (i + 1) % 6 : e.key === 'ArrowLeft' ? (i + 5) % 6 : e.key === 'Home' ? 0 : e.key === 'End' ? 5 : null;
+      if (next !== null) { e.preventDefault(); selectCategory(categories[next].toLowerCase(), true); }
+    };
+    $('settings-tabs').append(b);
+  });
+  selectCategory(settingsCategory);
+  const settingLabel = v => ({photo: 'Photo outlines', 'photo+animals': 'Photo outlines and animals', off: 'Off'}[v] || String(v));
+  function orderPicker(key, title, value, languages, save) {
+    let ordered = [...value];
+    sheetName = 'setting'; sheet.hidden = false; updateTabbar();
+    $('sheet-title').textContent = title;
+    const content = $('sheet-content');
+    const draw = () => {
+      content.replaceChildren();
+      const hint = document.createElement('p'); hint.textContent = 'First item is preferred.'; content.append(hint);
+      ordered.forEach((v, i) => {
+        const row = document.createElement('div'); row.className = 'order-row';
+        const label = document.createElement('span'); label.textContent = LANG[v] || v; row.append(label);
+        for (const [text, delta] of [['Move up', -1], ['Move down', 1]]) {
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = delta < 0 ? '↑' : '↓'; b.setAttribute('aria-label', text + ' ' + (LANG[v] || v));
+          b.disabled = i + delta < 0 || i + delta >= ordered.length;
+          b.onclick = () => { [ordered[i], ordered[i + delta]] = [ordered[i + delta], ordered[i]]; draw(); content.querySelectorAll('.order-row')[i + delta].querySelector('button:not(:disabled)')?.focus(); }; row.append(b);
+        }
+        if (languages) { const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.setAttribute('aria-label', 'Remove ' + (LANG[v] || v)); remove.disabled = ordered.length === 1; remove.onclick = () => { ordered.splice(i, 1); draw(); }; row.append(remove); }
+        content.append(row);
+      });
+      if (languages) {
+        const label = document.createElement('label'); label.textContent = 'Add language code'; label.htmlFor = 'add-language';
+        const input = document.createElement('input'); input.id = 'add-language'; input.placeholder = 'e.g. eng'; input.maxLength = 3;
+        const add = document.createElement('button'); add.type = 'button'; add.textContent = 'Add';
+        add.onclick = () => { const code = input.value.trim().toLowerCase(); if (!/^[a-z]{2,3}$/.test(code) || ordered.includes(code)) { input.setCustomValidity('Enter a new two or three letter language code'); input.reportValidity(); return; } ordered.push(code); draw(); };
+        input.oninput = () => input.setCustomValidity(''); content.append(label, input, add);
+      }
+      const done = document.createElement('button'); done.type = 'button'; done.textContent = 'Save order'; done.onclick = () => { closeSheet(); save(ordered); }; content.append(done);
+    };
+    draw(); content.querySelector('button:not(:disabled)')?.focus();
+  }
+
+  function renderFields() {
+    for (const category of ['appearance', 'ambient', 'playback']) {
+      const container = $('fields-' + category);
+      // Keep focused edits intact during the display countdown poll.
+      if (container.contains(document.activeElement)) continue;
+      container.replaceChildren();
+      for (const [key, group, title, kind, options, network] of setState.fields || []) {
+        if (group.toLowerCase() !== category) continue;
+        const row = document.createElement('div'); row.className = 'setting-row';
+        const label = document.createElement('label'); label.htmlFor = 'setting-' + key; label.textContent = title;
+        const value = setState.values[key];
+        let control;
+        const save = value => settingsCall('setting_set', {key, value});
+        if (kind === 'bool') {
+          control = document.createElement('button'); control.type = 'button'; control.setAttribute('role', 'switch');
+          control.setAttribute('aria-checked', String(value)); control.textContent = value ? 'On' : 'Off'; control.onclick = () => save(!value);
+        } else if (kind === 'choice') {
+          control = document.createElement('select');
+          for (const v of options) { const o = document.createElement('option'); o.value = v; o.textContent = settingLabel(v); control.append(o); }
+          control.value = value; control.onchange = () => save(control.value);
+        } else if (kind === 'order' || kind === 'languages') {
+          control = document.createElement('button'); control.type = 'button'; control.textContent = value.map(v => LANG[v] || v).join(' → ');
+          control.onclick = () => orderPicker(key, title, value, kind === 'languages', save);
+        } else if (kind === 'multi') {
+          control = document.createElement('div');
+          for (const v of options) {
+            const b = document.createElement('button'); b.type = 'button'; b.textContent = v;
+            b.setAttribute('role', 'switch'); b.setAttribute('aria-label', title + ': ' + v); b.setAttribute('aria-checked', String(value.includes(v)));
+            b.onclick = () => save(value.includes(v) ? value.filter(x => options.includes(x) && x !== v) : [...value.filter(x => options.includes(x)), v]); control.append(b);
+          }
+        } else {
+          control = document.createElement('input'); control.type = kind === 'number' ? 'number' : 'text';
+          control.value = Array.isArray(value) ? value.join(', ') : value;
+          if (kind === 'number') { control.min = options[0]; control.max = options[1]; control.step = key === 'still_watching_hours' ? '0.1' : '1'; }
+          const apply = document.createElement('button'); apply.type = 'button'; apply.textContent = 'Save'; apply.setAttribute('aria-label', 'Save ' + title);
+          apply.onclick = () => { if (control.reportValidity()) save(kind === 'number' ? Number(control.value) : ['languages', 'order'].includes(kind) ? control.value.split(',').map(v => v.trim()) : control.value.trim()); };
+          row.append(apply);
+        }
+        control.id = 'setting-' + key;
+        if (network && setState.values.style === 'bubbles') { control.disabled = true; const note = document.createElement('p'); note.className = 'muted'; note.textContent = 'Available with Network layout. Your selection is saved.'; row.append(note); }
+        row.prepend(label, control); container.append(row);
+      }
+    }
+    const access = $('phone-access'); access.replaceChildren();
+    const info = document.createElement('p'); info.className = 'muted'; info.textContent = 'This phone is paired. Pair another phone using the QR code on TV Home.'; access.append(info);
+    for (const [title, mode, question] of [['Disconnect other phones', 'other_phones', 'Disconnect every other paired phone?'], ['Disable legacy link', 'old_link', 'Disable the old remote link? Phones using it must pair again.']]) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = title; b.disabled = mode === 'old_link' && state && !state.old_link_active;
+      b.onclick = async () => { if (!confirm(question)) return; try { await api('/api/revoke', {mode}); refresh(); } catch (e) { message(e.message); } }; access.append(b);
+    }
+    const system = $('settings-system'); system.replaceChildren();
+    for (const [title, action] of [['Restart current app', 'restart_app'], ['Recover TV Home', 'recover'], ['Restart desktop session', 'restart_session']]) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = title;
+      b.onclick = () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }; system.append(b);
+    }
+    const status = document.createElement('p'); status.className = 'muted'; status.textContent = `Connection: ${online ? 'connected' : 'offline'} · CPU: ${state?.temperature ?? 'unknown'}°C · GPU: ${state?.gpu_temperature ?? 'unknown'}°C`; system.append(status);
+  }
 
   const data = r => (r && r.result) || {};
   function posterEl(item) {

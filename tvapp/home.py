@@ -24,6 +24,7 @@ from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
 from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
+import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
 import display  # noqa: E402
@@ -218,6 +219,9 @@ class Home(Gtk.Window):
         """New monitor size: rebuild CSS, header and screens at the new size; reopen Settings if it was open.
         Ephemeral screens (Details, Sources) close; the trial sheet comes back from the next tick."""
         top = self.current().sname if self.current() else "home"
+        settings = self.tops.get("settings")
+        if settings:
+            settings.remember()
         self.sw, self.sh = w, h
         self.scale = ui_scale(h)
         self.close_sheet()
@@ -291,6 +295,11 @@ class Home(Gtk.Window):
         for label, name in (("Home", "home"), ("Movies", "movies"), ("Series", "series"), ("Search", "search"),
                             ("Settings", "settings")):
             b = Gtk.Button(label=label)
+            if name == 'settings':
+                image = Gtk.Image.new_from_pixbuf(GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                    str(screens.ASSETS / 'icons' / 'settings.svg'), self.px(26), self.px(26), True))
+                b.set_image(image)
+                b.set_always_show_image(True)
             b.set_relief(Gtk.ReliefStyle.NONE)
             b.get_style_context().add_class("nav-button")
             b.connect("clicked", lambda _b, n=name: self.goto_top(n))
@@ -486,6 +495,8 @@ class Home(Gtk.Window):
         screen = self.current()
         if screen and widget is not None and widget.is_ancestor(screen):
             screen.last_focus = widget
+            if isinstance(screen, SettingsScreen):
+                screen.track_focus(widget)
 
     def navigate(self, key):
         groups = self.groups()
@@ -542,6 +553,8 @@ class Home(Gtk.Window):
                 self.navigate(key)
                 return True
             return False        # Enter / space reach the focused sheet button
+        if hasattr(screen, "handle_key") and screen.handle_key(key):
+            return True
         focus = self.get_focus()
         in_entry = isinstance(focus, Gtk.Entry)
         if key in BACK_KEYS:
@@ -714,6 +727,10 @@ class Home(Gtk.Window):
         self.state_loading = False
         if not state:
             return False
+        self.settings_status = state
+        settings = self.tops.get("settings")
+        if settings and settings.category == "System":
+            settings.update_system_status(state)
         self.set_remote(state.get("remote"))
         settings = self.tops.get("settings")
         if settings and not settings.torbox_busy and "torbox" in state:
@@ -739,8 +756,44 @@ class Home(Gtk.Window):
         self.state_seen = True
         return False
 
+    def sync_home_settings(self):
+        home = self.tops.get('home')
+        if home is None:
+            return
+        stamp = home.home_stamp()
+        if stamp == getattr(self, 'settings_stamp', None):
+            return
+        self.settings_stamp = stamp
+        cfg = widgets.load_config(DATA)
+        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'shapes', 'visualizer')
+        if not any(cfg[k] != home.cfg[k] for k in structural):
+            home.cfg = cfg
+            self.home_cfg = cfg
+            home.interval = cfg['ambient']['interval']
+            home.idle_quiet = cfg['ambient']['idle']
+            home.idle_music = cfg['ambient']['idle_music']
+            return
+        was_current = self.current() is home
+        # Pairing listeners belong to the old Home widgets.
+        old_listeners = {getattr(w, 'render', None) for w in home.items}
+        self.pair_listeners = [fn for fn in self.pair_listeners if fn not in old_listeners]
+        home.dispose()
+        replacement = AmbientHomeScreen(self)
+        self.tops['home'] = replacement
+        self.seq += 1
+        self.stack.add_named(replacement, 's%d' % self.seq)
+        replacement.show_all()
+        self.back = [replacement if screen is home else screen for screen in self.back]
+        if was_current:
+            self.stack.set_visible_child(replacement)
+            self.activate(replacement, True)
+        self.stack.remove(home)
+        home.destroy()
+
     def tick(self):
         self.tick_n += 1
+        if self.tick_n % 2 == 0:
+            self.sync_home_settings()
         self.check_ui_request()
         self.write_viz_state()
         self.sync_trial()

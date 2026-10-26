@@ -245,12 +245,16 @@ def local_api(path):
 
 
 def cmd(action, params=None, timeout=3):
-    payload = json.dumps({"action": action, "params": params or {}}).encode()
+    return post_local("/api/commands", {"action": action, "params": params or {}}, timeout)
+
+
+def post_local(path, body, timeout=3):
+    payload = json.dumps(body).encode()
     try:
         token = (DATA / "home_token").read_text().strip()
     except OSError:
         token = ""
-    req = urllib.request.Request("http://127.0.0.1:8765/api/commands", data=payload,
+    req = urllib.request.Request("http://127.0.0.1:8765" + path, data=payload,
                                  headers={"Content-Type": "application/json", "Cookie": "imactv=" + token},
                                  method="POST")
     try:

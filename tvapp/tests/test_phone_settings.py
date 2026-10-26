@@ -125,5 +125,57 @@ class SettingsHttpTests(TorboxCase):
             self.assertEqual(got["outputs"], [OUT])
 
 
+class PreferenceTests(TorboxCase):
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(server, "DATA", self.data)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_preserves_values_and_defaults(self):
+        home = {'weather': {'place': 'Home', 'lat': 52, 'lon': 5},
+                'ambient': {'interval': 180, 'idle': 240, 'idle_music': 60, 'extension': 7},
+                'style': 'network', 'node_shape': 'octagon', 'visualizer': True}
+        media = {'addons': {'meta': 'https://example.test'}, 'codec_order': ['AV1'], 'cache_bytes': 123,
+                 'max_size_gb': 7, 'sub_default': 'ara'}
+        (self.data / 'home.json').write_text(json.dumps(home))
+        (self.data / 'media.json').write_text(json.dumps(media))
+        with mock.patch.object(server, 'display', fake_display()):
+            self.assertTrue(self.c.settings()['values']['autoplay_next'])
+            self.c.action('setting_set', {'key': 'idle', 'value': 300})
+            home['ambient']['idle'] = 300
+            self.assertEqual(json.loads((self.data / 'home.json').read_text()), home)
+            self.c.action('setting_set', {'key': 'autoplay_next', 'value': False})
+            self.assertFalse(self.c.flow.cfg['autoplay_next'])
+            media['autoplay_next'] = False
+            self.assertEqual(json.loads((self.data / 'media.json').read_text()), media)
+            self.c.action('setting_set', {'key': 'style', 'value': 'bubbles'})
+            saved = self.c.settings()['values']
+            self.assertEqual(saved['node_shape'], 'octagon')
+            self.assertTrue(saved['visualizer'])
+
+    def test_rejects_unknown_and_unusable_values_without_writing(self):
+        for key, value in [('engine', 'http://example.test'), ('style', 'invented'), ('visualizer', 1),
+                           ('idle', True), ('idle', 9), ('idle', float('inf')), ('interval', 12.5),
+                           ('still_watching_episodes', 0), ('still_watching_hours', 25),
+                           ('sub_default', '../secret'), ('sub_langs', ['eng', 'eng']),
+                           ('quality_order', ['1080p']), ('widgets', ['unknown'])]:
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                self.c.action('setting_set', {'key': key, 'value': value})
+        self.assertFalse((self.data / 'home.json').exists())
+        self.assertFalse((self.data / 'media.json').exists())
+
+    def test_preserves_order_and_widget_extensions(self):
+        (self.data / 'home.json').write_text(json.dumps({'widgets': ['clock', 'extension']}))
+        self.c.action('setting_set', {'key': 'widgets', 'value': ['weather']})
+        self.assertEqual(json.loads((self.data / 'home.json').read_text())['widgets'], ['weather', 'extension'])
+        order = ['2160p', '1080p', '720p', '480p']
+        self.c.action('setting_set', {'key': 'quality_order', 'value': order})
+        self.c.action('setting_set', {'key': 'sub_langs', 'value': ['dut', 'ara', 'eng']})
+        saved = json.loads((self.data / 'media.json').read_text())
+        self.assertEqual(saved['quality_order'], order)
+        self.assertEqual(saved['sub_langs'], ['dut', 'ara', 'eng'])
+
+
 if __name__ == "__main__":
     unittest.main()

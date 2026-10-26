@@ -39,5 +39,93 @@ class SettingsHelpersTest(unittest.TestCase):
         self.assertEqual(home.ui_scale(300), 0.5)
 
 
+class CategoryNavigationTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from unittest import mock
+        from gi.repository import Gtk
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patch = mock.patch.object(display, 'DATA', Path(self.tmp.name))
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch_media = mock.patch.dict('os.environ', {'IMACTV_DATA_DIR': self.tmp.name})
+        patch_media.start()
+        self.addCleanup(patch_media.stop)
+        self.shell = Gtk.Window()
+        self.shell.px = lambda v: round(v * 2 / 3)
+        self.shell.tops = {}
+        self.shell.sheet = None
+        self.shell.toast = mock.Mock()
+        self.shell.show_pairing = mock.Mock()
+        self.screen = settings.SettingsScreen(self.shell)
+        self.shell.current = lambda: self.screen
+        self.shell.focus_screen = lambda screen: (screen.last_focus or screen.first_focus([])).grab_focus()
+        self.shell.add(self.screen)
+        self.shell.set_default_size(1280, 720)
+        self.shell.show_all()
+        self.drain()
+        self.addCleanup(self.shell.destroy)
+
+    def drain(self):
+        from gi.repository import Gtk
+        while Gtk.events_pending():
+            Gtk.main_iteration_do(False)
+
+    def test_rail_content_back_and_refresh_focus(self):
+        screen = self.screen
+        self.assertEqual(screen.category, 'Appearance')
+        screen.tabs[1].grab_focus()
+        self.drain()
+        self.assertEqual(screen.category, 'Ambient')
+        self.assertTrue(screen.handle_key('Right'))
+        self.drain()
+        target = self.shell.get_focus()
+        self.assertIn(target, [b for row in screen.rows for b in row])
+        key = target.sel_key
+        screen.loaded([])
+        self.drain()
+        self.assertEqual(self.shell.get_focus().sel_key, key)
+        self.assertTrue(screen.handle_key('Escape'))
+        self.assertIs(self.shell.get_focus(), screen.tabs[1])
+        screen.loaded([])
+        self.assertIs(self.shell.get_focus(), screen.tabs[1])
+
+    def test_bubbles_preserves_values_and_categories_render(self):
+        import widgets
+        widgets.save_keys(display.DATA, {'style': 'bubbles', 'node_shape': 'octagon', 'visualizer': True})
+        self.screen.render()
+        node = next(b for row in self.screen.rows for b in row if b.sel_key == ('setting', 'node_shape'))
+        self.assertFalse(node.get_sensitive())
+        for category in settings.settings_model.CATEGORIES:
+            self.screen.select_category(category)
+            self.drain()
+        cfg = widgets.load_config(display.DATA)
+        self.assertEqual(cfg['node_shape'], 'octagon')
+        self.assertTrue(cfg['visualizer'])
+
+    def test_remembers_control_across_categories_and_rebuild(self):
+        screen = self.screen
+        screen.enter_category('Playback')
+        self.drain()
+        target = screen.rows[-1][0]
+        target.grab_focus()
+        screen.track_focus(target)
+        screen.reveal(target)
+        self.drain()
+        screen.remember()
+        key = target.sel_key
+        screen.enter_category('Ambient')
+        screen.enter_category('Playback')
+        self.drain()
+        self.assertEqual(self.shell.get_focus().sel_key, key)
+        screen.track_focus(self.shell.get_focus())
+        screen.remember()
+        restored = settings.SettingsScreen(self.shell)
+        self.assertEqual(restored.category, 'Playback')
+        self.assertEqual(restored.last_focus.sel_key, key)
+        restored.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

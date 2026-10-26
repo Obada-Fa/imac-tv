@@ -26,6 +26,7 @@ import urllib.request
 BASE = Path(__file__).resolve().parent
 if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
+import settings_model
 import backgrounds
 import nowplaying
 import widgets
@@ -1500,7 +1501,7 @@ class Controller:
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
-                        "background_set", "retro_toggle", "retro_remove")
+                        "background_set", "retro_toggle", "retro_remove", "setting_set")
 
     def background_state(self):
         cfg = widgets.load_config(DATA)
@@ -1516,9 +1517,11 @@ class Controller:
                 "formats": backgrounds.supported_formats()}
 
     def settings(self):
-        """Phone Settings tab: outputs and trial (xrandr, ~1 s) plus the YouTube auto-close setting."""
+        """Editable preferences, TorBox state, backgrounds, and timed display trial."""
         out = {"outputs": [], "trial": {"active": False}, "display_error": "", "background": self.background_state(),
                "torbox": {"configured": bool(media_config.read_key())},
+               "fields": settings_model.FIELDS,
+               "values": settings_model.values(widgets.load_config(DATA), media_config.load()),
                "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
         if display is None:
             out["display_error"] = "Display control is not available"
@@ -1533,6 +1536,37 @@ class Controller:
 
     def settings_action(self, action, params):
         """Runs outside action_lock: xrandr can take a second and must not stall the remote."""
+        if action == "setting_set":
+            key = params.get("key")
+            value = settings_model.validate(key, params.get("value"))
+            with self.settings_lock:
+                if key in settings_model.MEDIA_KEYS:
+                    path = media_config.data_dir() / "media.json"
+                    try:
+                        raw = json.loads(path.read_text())
+                    except (OSError, ValueError):
+                        raw = {}
+                    if not isinstance(raw, dict):
+                        raw = {}
+                    raw[key] = value
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = path.with_suffix(".tmp")
+                    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+                        json.dump(raw, f, indent=2)
+                    os.replace(tmp, path)
+                    with self.lock:
+                        self.flow.cfg = upnext.settings(media_config.load())
+                else:
+                    if key in settings_model.AMBIENT_KEYS:
+                        widgets.save_keys(DATA, {"ambient": {key: value}})
+                    elif key == "widgets":
+                        # Keep unknown extension widgets untouched.
+                        old = widgets.load_config(DATA)["widgets"]
+                        known = next(f[4] for f in settings_model.FIELDS if f[0] == key)
+                        widgets.save_keys(DATA, {key: value + [v for v in old if v not in known]})
+                    else:
+                        widgets.save_keys(DATA, {key: value})
+            return {"saved": True}
         if action == "youtube_close":
             minutes = params.get("minutes")
             if minutes not in (0, 30, 60) or isinstance(minutes, bool):
@@ -1994,6 +2028,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._note_presence()
             self.respond(200, CONTROL.settings())
+            return
+        if parsed.path == "/api/themes/focus.jpg":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            import ambient
+            items = ambient.Library(DATA, 320, 180).items()
+            if not items:
+                self.respond(404, {"error": "No Focus photos cached yet"})
+                return
+            try:
+                pix = backgrounds.GdkPixbuf.Pixbuf.new_from_file_at_scale(items[0]['path'], 320, 180, True)
+                ok, body = pix.save_to_bufferv('jpeg', [], [])
+            except Exception:
+                self.respond(404, {"error": "Preview unavailable"})
+                return
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Cache-Control', 'private, max-age=60')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if parsed.path.startswith("/api/retro/thumb/"):
             if not self.authorised(parsed.query):
