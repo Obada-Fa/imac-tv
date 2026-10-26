@@ -496,6 +496,30 @@ class LifecycleTests(unittest.TestCase):
                              {"youtube_now": dict(state, youtube_mode="video", youtube_reason="no music signal")})
         ctl.assert_called_once_with("play_pause", None)
 
+    def test_notification_pause_sets_mpv_state_without_toggling(self):
+        c = self.controller()
+        with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv") as mpv:
+            for paused in (True, True, False):
+                c.action("set_paused", {"paused": paused})
+            self.assertEqual(mpv.call_args_list, [mock.call("set_property", "pause", True),
+                                                mock.call("set_property", "pause", True),
+                                                mock.call("set_property", "pause", False)])
+            for bad in (None, "true", 0, 1):
+                with self.assertRaises(ValueError):
+                    c.action("set_paused", {"paused": bad})
+        with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv") as mpv:
+            with self.assertRaisesRegex(RuntimeError, "only while MPV"):
+                c.action("set_paused", {"paused": True})
+            mpv.assert_not_called()
+
+    def test_notification_youtube_transport_uses_explicit_commands(self):
+        c = self.controller()
+        with mock.patch.object(server.nowplaying, "control") as ctl, \
+                mock.patch.object(c, "youtube_now", return_value=None), mock.patch.object(server.time, "sleep"):
+            for cmd in ("play", "pause", "stop"):
+                c.action("youtube_media", {"cmd": cmd})
+        self.assertEqual(ctl.call_args_list, [mock.call("play", None), mock.call("pause", None), mock.call("stop", None)])
+
     def test_youtube_media_seek_and_set_position_validate_and_clamp(self):
         c = self.controller()
         with mock.patch.object(server.nowplaying, "control") as ctl, mock.patch.object(server.nowplaying, "current", return_value=None), \

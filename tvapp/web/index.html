@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#0b111d"><meta name="apple-mobile-web-app-capable" content="yes">
-<title>iMac TV Remote</title><link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script></head>
+<title>iMac TV Remote</title><link rel="stylesheet" href="/app.css"><script src="/media-session.js" defer></script><script src="/app.js" defer></script></head>
 <body>
 <canvas id="sky" class="sky" aria-hidden="true"></canvas>
 <svg class="defs" aria-hidden="true" focusable="false" width="0" height="0">
@@ -19,6 +19,7 @@
     <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home" type="button">Home</button><button data-app="youtube" type="button">YouTube</button></nav>
   </header>
   <div id="notice" class="notice" role="status" hidden></div>
+  <button id="phone-media" type="button" class="phone-media nextbtn glass" aria-pressed="false" hidden>Show in phone media controls</button>
   <div id="yt" class="yt glass" hidden>
     <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
     <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>

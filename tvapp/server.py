@@ -1841,10 +1841,15 @@ class Controller:
                     row.update({k: entry[k] for k in ("season", "episode", "position", "duration") if k in entry})
                     items.append(row)
                 return {"items": items}
-            if action in ("seek", "subtitle", "subdelay", "audio"):
+            if action in ("seek", "subtitle", "subdelay", "audio", "set_paused"):
                 if not playback()["active"]:
                     raise RuntimeError("This control is available only while MPV is playing")
-                if action == "seek":
+                if action == "set_paused":
+                    paused = params.get("paused")
+                    if not isinstance(paused, bool):
+                        raise ValueError("Paused must be true or false")
+                    mpv("set_property", "pause", paused)
+                elif action == "seek":
                     seconds = float(params.get("seconds", 0))
                     if not 0 <= seconds <= 86400:
                         raise ValueError("Invalid position")
@@ -2003,7 +2008,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Set-Cookie", f"imactv={token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict")
                 self.end_headers()
                 return
-        if parsed.path == "/" or parsed.path in ("/app.css", "/app.js"):
+        if parsed.path == "/" or parsed.path in ("/app.css", "/app.js", "/media-session.js"):
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
             path = WEB / name
             payload = path.read_bytes()

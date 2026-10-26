@@ -136,7 +136,8 @@ def _mpris_named():
     return out
 
 
-COMMANDS = {"play_pause": "PlayPause", "next": "Next", "previous": "Previous", "seek": "Seek", "set_position": "SetPosition"}
+COMMANDS = {"play_pause": "PlayPause", "play": "Play", "pause": "Pause", "stop": "Stop",
+            "next": "Next", "previous": "Previous", "seek": "Seek", "set_position": "SetPosition"}
 
 
 def control(cmd, value=None):

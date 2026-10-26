@@ -72,6 +72,14 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             nowplaying.control("explode")
 
+    def test_notification_transport_calls_explicit_mpris_methods(self):
+        bus, gio = mock.Mock(), mock.Mock()
+        with self.named(("org.mpris.MediaPlayer2.vacuumtube", {"status": "Paused"})), \
+                mock.patch.object(nowplaying, "_bus", return_value=(gio, mock.Mock(), bus)):
+            for cmd in ("play", "pause", "stop"):
+                nowplaying.control(cmd)
+        self.assertEqual([call.args[3] for call in bus.call_sync.call_args_list], ["Play", "Pause", "Stop"])
+
     def test_calls_method_on_playing_player(self):
         bus, gio = mock.Mock(), mock.Mock()
         paused = ("org.mpris.MediaPlayer2.a", {"status": "Paused"})

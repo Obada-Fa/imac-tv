@@ -135,7 +135,27 @@ buffering card (source, peers, speed, Cancel), and a Now Playing card with scrub
 bar, skip, subtitle/audio pickers and subtitle delay. Stop returns to the
 title's details. VacuumTube provides YouTube.
 
+### Phone notification and lock-screen controls
+
+On the phone's Remote tab, tap **Show in phone media controls** while something
+is playing on the TV. In browsers supporting the Media Session API (such as
+Chrome on Android), the notification shade and lock screen can then show the
+title, artwork, play/pause and seeking. YouTube also offers previous/next when
+the player supports them; series offer Next when another episode is available.
+Tap **Phone media controls on · Turn off** to disable it. If playback needs a
+fresh tap, the button changes to **Resume phone media controls**.
+
+Keep the remote browser tab open and the phone connected to the TV's network.
+The browser runs a silent audio loop to expose the remote session; real sound
+continues on the TV. Starting it can take audio focus from other phone media.
+No notification permission or app install is required, and the LAN HTTP remote
+still works. Available buttons and background lifetime depend on the phone and
+browser; closing the tab or suspending the browser ends the controls. Volume
+remains in the remote page because the web Media Session API has no TV volume
+action. Unsupported browsers keep the usual remote controls.
+
 ## Testing
 
 Run `python3 -m unittest discover -s tests -v` in this directory. The test
 suite uses a temporary data directory and does not connect to the TV.
+Run `node --test tests/test_phone_media.js` for the phone media session tests.

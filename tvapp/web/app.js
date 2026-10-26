@@ -4,6 +4,12 @@
   const remote = $('remote'), pair = $('pair'), sheet = $('sheet'), browser = $('browser'), tabbar = $('tabbar');
   let state = null, online = false, mode = 'dpad', sheetName = '', draggingSeek = false;
   let draggingBrightness = false, brightnessReason = '';
+  const phoneMedia = new TVMediaControls({button: $('phone-media'), send, message,
+    readState: async () => {
+      const s = await api('/api/state');
+      render(s);
+      return s;
+    }});
 
   async function api(path, data) {
     const options = {credentials: 'same-origin'};
@@ -312,6 +318,7 @@
   function connected(value, label) {
     const was = online;
     online = value;
+    if (!value) phoneMedia.disconnect();
     if (was !== value && setState) renderConnections();
     $('connection').title = label; $('connection').setAttribute('aria-label', label);
     $('connection').classList.toggle('off', !value);
@@ -339,6 +346,7 @@
     if (!setState && !settingsAsked) { settingsAsked = true; loadSettings(); }   // node shape + Home's photo
     pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
+    if (s.gui) phoneMedia.update(s);
     applyTab();
     const pb = s.playback || {}, name = (s.media && s.media.name) || pb.title;
     const notice = s.thermal_warning ? '⚠ TV is running hot' : s.phase === 'opening' ? 'Opening…' : !s.gui ? 'Waiting for TV screen' : '';
@@ -684,7 +692,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       
-      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
