@@ -27,6 +27,8 @@ backups/
 /*.png
 !/tvapp/assets/**/*.png
 !/tvapp/previews/**/*.png
+/shot.py
+/grab.py
 
 # OS metadata
 .DS_Store
