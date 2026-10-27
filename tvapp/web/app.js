@@ -371,6 +371,8 @@
     nor: 'Norwegian', nob: 'Norwegian', per: 'Persian', fas: 'Persian', pol: 'Polish', pl: 'Polish', por: 'Portuguese', pt: 'Portuguese',
     pob: 'Portuguese (BR)', rum: 'Romanian', ron: 'Romanian', rus: 'Russian', ru: 'Russian', spa: 'Spanish', es: 'Spanish',
     swe: 'Swedish', sv: 'Swedish', tha: 'Thai', tur: 'Turkish', tr: 'Turkish', ukr: 'Ukrainian', vie: 'Vietnamese', hin: 'Hindi'};
+  const LANGUAGE_OPTIONS = [...new Map(Object.entries(LANG).reverse().map(([code, name]) => [name, code])).entries()]
+    .map(([name, code]) => ({name, code})).sort((a, b) => a.name.localeCompare(b.name));
   const PREFERRED = ['Arabic', 'Dutch', 'English'];
   // Language first ("English · Surround 5.1"): audio titles are often just the channel layout.
   const langName = t => {
@@ -861,6 +863,7 @@
 
   $('type-open').onclick = () => openSheet('type');
   $('more-open').onclick = () => openSheet('more');
+  $('np-more-open').onclick = () => openSheet('more');
   // A plain toggle: the server reads the live X state, so a press always flips
   // the screen even if this phone is looking at a poll that is a second old.
   $('screen-off').onclick = () => fire('screen');
@@ -1296,11 +1299,13 @@
         content.append(row);
       });
       if (languages) {
-        const label = document.createElement('label'); label.textContent = 'Add language code'; label.htmlFor = 'add-language';
-        const input = document.createElement('input'); input.id = 'add-language'; input.placeholder = 'e.g. eng'; input.maxLength = 3;
-        const add = document.createElement('button'); add.type = 'button'; add.textContent = 'Add';
-        add.onclick = () => { const code = input.value.trim().toLowerCase(); if (!/^[a-z]{2,3}$/.test(code) || ordered.includes(code)) { input.setCustomValidity('Enter a new two or three letter language code'); input.reportValidity(); return; } ordered.push(code); draw(); };
-        input.oninput = () => input.setCustomValidity(''); content.append(label, input, add);
+        const label = document.createElement('label'); label.textContent = 'Add language'; label.htmlFor = 'add-language';
+        const select = document.createElement('select'); select.id = 'add-language'; select.className = 'language-select';
+        const available = LANGUAGE_OPTIONS.filter(({name}) => !ordered.some(code => (LANG[code] || code) === name));
+        for (const {name, code} of available) { const option = document.createElement('option'); option.value = code; option.textContent = name; select.append(option); }
+        const add = document.createElement('button'); add.type = 'button'; add.textContent = 'Add'; add.disabled = !available.length || ordered.length >= 40;
+        add.onclick = () => { ordered.push(select.value); draw(); };
+        content.append(label, select, add);
       }
       const done = document.createElement('button'); done.type = 'button'; done.textContent = 'Save order'; done.onclick = () => { closeSheet(); save(ordered); }; content.append(done);
     };
@@ -1344,6 +1349,13 @@
           control.value = value; control.onchange = () => save(control.value);
           control.setAttribute('aria-label', title);
           row.append(rowText(title, sub), el('span', 'rv', settingLabel(value)), el('i', 'chev'), control);
+        } else if (kind === 'language') {
+          row = el('label', 'row'); control = el('select');
+          if (!LANG[value]) { const o = el('option', '', value); o.value = value; control.append(o); }
+          for (const {name, code} of LANGUAGE_OPTIONS) { const o = el('option', '', name); o.value = code; control.append(o); }
+          control.value = (LANG[value] && LANGUAGE_OPTIONS.find(o => o.name === LANG[value]).code) || value;
+          control.onchange = () => save(control.value); control.setAttribute('aria-label', title);
+          row.append(rowText(title, sub), el('span', 'rv', LANG[value] || value), el('i', 'chev'), control);
         } else if (kind === 'order' || kind === 'languages') {
           row = control = actionRow(title, sub, () => orderPicker(key, title, value, kind === 'languages', save));
           row.insertBefore(el('span', 'rv', value.map(v => LANG[v] || v).join(' → ')), row.lastChild);
