@@ -716,8 +716,9 @@
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
       $('off-cancel').onclick = closeSheet;
     } else {
-      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div id="subtitles"></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
+      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div class="sheet-row"><button id="quick-subtitles" type="button">Subtitles</button></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
       $('turn-off').onclick = () => openSheet('off');
+      $('quick-subtitles').onclick = () => openSheet('subs');
       content.querySelectorAll('[data-minutes]').forEach(b => b.onclick = () => {
         send('timer', {minutes: Number(b.dataset.minutes) || null}).then(refresh).catch(() => {});
       });
@@ -729,20 +730,7 @@
     if (!state || sheetName !== 'more') return;
     const timer = state.timer;
     $('timer-status').textContent = timer.active ? `Turns off at ${new Date(timer.deadline * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}` : 'No timer set';
-    const sub = $('subtitles'); sub.replaceChildren();
-    if (!state.capabilities.subtitles) {
-      sub.textContent = 'Subtitle tracks appear while MPV plays a video.';
-      return;
-    }
-    const row = document.createElement('div'); row.className = 'sheet-row';
-    for (const track of state.playback.subtitles) {
-      const b = document.createElement('button');
-      b.textContent = `${track.selected ? '✓ ' : ''}${langName(track)}`;
-      b.onclick = () => fire('subtitle', {id: track.id}); row.append(b);
-    }
-    const off = document.createElement('button'); off.textContent = 'Off';
-    off.onclick = () => fire('subtitle', {id: 'no'}); row.append(off);
-    sub.append(row);
+    $('quick-subtitles').hidden = !state.capabilities.subtitles;
   }
 
   // ---- TorBox key: the value lives only in a local variable, for as long as the request takes ----
