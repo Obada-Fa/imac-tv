@@ -265,6 +265,7 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .chips .none{color:var(--ink3);font-size:13px}
 .eps{display:flex;flex-direction:column;gap:2px;margin-top:10px}
 .eps button{display:flex;gap:12px;align-items:center;text-align:left;padding:8px 12px;min-height:50px;border-radius:12px;font-size:14px;background:none;border-color:transparent}
+.eps button.current{border-color:rgba(var(--accent-rgb),.7);background:rgba(var(--accent-rgb),.12)}
 .eps button:active{border-color:var(--hair-hot);background:var(--glass-press)}
 .eps b{color:var(--accent);min-width:24px;font-weight:500;font-variant-numeric:tabular-nums}.eps span{flex:1;overflow-wrap:anywhere}.eps small{color:var(--ink3);white-space:nowrap;font-size:11px}
 

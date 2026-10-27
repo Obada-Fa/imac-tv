@@ -1059,6 +1059,7 @@
   function showTab(name) {
     if (name === tab) { applyTab(); return; }
     tab = name;
+    if ((name === 'movie' || name === 'series') && online && loaded[name]) refreshContinue();
     try { sessionStorage.setItem('tab', name); } catch (e) {}
     applyTab();
     window.scrollTo(0, 0);
@@ -1474,6 +1475,22 @@
     el.append(...list.map(posterEl));
   }
 
+  let continueRequest = 0;
+  async function refreshContinue() {
+    const request = ++continueRequest;
+    try {
+      const list = data(await send('continue')).items || [];
+      if (request !== continueRequest) return;
+      continueItems = list;
+      for (const type of ['movie', 'series']) {
+        const pane = $(type === 'movie' ? 'tab-movie' : 'tab-series');
+        const cont = list.filter(i => i.type === type);
+        pane.querySelector('.cont').hidden = !cont.length;
+        fill(pane.querySelector('.hrow'), cont, false);
+      }
+    } catch (e) { /* Keep the last known history if the request fails. */ }
+  }
+
   async function loadTab(type, more) {
     if (busy[type]) return;
     if (!more && loaded[type]) return;
@@ -1483,7 +1500,7 @@
     pane.querySelector('.more').hidden = true;
     try {
       const jobs = [send('browse', {type, skip: more ? items[type].length : 0})];
-      if (!more && continueItems === null) jobs.push(send('continue').then(r => { continueItems = data(r).items || []; }).catch(() => { continueItems = []; }));
+      if (!more) jobs.push(refreshContinue());
       const r = await jobs[0];
       if (!r) throw new Error('Not connected');
       const list = data(r).items || [];
@@ -1534,7 +1551,13 @@
       const seasons = (t.seasons || []).filter(s => s.episodes && s.episodes.length);
       const chipBox = document.createElement('div'); chipBox.className = 'chips'; chipBox.style.margin = '10px 0';
       const eps = document.createElement('div'); eps.className = 'eps';
-      let cur = (seasons.find(s => s.season >= 1) || seasons[0] || {}).season;
+      const resumeSeason = seasons.find(s => s.season === item.season && s.episodes.some(ep => ep.episode === item.episode));
+      let cur = (resumeSeason || seasons.find(s => s.season >= 1) || seasons[0] || {}).season;
+      if (resumeSeason) {
+        const episode = `S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')}`;
+        const label = item.position > 0 ? `Resume ${episode} · ${fmt(item.position)}` : `Play ${episode}`;
+        el.append(btn(label, () => play({season: item.season, episode: item.episode})));
+      }
       const draw = () => {
         chipBox.replaceChildren(...seasons.map(s => chip(s.season === 0 ? 'Specials' : `Season ${s.season}`, s.season === cur, () => { cur = s.season; draw(); })));
         const s = seasons.find(x => x.season === cur);
@@ -1543,7 +1566,10 @@
           const n = document.createElement('b'); n.textContent = ep.episode;
           const nm = document.createElement('span'); nm.textContent = ep.name || `Episode ${ep.episode}`;
           b.append(n, nm);
-          if (ep.released) { const r = document.createElement('small'); r.textContent = String(ep.released).slice(0, 10); b.append(r); }
+          if (resumeSeason && cur === item.season && ep.episode === item.episode) {
+            b.classList.add('current'); b.setAttribute('aria-label', `Continue watching episode ${ep.episode}: ${nm.textContent}`);
+            const marker = document.createElement('small'); marker.textContent = item.position > 0 ? 'Continue' : 'Up next'; b.append(marker);
+          } else if (ep.released) { const r = document.createElement('small'); r.textContent = String(ep.released).slice(0, 10); b.append(r); }
           b.onclick = () => play({season: cur, episode: ep.episode});
           return b;
         }));
