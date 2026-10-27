@@ -1,0 +1,207 @@
+{
+  "generated_utc": "2026-10-26T23:52:23.792354+00:00",
+  "source_commit": "5919e14f702a67020f71c793753b0baff27db383",
+  "method": "Actual GTK widgets on private Xvfb; sample data; default appearance; no shell header",
+  "source_sha256": {
+    "tvapp/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tvapp/ambient.py": "e5c2a7c170bc2a87eb1c138fb30f973b59d6c8a1dc09e3c46f309ab7e2650a1c",
+    "tvapp/audiolevel.py": "8ec450ff902c5feffce4c87c8114df8648aae10ea56538c82c18f807051446b7",
+    "tvapp/backgrounds.py": "ac63ac3d78a1e82619ca9e8c2769b743d19f6218c572cc1eb7e802586397a9c7",
+    "tvapp/display.py": "e1976326077e5d13395adfee658e43ed607e13766826df6c3c780289d87bc8a5",
+    "tvapp/feed_sync.py": "7a57cd66787c733b71c8aed95b00ab976d9db87ef05e7cdf496c59b9d4816fb4",
+    "tvapp/home.py": "25781c4c76949e71bf1147c973c51b1563b451b5c674edfaa8ab199d4c8ddffd",
+    "tvapp/homescreen.py": "5a7dec1a93e388dccafa2bc49b5f0972467ef7cb68e08ef96ef56fd32fe8b1c4",
+    "tvapp/nowplaying.py": "fcc6cda0e6e8be25e75ff9c0c89503b974e57595271e5a9a61ae55ea2b171857",
+    "tvapp/perflog.py": "861a2f89c4afcc605e8607cfc286f085840c9801dad04e8b21c0e2963ec89771",
+    "tvapp/screens.py": "e24864396dc124089954954a6440ecc5e68f1e50fed87762fd1224b55e03e121",
+    "tvapp/server.py": "cacde7c7b99a821bde9d233617d0ba854726739eb77db86fd0c2f7fb81802281",
+    "tvapp/settings_model.py": "cdda791d3a6d8c8f4b237b52a888429b0991f1f52ed3d0cf9dd758c9b9c92c4f",
+    "tvapp/theme.py": "bd59e954cebf302fa85800a01d2ad16a247804d1058a261eb0ea4664a773bcdb",
+    "tvapp/updater.py": "fcd3d59b82847652b28f4122a80282f7732f0da99e8361a562399bf73c15321c",
+    "tvapp/weather.py": "110f4d8356788a63e2a58b10e61d55f76a76a172585d440e57879a0230514d50",
+    "tvapp/widgets/__init__.py": "626106931e6d5a3e0c858a905a122bd22ec0040858c79c88c248ff5cedb26cf1",
+    "tvapp/widgets/bubbles.py": "441bd6fed0958e37587f99ccd590c560d1acad4453def6f7e06402c87a6f36db",
+    "tvapp/widgets/chrome.py": "1a7b8222b135d34481218ba9205de5ab637f1a89aa5bbae0283618978acc63db",
+    "tvapp/widgets/clock.py": "89519fd0239d613a0b8567b4f37c7f499099e4a1f3b5d8d34626b9131ace7488",
+    "tvapp/widgets/contours.py": "e19af627b4a7547b047920bc051acffd8c240cce4026c7132939cf9b15b86359",
+    "tvapp/widgets/glass.py": "fed469d223b9c3e4b66bf600b18695577aebbdef1b873ecf3bd788fcc99af6c5",
+    "tvapp/widgets/netinfo.py": "49acf10bca270e2b16e04da1c40bd5e5624ca272ab5691baa1e346590b26442e",
+    "tvapp/widgets/network.py": "78cca734009bcf3d8e3035ab9b5c88799f719a639e596b780b3b26cd6b158dfd",
+    "tvapp/widgets/pairing.py": "17925c9a6464257072c7df5e3a45ef387a2f08bdbd8562032addba6a06fb33f6",
+    "tvapp/widgets/playback.py": "80957d24b40c4c5de0a42dc75564a227ab272e3b3da29ba40a7cf7afe2a6dad4",
+    "tvapp/widgets/rows.py": "e8cc52d1e266e749c928aaf029fe51916a7473492b9292e497b0a1801d1eb9c4",
+    "tvapp/widgets/settings.py": "54e08f4fa2c92f4318d8c4483900738852eef049b4490c6e3e21b40091df248c",
+    "tvapp/widgets/shapes.py": "680eddbc4ee5d0b42c937f1d82fde529e869d5811325165702aa2e1b4b1379b2",
+    "tvapp/widgets/weather_widget.py": "b83b6227e043865716aeaaac8f97fc3087a2a9b0017f95c66100464096f11e7b"
+  },
+  "captures": [
+    {
+      "file": "home-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-ambient-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-display-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-playback-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-connections-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "settings-system-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "setting-choice-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "power-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "movies-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "details-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "search-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "sources-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "loading-720.png",
+      "width": 1280,
+      "height": 720,
+      "data": "sample"
+    },
+    {
+      "file": "home-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-ambient-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-display-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-playback-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-connections-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "settings-system-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "setting-choice-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "power-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "movies-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "details-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "search-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "sources-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    },
+    {
+      "file": "loading-1080.png",
+      "width": 1920,
+      "height": 1080,
+      "data": "sample"
+    }
+  ]
+}

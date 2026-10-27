@@ -120,7 +120,7 @@
     badge.style.setProperty('--badge-lit', nodeUri({base: .1, tint, a0: .7, a1: .22, line: .55}));
   }
 
-  // ---- Backdrop: Home's navy, the TV's photo blurred far back, a faint constellation; drawn once per size ----
+  // ---- Backdrop: a quiet navy gradient and blurred photo; drawn once per size ----
   let skyPhoto = null, skySize = '';
   function drawSky(force) {
     const c = $('sky'), w = innerWidth, h = Math.max(innerHeight, c.clientHeight || 0);
@@ -148,24 +148,6 @@
       dim.addColorStop(0, 'rgba(8,12,22,.42)'); dim.addColorStop(0.6, 'rgba(8,12,22,.58)'); dim.addColorStop(1, 'rgba(4,6,12,.84)');
       ctx.fillStyle = dim; ctx.fillRect(0, 0, w, h);
     }
-    // Same recipe as Home's dust: k nearest neighbours within a reach, alpha fading with distance.
-    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const n = Math.max(16, Math.min(44, Math.round(w * h / 12000))), pts = [];
-    for (let i = 0; i < n; i++) pts.push([rnd() * w, rnd() * h]);
-    const reach = Math.min(190, w * 0.5);
-    ctx.lineWidth = 1; ctx.lineCap = 'round';
-    const done = new Set();
-    pts.forEach((p, i) => {
-      pts.map((q, j) => [j, Math.hypot(q[0] - p[0], q[1] - p[1])]).filter(([j, d]) => j !== i && d < reach)
-        .sort((a, b) => a[1] - b[1]).slice(0, 2).forEach(([j, d]) => {
-          const key = Math.min(i, j) + ':' + Math.max(i, j);
-          if (done.has(key)) return; done.add(key);
-          ctx.strokeStyle = `rgba(255,255,255,${(0.17 * (1 - d / reach)).toFixed(3)})`;
-          ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(pts[j][0], pts[j][1]); ctx.stroke();
-        });
-    });
-    ctx.fillStyle = 'rgba(255,255,255,.34)';
-    for (const [x, y] of pts) { const d = 1.8; ctx.beginPath(); ctx.moveTo(x, y - d); ctx.lineTo(x + d, y); ctx.lineTo(x, y + d); ctx.lineTo(x - d, y); ctx.fill(); }
   }
   function setSkyPhoto(src) {
     if (!src || (skyPhoto && skyPhoto.dataset.src === src)) return;
@@ -175,7 +157,7 @@
     img.src = src;
   }
   let skyTimer = 0;
-  window.addEventListener('resize', () => { clearTimeout(skyTimer); skyTimer = setTimeout(() => { drawSky(); buildHiveLinks(); }, 150); });
+  window.addEventListener('resize', () => { clearTimeout(skyTimer); skyTimer = setTimeout(() => { drawSky(); }, 150); });
 
   // ---- The honeycomb: OK node, a ring of four directions around it, four satellite nodes on its diagonal edges ----
   // A hexagon has six sides at 60°, a D-pad needs four at 90°, so the ring around OK is cut into four:
@@ -189,7 +171,6 @@
     search: '<circle cx="11" cy="11" r="6"/><path d="m15.5 15.5 4.5 4.5"/>',
     more: '<circle cx="6" cy="12" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="18" cy="12" r=".9"/>',
   };
-  let hiveGeo = null;
   function rayHit(o, u, poly) {
     let best = Infinity;
     for (let i = 0; i < poly.length; i++) {
@@ -270,26 +251,6 @@
     const face = padEl.querySelector('.pad-face');
     face.setAttribute('viewBox', `${px0} ${py0} ${px1 - px0} ${py1 - py0}`);
     face.innerHTML = `<polygon points="${ptsAttr(polyPts(ro - 0.5))}"/>`;
-    hiveGeo = {X0, Y0, W, H, ro, apO, satCentres, rs};
-    buildHiveLinks();
-  }
-  // Thin constellation lines from the outer satellites to a few dust points, as Home links its nodes.
-  function buildHiveLinks() {
-    const svg = $('hive-links');
-    if (!svg || !hiveGeo) return;
-    const {X0, Y0, W, H, ro, apO, satCentres, rs} = hiveGeo;
-    svg.setAttribute('viewBox', `${X0} ${Y0} ${W} ${H}`);
-    const far = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (Math.abs(b[0]) > Math.abs(a[0]) ? b : a));
-    const top = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (b[1] < a[1] || (b[1] === a[1] && Math.abs(b[0]) < Math.abs(a[0])) ? b : a));
-    const bottom = ([x, y]) => polyPts(rs, x, y).reduce((a, b) => (b[1] > a[1] || (b[1] === a[1] && Math.abs(b[0]) < Math.abs(a[0])) ? b : a));
-    const [ul, ur, ll, lr] = satCentres, side = ro + 40;
-    const dust = {nw: [-side + 6, -apO - 14], w: [-side - 4, 2], sw: [-side + 14, apO + 12], ne: [side - 6, -apO - 16], e: [side + 2, -4], se: [side - 12, apO + 14],
-      n: [-8, -apO - 22], s: [10, apO + 22]};
-    const lines = [[far(ul), dust.nw, .26], [far(ul), dust.w, .2], [far(ll), dust.w, .22], [far(ll), dust.sw, .18],
-      [far(ur), dust.ne, .24], [far(ur), dust.e, .2], [far(lr), dust.e, .22], [far(lr), dust.se, .18],
-      [top(ul), dust.n, .16], [top(ur), dust.n, .18], [bottom(ll), dust.s, .14], [bottom(lr), dust.s, .16], [dust.nw, dust.n, .1]];
-    svg.innerHTML = lines.map(([a, b, o]) => `<line x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}" stroke-opacity="${o}"/>`).join('') +
-      Object.values(dust).map(([x, y]) => `<path class="dust" d="M${x} ${y - 2.4}l2.4 2.4-2.4 2.4-2.4-2.4z"/>`).join('');
   }
 
   // Pause bars while playing, a play triangle while paused; drawn, so no emoji font gets a say.
@@ -1426,18 +1387,7 @@
     const sig = el('div', 'sigline'), bars = el('span', 'sig');
     for (let i = 0; i < 4; i++) bars.append(el('i', online || i === 0 ? '' : 'dim'));
     sig.append(bars, el('span', '', online ? 'iMac TV · paired' : 'iMac TV · not reachable'));
-    const L = [44, 48], R = [256, 48], r = 30;
-    const node = ([x, y], lit) => `<polygon class="node${lit ? ' lit' : ''}" points="${ptsAttr(polyPts(r, x, y))}"/>`;
-    const dots = [[104, 40], [150, 55], [196, 41]];
-    const wire = [[L[0] + r, L[1]], ...dots, [R[0] - r, R[1]]];
-    const art = `<svg class="linkart" viewBox="0 0 300 96" aria-hidden="true">` +
-      wire.slice(1).map((p, i) => `<line class="wire${online ? '' : ' off'}" x1="${wire[i][0]}" y1="${wire[i][1]}" x2="${p[0]}" y2="${p[1]}"/>`).join('') +
-      dots.map(([x, y]) => `<path class="dot" d="M${x} ${y - 2.6}l2.6 2.6-2.6 2.6-2.6-2.6z"/>`).join('') +
-      node(L, online) + node(R, online) +
-      `<rect class="gl" x="${L[0] - 5.5}" y="${L[1] - 10}" width="11" height="20" rx="2.2"/><path class="gl" d="M${L[0] - 1.5} ${L[1] + 6.5}h3"/>` +
-      `<rect class="gl" x="${R[0] - 11}" y="${R[1] - 8.5}" width="22" height="14" rx="1.6"/><path class="gl" d="M${R[0] - 4.5} ${R[1] + 9.5}h9"/></svg>`;
-    const wrap = el('div'); wrap.innerHTML = art;
-    card.append(sig, wrap.firstChild, el('h4', '', online ? 'This phone is connected' : 'Reconnecting…'),
+    card.append(sig, el('h4', '', online ? 'This phone is connected' : 'Reconnecting…'),
       el('p', 'meta', 'Pair another phone with the QR code on TV Home.'));
     const rows = el('div', 'glass rows');
     for (const [title, sub, mode, question] of [['Disconnect other phones', 'Every phone except this one pairs again', 'other_phones', 'Disconnect every other paired phone?'],

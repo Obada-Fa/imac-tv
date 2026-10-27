@@ -1,4 +1,7 @@
-# Menu refresh previews
+# Historical menu refresh previews — superseded
+
+**These images are not the current UI.** They predate the shared glass menu
+components. Use [the current gallery](../../current/README.md).
 
 GTK3 renders on a private Xvfb display at 720p and 1080p.
 Screens are shown without the shell navigation header.

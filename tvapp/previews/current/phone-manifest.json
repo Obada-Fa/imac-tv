@@ -1,0 +1,44 @@
+{
+  "generated_utc": "2026-10-27T00:56:18.149929+00:00",
+  "source_commit": "5919e14f702a67020f71c793753b0baff27db383",
+  "method": "Real web/index.html, app.css, app.js and media-session.js in Chromium; scripts/phone-preview.py sample state; clock retained; decorative lines and dots removed; requested viewport 390x844; actual dimensions below",
+  "source_sha256": {
+    "tvapp/web/app.css": "7c411097f90e95fec8e5679a24b03cd2bce96b17b9efdb4f4babc801f9d1264a",
+    "tvapp/web/app.js": "a5c33e3d0926b77fcb9ed10797adcc31c73f78d422e83eb9e9eb15edc1f6fb9a",
+    "tvapp/web/index.html": "67ba8ae4847b83bde484ccf9db397ee85746f1ba256568a5a945bc1c8ebd9208",
+    "tvapp/web/media-session.js": "f927ece37845915197b7d943ef145066b8650b87d625a97daa39997a4b2fb640"
+  },
+  "captures": [
+    {
+      "file": "phone-connections.jpg",
+      "width": 390,
+      "height": 844,
+      "data": "sample"
+    },
+    {
+      "file": "phone-playback-375.jpg",
+      "width": 375,
+      "height": 812,
+      "data": "sample"
+    },
+    {
+      "file": "phone-quick-actions-390.jpg",
+      "width": 390,
+      "height": 844,
+      "data": "sample"
+    },
+    {
+      "file": "phone-remote-390.jpg",
+      "width": 390,
+      "height": 844,
+      "data": "sample"
+    },
+    {
+      "file": "phone-settings-375.jpg",
+      "width": 375,
+      "height": 812,
+      "data": "sample"
+    }
+  ],
+  "source_tree": "Phone UI cleanup captured before its release commit; source_sha256 identifies the exact rendered files."
+}

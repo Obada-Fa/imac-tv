@@ -1,7 +1,7 @@
-/* iMac TV phone remote, in TV Home's language: deep navy behind a faint constellation, hexagon (or octagon)
+/* iMac TV phone remote, in TV Home's language: a quiet navy/photo backdrop, hexagon (or octagon)
    glass nodes with a tinted radial fill and a hairline, frosted tiles, thin light headings, letter-spaced caps.
    Focus/press = Home's focus: slight scale, hairline to ~90% white, soft glow.
-   Performance: the backdrop (photo + constellation) is drawn once into #sky; cards are translucent over it rather
+   Performance: the backdrop (photo + gradient) is drawn once into #sky; cards are translucent over it rather
    than blurring it. Only the tab bar and the open sheet use backdrop-filter, never both at once. Nothing animates
    while idle. Shape images (--hx-*) are SVG data URIs that app.js builds for the TV's node_shape. */
 :root{
@@ -95,9 +95,6 @@ input[type=range]::-moz-range-thumb{width:18px;height:16px;border:0;border-radiu
 .controls{display:flex;flex-direction:column;gap:14px;flex:1;min-height:0}
 .browse{display:flex;flex-direction:column;gap:12px;margin-top:auto}
 .hive{position:relative;width:min(100%,var(--hive-w,346px));aspect-ratio:var(--hive-ar,1.42);margin:4px auto 0}
-.hive-links{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
-.hive-links line{stroke:#fff;stroke-width:1;vector-effect:non-scaling-stroke;stroke-linecap:round}
-.hive-links .dust{fill:#fff;fill-opacity:.42}
 .dpad{position:absolute;inset:0;pointer-events:none}
 .cell{position:absolute;padding:0;margin:0;border:0;background:none;min-height:0;border-radius:0;pointer-events:none;box-shadow:none!important;transform:none!important;color:var(--ink)}
 .cell svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;transform-origin:var(--ox,50%) var(--oy,50%);transition:transform .12s ease,filter .12s ease}
@@ -200,9 +197,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 /* ---- Pair ---- */
 .pair{position:fixed;inset:0;display:grid;place-items:center;padding:18px;z-index:10}
 .pair-card{width:min(100%,420px);padding:28px 22px 22px;display:flex;flex-direction:column;gap:12px;border-radius:20px}
-.pair-mark{width:120px;height:70px;margin:0 0 6px -2px}
-.pair-mark .ph{fill:url(#g-idle);stroke:var(--hair)}.pair-mark .pl{stroke:#fff;stroke-opacity:.35;stroke-width:1}.pair-mark .pd{fill:#fff;fill-opacity:.5}
-.pair-mark .pg{fill:none;stroke:rgba(255,255,255,.8);stroke-width:1.4;stroke-linecap:round}
 .pair h1{font-size:30px}.pair form{display:flex;gap:10px;margin-top:8px}
 .pair input{width:100%;min-width:0;padding:10px;border:1px solid var(--hair);border-radius:14px;background:rgba(6,10,18,.45);color:#fff;font-size:24px;letter-spacing:.4em;text-align:center;font-weight:300}
 .pair button{padding:0 20px}.pair #pair-error{color:#ffb7ad;min-height:20px;font-size:13px}
@@ -277,8 +271,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 #settings-tabs{display:flex;gap:0;overflow-x:auto;margin:0 calc(-1 * var(--gut));padding:6px var(--gut) 4px;scrollbar-width:none}
 #settings-tabs::-webkit-scrollbar{display:none}
 #settings-tabs button{position:relative;flex:1 0 58px;min-height:0;padding:0 2px;border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;font-weight:500;color:var(--ink3);box-shadow:none!important;transform:none!important}
-#settings-tabs button::after{content:"";position:absolute;top:19px;left:calc(50% + 22px);right:calc(-50% + 22px);height:1px;background:rgba(255,255,255,.16)}
-#settings-tabs button:last-child::after{display:none}
 #settings-tabs .badge{width:44px;height:calc(44px / var(--hx-ar));display:grid;place-items:center;background:var(--badge) center/100% 100% no-repeat;transition:transform .12s ease,filter .12s ease}
 #settings-tabs .badge svg{width:19px;height:19px;fill:none;stroke:rgba(255,255,255,.75);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 #settings-tabs [aria-selected=true]{color:#fff}
@@ -342,12 +334,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .linkcard .sig i{width:5px;height:calc(5px / var(--hx-ar));background:var(--hx-on) center/100% 100% no-repeat}
 .linkcard .sig i.dim{background-image:var(--hx-off)}
 .linkcard .sig i:nth-child(2){margin-bottom:2px}.linkcard .sig i:nth-child(3){margin-bottom:4px}.linkcard .sig i:nth-child(4){margin-bottom:6px}
-.linkart{width:100%;height:96px;overflow:visible}
-.linkart .node{fill:url(#g-idle);stroke:var(--hair)}.linkart .node.lit{fill:url(#g-lit);stroke:rgba(255,255,255,.6)}
-.linkart .wire{stroke:#fff;stroke-opacity:.42;stroke-width:1;vector-effect:non-scaling-stroke}
-.linkart .wire.off{stroke-dasharray:3 5;stroke-opacity:.25}
-.linkart .dot{fill:#fff;fill-opacity:.5}
-.linkart .gl{fill:none;stroke:rgba(255,255,255,.85);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}
 .linkcard h4{margin:0;font-size:22px;font-weight:250}
 .linkcard.offline h4{color:#ffc9c2}
 

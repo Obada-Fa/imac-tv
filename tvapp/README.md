@@ -3,6 +3,21 @@
 The controller is `server.py`, TV Home is `home.py`, media logic is in `media/`, and the phone remote is in `web/`.
 No cloud account is needed for the remote. The iMac must be powered on and on the same LAN.
 
+## UI reference for contributors
+
+The [current screenshot gallery](previews/current/README.md) shows Home, every
+Settings category, choice and power menus, Movies, Details, Search, Sources,
+stream startup, and the phone remote/settings. The user confirmed that the
+current Settings layout matches their installed iMac on 27 October 2026.
+Captures use sample data and default appearance; backgrounds and selected shapes
+can differ on an installed device.
+
+Use `widgets/glass.py` and `widgets/chrome.py` as the shared design components.
+Render the running code before changing a menu; don't copy legacy screenshot
+styling or generic dialog classes. Run `python3 scripts/ui-preview.py --check`
+to detect source changes since the captures. Older menu screenshots are clearly
+separated in [the archive](previews/archive/README.md).
+
 ## Install
 
 Copy this directory to `~/tvremote/tvapp` on the iMac, then run
@@ -199,6 +214,41 @@ The phone remote follows the TV state: D-pad and Search while browsing, a
 buffering card (source, peers, speed, Cancel), and a Now Playing card with scrub
 bar, skip, subtitle/audio pickers and subtitle delay. Stop returns to the
 title's details. VacuumTube provides YouTube.
+
+The phone keeps its clock, glass controls and blurred photo background, with no
+decorative constellation lines or dots. This simpler appearance applies across
+the phone's Remote, browsing and Settings screens.
+
+### Phone hardware volume buttons
+
+The browser remote's on-screen volume controls send commands to the TV. Phone
+hardware volume buttons are not currently connected to those commands: the Web
+Media Session API has no remote-volume action, and mobile browsers do not reliably
+deliver those button presses to page JavaScript, especially in the background.
+Adding the web remote to the home screen does not grant native volume handling.
+
+The Flutter **Nexus Remote** app has an Android implementation in its TV section.
+It opens this exact web remote full screen, with the same clock,
+menus, catalog and playback functions. Pair with the six-digit code, then enable
+**Settings → Connections → Nexus Remote → TV volume buttons**. A native
+`MediaSession` / `VolumeProvider` and connected-device foreground service send
+volume commands across Nexus sections while open, and from other apps/the lock
+screen while TV playback is active. Android can fall back to phone volume when
+TV playback is paused or stopped. Turn it off in
+the app or its notification. Changing TV credentials, revoked pairing, or a
+persistent lost connection ends the session. Other active phone media apps and
+device battery restrictions can affect Android's routing; real-device validation
+is still pending. This implementation does not change the browser's capabilities.
+
+The shared Flutter iPhone runner supports the on-screen TV controls, with no
+background hardware-volume interception. Build and signing on a Mac remain
+pending. Nexus source, setup, current screenshots and native tests are in the
+[Nexus Remote repository](https://github.com/Obada-Fa/nexus-remote).
+Download the Android preview APK from its
+[GitHub releases](https://github.com/Obada-Fa/nexus-remote/releases).
+See the
+[Web Media Session actions](https://w3c.github.io/mediasession/#enumdef-mediasessionaction)
+and [Android remote-volume API](https://developer.android.com/reference/android/media/session/MediaSession#setPlaybackToRemote(android.media.VolumeProvider)).
 
 ### Phone notification and lock-screen controls
 

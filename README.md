@@ -2,7 +2,30 @@
 
 > Transform your iMac or PC running **Zorin OS** (or Ubuntu/Debian) into a smart TV experience, complete with an artwork-rich TV Home interface, a responsive mobile web remote, a built-in movie & series catalog played with **mpv**, and **VacuumTube (YouTube Leanback)**.
 
-![TV Home Interface](tvapp/previews/imac-tv-final-live.png)
+![Current TV Home — rendered from the app with sample artwork and history](tvapp/previews/current/home-1080.png)
+
+## Current design reference
+
+Use the [current screenshot gallery](tvapp/previews/current/README.md) when working
+on the UI. It contains fresh captures of the current TV menus and phone remote,
+with the capture revision, source hashes, dimensions and regeneration instructions.
+These are renders of the real app with sample data, not photographs of an installed TV.
+
+![Current TV Settings — glass panels and constellation category rail](tvapp/previews/current/settings-1080.png)
+
+<p>
+  <img src="tvapp/previews/current/phone-remote-390.jpg" alt="Current phone remote with hexagon controls" width="260">
+  <img src="tvapp/previews/current/phone-settings-375.jpg" alt="Current phone Settings with glass panels" width="250">
+</p>
+
+**For agents and contributors:** screenshots in
+[`tvapp/previews/archive/`](tvapp/previews/archive/README.md) are historical and must
+not be used as the current design reference. Before a visual change, check
+`python3 scripts/ui-preview.py --check` and read the actual shared components in
+[`widgets/glass.py`](tvapp/widgets/glass.py) and
+[`widgets/chrome.py`](tvapp/widgets/chrome.py). Reuse their glass panels, thin
+typography, hexagon/octagon nodes and focus behavior. An old preview filename or
+the generic legacy dialog CSS is not evidence of the current design.
 
 ---
 
@@ -165,7 +188,8 @@ Clones `https://github.com/shy1132/VacuumTube.git`, installs Node.js/npm depende
 │   ├── web/                    # Mobile web remote UI (HTML, CSS, JS)
 │   ├── assets/                 # App icons and preview artwork
 │   ├── deploy/                 # Systemd service, sudoers, and smoke test scripts
-│   ├── previews/               # UI preview screenshots
+│   ├── previews/current/       # Current screenshots, source manifests and gallery
+│   ├── previews/archive/       # Historical screenshots; not design references
 │   └── tests/                  # Automated unit test suite
 ├── imac_eq.py                  # PulseAudio / LADSPA DSP equalizer (for iMac built-in speakers)
 └── remote.py                   # Standalone legacy X11 remote server
