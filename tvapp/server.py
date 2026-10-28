@@ -70,6 +70,7 @@ def resolve_app_command(app):
 
 APPS = {
     "youtube": ("VacuumTube", resolve_app_command("youtube")),
+    "discord": ("Discord", ["flatpak", "run", "com.discordapp.Discord"]),
 }
 # The backlight node is root-only, so writes go through a fixed root helper that
 # setup-privileges.sh installs alongside the sudo rule.
@@ -103,6 +104,8 @@ def window_for(app):
         return next((w for w in windows() if w["title"] == "iMac TV"), None)
     if app == "youtube":
         return next((w for w in windows() if any(k in w["class"] or k in w["title"].lower() for k in ("vacuumtube", "rocks.shy.vacuumtube", "youtube"))), None)
+    if app == "discord":
+        return next((w for w in windows() if "discord" in w["class"].lower() or "discord" in w["title"].lower()), None)
     if app == "player":
         return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
     return None

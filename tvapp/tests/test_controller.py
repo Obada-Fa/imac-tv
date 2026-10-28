@@ -34,7 +34,7 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(server, "command", return_value=row):
             self.assertEqual(server.window_for("player")["id"], "0x04600004")
             self.assertIsNone(server.window_for("stremio"))
-        self.assertEqual(set(server.APPS), {"youtube"})
+        self.assertEqual(set(server.APPS), {"youtube", "discord"})
 
     def test_old_stremio_selection_maps_to_home(self):
         for old in ("stremio", "vlc"):

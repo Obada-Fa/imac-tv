@@ -159,6 +159,7 @@ class AppsWidget(RowWidget):
             {"title": "Movies", "kind": "movies", "on_activate": lambda: sh.goto_top("movies")},
             {"title": "Series", "kind": "series", "on_activate": lambda: sh.goto_top("series")},
             {"title": "YouTube", "kind": "youtube", "on_activate": lambda: sh.open_app("youtube")},
+            {"title": "Discord", "kind": "discord", "on_activate": lambda: sh.open_app("discord")},
             {"title": "Search", "kind": "search", "on_activate": lambda: sh.goto_top("search")},
             {"title": "Settings", "kind": "settings", "on_activate": lambda: sh.goto_top("settings")},
         ]
