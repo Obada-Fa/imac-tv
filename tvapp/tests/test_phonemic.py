@@ -54,6 +54,19 @@ class PhoneMicTest(unittest.TestCase):
         self.assertEqual(self.default, "mic0")
         self.assertFalse(mic.active)
         self.assertTrue(self.procs[0].terminated)
+        # The virtual devices stay loaded so Discord keeps its selection across reconnects.
+        self.assertEqual([c[0] for c in self.calls].count("unload-module"), 0)
+        mic.start(48000, 1)
+        self.assertEqual([c[0] for c in self.calls].count("load-module"), 2)  # reused, not rebuilt
+        mic.close()
+        self.assertEqual([c[0] for c in self.calls].count("unload-module"), 2)
+
+    def test_format_change_rebuilds_devices(self):
+        mic = self.mic()
+        _, stop = mic.start(48000, 1)
+        stop()
+        mic.start(16000, 1)
+        self.assertEqual([c[0] for c in self.calls].count("load-module"), 4)
         self.assertEqual([c[0] for c in self.calls].count("unload-module"), 2)
 
     def test_newer_stream_replaces_older_without_losing_original(self):

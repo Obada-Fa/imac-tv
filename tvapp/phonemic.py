@@ -28,6 +28,7 @@ class PhoneMic:
         self._token = 0
         self._proc = None
         self._modules = []
+        self._format = None
         self._previous = None
 
     @property
@@ -47,14 +48,19 @@ class PhoneMic:
                 self._previous = self._pactl("get-default-source") or None
                 if self._previous == SOURCE:
                     self._previous = None
-                self._cleanup_stale()
                 fmt = f"rate={rate} channels={channels}"
-                self._modules.append(self._pactl(
-                    "load-module", "module-null-sink", f"sink_name={SINK}", fmt,
-                    "sink_properties=device.description=Phone_Microphone"))
-                self._modules.append(self._pactl(
-                    "load-module", "module-remap-source", f"master={SINK}.monitor",
-                    f"source_name={SOURCE}", "source_properties=device.description=Phone_Microphone"))
+                if self._modules and self._format != fmt:
+                    self._unload_modules()
+                if not self._modules:
+                    # The virtual devices outlive a dropped stream (see _teardown), so only build them once.
+                    self._cleanup_stale()
+                    self._modules.append(self._pactl(
+                        "load-module", "module-null-sink", f"sink_name={SINK}", fmt,
+                        "sink_properties=device.description=Phone_Microphone"))
+                    self._modules.append(self._pactl(
+                        "load-module", "module-remap-source", f"master={SINK}.monitor",
+                        f"source_name={SOURCE}", "source_properties=device.description=Phone_Microphone"))
+                    self._format = fmt
                 self._proc = self._popen(
                     ["pacat", "--playback", f"--device={SINK}", "--format=s16le",
                      f"--rate={rate}", f"--channels={channels}", "--latency-msec=60",
@@ -64,6 +70,7 @@ class PhoneMic:
                 self._move_inputs()
             except Exception:
                 self._teardown()
+                self._unload_modules()
                 raise
             proc = self._proc
         LOG.info("Phone microphone is now the default input")
@@ -105,7 +112,16 @@ class PhoneMic:
         except Exception:
             pass
 
+    def close(self):
+        """Server shutdown: remove the virtual devices as well."""
+        with self._lock:
+            self._teardown()
+            self._unload_modules()
+
     def _teardown(self):
+        """End the stream and give the real microphone back as the default input. The virtual
+        devices stay loaded: Discord pins the device it was told to use and loses it for good if
+        it vanishes while the phone reconnects. They just stay silent until the phone returns."""
         proc, self._proc = self._proc, None
         if proc is not None:
             try:
@@ -120,17 +136,20 @@ class PhoneMic:
                     proc.kill()
                 except Exception:
                     pass
-        modules, self._modules = self._modules, []
         previous, self._previous = self._previous, None
-        if modules:
+        if self._modules:
             try:
                 if self._pactl("get-default-source") == SOURCE and previous:
                     self._pactl("set-default-source", previous)
             except Exception:
                 pass
-            for module in reversed(modules):
-                try:
-                    self._pactl("unload-module", module)
-                except Exception:
-                    pass
-            LOG.info("Phone microphone released; default input restored")
+            LOG.info("Phone microphone stream ended; default input restored")
+
+    def _unload_modules(self):
+        modules, self._modules = self._modules, []
+        self._format = None
+        for module in reversed(modules):
+            try:
+                self._pactl("unload-module", module)
+            except Exception:
+                pass

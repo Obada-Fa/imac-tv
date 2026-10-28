@@ -1716,6 +1716,7 @@ class Controller:
                                    (gpu_temp is not None and gpu_temp >= 85),
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "visualizer": self.visualizer_state(),
+                "phone_audio": {"mic": PHONE_MIC.active, "speaker": PHONE_SPEAKER.active},
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
