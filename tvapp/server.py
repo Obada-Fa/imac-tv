@@ -30,6 +30,7 @@ import settings_model
 import updater
 import backgrounds
 import nowplaying
+import phonemic
 import widgets
 try:
     import display
@@ -2113,6 +2114,9 @@ class Controller:
 CONTROL = None
 
 
+PHONE_MIC = phonemic.PhoneMic()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         LOG.info(format, *args)
@@ -2266,6 +2270,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def phone_mic(self, parsed):
+        """Raw s16le PCM from the paired phone, chunked, until it hangs up."""
+        if not self.authorised(parsed.query):
+            self.respond(401, {"error": "Phone is not paired"})
+            return
+        query = parse_qs(parsed.query)
+        rate = int(query.get("rate", ["48000"])[0])
+        channels = int(query.get("channels", ["1"])[0])
+        if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+            raise ValueError("Microphone audio must be streamed")
+        self._note_presence()
+        write, stop = PHONE_MIC.start(rate, channels)
+        self.connection.settimeout(10)
+        try:
+            while True:
+                size = int(self.rfile.readline(32).strip().split(b";")[0] or b"0", 16)
+                if size == 0:
+                    break
+                remaining = size
+                while remaining:
+                    data = self.rfile.read(min(remaining, 65536))
+                    if not data:
+                        return
+                    remaining -= len(data)
+                    write(data)
+                self.rfile.readline()
+                self._note_presence()
+        except (OSError, ValueError, BrokenPipeError):
+            return
+        finally:
+            stop()
+        self.close_connection = True
+
     def do_POST(self):
         parsed = urlsplit(self.path)
         origin = self.headers.get("Origin")
@@ -2276,6 +2313,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/retro/upload":
                 self.retro_upload(parsed)
+                return
+            if parsed.path == "/api/mic":
+                self.phone_mic(parsed)
                 return
             if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
                 chunks = []
