@@ -854,6 +854,40 @@ class BrowseScreen(RailsScreen):
         return groups[0][0] if groups else None
 
 
+def twitch_items():
+    """Top live Twitch streams as Rail items (the streamer is the card name, the stream title the hero copy)."""
+    import twitch
+    out = []
+    for st in twitch.top_streams():
+        viewers = st["viewers"]
+        count = f"{viewers / 1000:.1f}K".replace(".0K", "K") if viewers >= 1000 else str(viewers)
+        out.append({"type": "", "kicker": "LIVE ON TWITCH", "id": st["login"], "login": st["login"],
+                    "name": st["name"], "subtitle": " · ".join(p for p in (f"{count} watching", st["game"]) if p),
+                    "description": st["title"], "background": st["thumbnail"] or None})
+    return out
+
+
+class TwitchScreen(RailsScreen):
+    """Top live streams; OK plays the channel ad-free (streamlink drops Twitch's ad segments)."""
+    sname = "twitch"
+
+    def __init__(self, shell):
+        super().__init__(shell)
+        self.make_rail("Live now", twitch_items, kind="wide", hide_empty=False)
+
+    def activate(self, item):
+        self.shell.play_twitch(item["login"], item["description"])
+
+    def first_focus(self, flat):
+        groups = self.focus_groups()
+        return groups[0][0] if groups else None
+
+    def on_enter(self, returning):
+        super().on_enter(returning)
+        if returning:
+            self.rails[0].reload()
+
+
 SEARCH_SCOPES = {None: ("movie", "series"), "movie": ("movie",), "series": ("series",)}
 SEARCH_SCOPE_LABEL = {None: "movies and series", "movie": "Movies", "series": "Series"}
 

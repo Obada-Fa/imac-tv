@@ -118,6 +118,18 @@ The benchmark waits for the requested mode before sampling. The background-provi
 limitations, and prompt for implementing Retro settings are in
 [the Circuit handoff](../docs/retro-circuit-handoff.md).
 
+## Twitch (no ads)
+
+The Home apps row has a Twitch tile that opens a "Live now" rail of the most-watched streams (OK plays one).
+On the phone, the Search tab has a Twitch block with a channel box and the same top streams.
+Playback runs `streamlink` (it filters Twitch's ad segments out of the HLS stream) piped into mpv with the same
+flags and IPC socket as movies, so volume, pause and the phone's now-playing work unchanged. Listings come from
+Twitch's public web GraphQL endpoint (no login), cached for a minute; `twitch.py` holds the queries and the
+command line. `./install.sh` installs streamlink (apt, then `pip --user` when apt's is older than 6). Without it
+the Twitch tile reports "Install streamlink: re-run ./install.sh". Current streamlink drops ads by default and
+no longer has `--twitch-disable-ads`, so the flag is added only when the installed version still lists it.
+For a screenshot or test without network set `IMACTV_FAKE_TWITCH=1` (or a path to a JSON list of streams).
+
 ## Media
 
 TV Home is our own catalog UI: it browses Cinemeta, lists Torrentio sources and

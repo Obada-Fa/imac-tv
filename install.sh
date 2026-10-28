@@ -124,9 +124,10 @@ else
     fonts-noto-core
     fonts-noto-ui-core
     fonts-inter
+    streamlink
   )
   # Optional packages: install when the distro has them, otherwise carry on.
-  OPTIONAL_PKGS=(fonts-noto-core fonts-noto-ui-core fonts-inter)
+  OPTIONAL_PKGS=(fonts-noto-core fonts-noto-ui-core fonts-inter streamlink)
   REQUIRED_PKGS=()
   for pkg in "${APT_PKGS[@]}"; do
     if [[ " ${OPTIONAL_PKGS[*]} " == *" $pkg "* ]]; then
@@ -157,6 +158,22 @@ else
   else
     printf "${GREEN}✓ All system packages are already installed.${NC}\n"
   fi
+fi
+
+# Twitch (ad-free) needs a recent streamlink: Twitch changes its ad handling often and older distro
+# packages stop filtering ads. Use pip --user when apt's is missing or older than 6.
+streamlink_major() {
+  local bin
+  bin="$(command -v streamlink || true)"
+  [ -n "$bin" ] || bin="$HOME/.local/bin/streamlink"
+  [ -x "$bin" ] || { echo 0; return; }
+  "$bin" --version 2>/dev/null | sed -n 's/^streamlink *\([0-9]*\).*/\1/p' | head -1
+}
+if [ "$(streamlink_major)" -lt 6 ] 2>/dev/null || [ -z "$(streamlink_major)" ]; then
+  printf "Installing a current streamlink for Twitch via pip...\n"
+  python3 -m pip install --user --upgrade streamlink 2>/dev/null \
+    || python3 -m pip install --user --upgrade --break-system-packages streamlink 2>/dev/null \
+    || printf "${YELLOW}Could not install streamlink; the Twitch app will ask for it. Try: pip install --user streamlink${NC}\n"
 fi
 
 # 2. TV Applications (VacuumTube) and streaming engine

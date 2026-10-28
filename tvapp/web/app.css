@@ -351,3 +351,8 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 @media(max-height:680px){.clock{font-size:46px}}
 
 .sheet select.language-select{width:100%;min-height:48px;padding:10px 14px;border:1px solid var(--hair);border-radius:12px;background:#111b2b;color:#fff;font-size:16px}
+
+.twitch{margin-top:26px}
+.twitch h3 small{margin-left:6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#b48cff}
+.twitch .findbox{position:static;margin:0;padding:0 0 10px;background:none}
+.twitch .findbox button{width:auto;padding:0 18px}

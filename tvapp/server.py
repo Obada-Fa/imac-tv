@@ -31,6 +31,8 @@ import updater
 import backgrounds
 import nowplaying
 import phonemic
+import phonespeaker
+import twitch
 import widgets
 try:
     import display
@@ -997,6 +999,79 @@ class Controller:
         threading.Thread(target=self._play_worker, args=(generation, stream, float(start), prefetched), daemon=True).start()
         return {"ok": True, "source": "Selected source" if stream else ""}
 
+    def play_twitch(self, params):
+        """Ad-free live Twitch: streamlink drops the ad segments and pipes the stream into mpv (same IPC socket,
+        so volume, pause and the phone's now-playing keep working)."""
+        login = twitch.clean_login(params.get("login"))
+        title = str(params.get("title") or "")[:120]
+        argv = twitch.streamlink_argv(login, mpv_argv=player.mpv_argv("-", title="Twitch", subs=[], ipc=MPV_SOCK))
+        self._end_playback()
+        self._stop_proc()
+        with self.lock:
+            self.generation += 1
+            generation = self.generation
+            self.current_source = None
+            self.app, self.phase, self.error = "player", "buffering", ""
+            self.buffering = {"peers": 0, "speed": 0.0, "downloaded": 0, "source": "Twitch", "stage": "Connecting to " + login + "…"}
+            self.media = {"type": "twitch", "id": login, "video_id": login, "name": title or login, "season": None, "episode": None}
+            self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "home"})
+        threading.Thread(target=self._twitch_worker, args=(generation, argv), daemon=True).start()
+        return {"ok": True, "channel": login}
+
+    def _twitch_worker(self, generation, argv):
+        try:
+            try:
+                os.unlink(MPV_SOCK)
+            except OSError:
+                pass
+            self._yield_audio()
+            proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, start_new_session=True)
+            with self.lock:
+                if generation != self.generation:
+                    proc.terminate()
+                    return
+                self.proc = proc
+            raised = False
+            for _ in range(80):
+                if not self._current(generation):
+                    return
+                if proc.poll() is not None:
+                    raise RuntimeError("That channel is offline or Twitch didn't give a stream")
+                if not raised:
+                    win = window_for("player")
+                    if win:
+                        activate(win)
+                        raised = True
+                try:
+                    if mpv("get_property", "time-pos") is not None:
+                        with self.lock:
+                            if generation == self.generation:
+                                self.phase, self.buffering = "playing", None
+                        break
+                except (OSError, RuntimeError, ValueError, TimeoutError):
+                    pass
+                time.sleep(0.75)
+            else:
+                raise RuntimeError("Timed out waiting for the Twitch stream to start")
+            misses = 0
+            while self._current(generation):       # live: no history or up-next; leave when the player is gone
+                time.sleep(3)
+                if not self._current(generation):
+                    return
+                try:
+                    mpv("get_property", "pause")
+                    misses = 0
+                except (OSError, RuntimeError, ValueError, TimeoutError):
+                    misses += 1
+                if proc.poll() is not None or misses >= 3:
+                    if self._current(generation):
+                        self._end_playback()
+                        self._return_home("home")
+                    return
+        except Exception as exc:
+            self._play_fail(generation, exc)
+
     def _resolve_stream(self, value):
         """Phone-supplied stream selector. Direct URLs never come from the phone, only {"ref": n}
         from the last sources call; they are resolved here so the key stays on the TV."""
@@ -1877,6 +1952,8 @@ class Controller:
                 return self.toggle_fullscreen()
             if action == "play_media":
                 return self.play_media(params)
+            if action == "play_twitch":
+                return self.play_twitch(params)
             if action == "playback_suggestion":
                 return self.answer_health(params)
             if action in ("ok", "back") and self.health_suggestion:
@@ -2118,6 +2195,7 @@ CONTROL = None
 
 
 PHONE_MIC = phonemic.PhoneMic()
+PHONE_SPEAKER = phonespeaker.PhoneSpeaker()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2178,6 +2256,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            return
+        if parsed.path == "/api/speaker":
+            self.phone_speaker(parsed)
+            return
+        if parsed.path == "/api/twitch":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            query = (parse_qs(parsed.query).get("q") or [""])[0]
+            try:
+                self.respond(200, {"streams": twitch.find(query) if query.strip() else twitch.top_streams()})
+            except twitch.TwitchError as exc:
+                self.respond(502, {"error": str(exc)})
             return
         if parsed.path == "/api/state":
             if not self.authorised(parsed.query):
@@ -2272,6 +2363,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def phone_speaker(self, parsed):
+        """Raw s16le stereo 48 kHz of everything the TV plays, chunked, until the phone hangs up."""
+        if not self.authorised(parsed.query):
+            self.respond(401, {"error": "Phone is not paired"})
+            return
+        self._note_presence()
+        read, stop = PHONE_SPEAKER.start()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.connection.settimeout(10)
+            while True:
+                data = read()
+                if not data:
+                    break
+                self.wfile.write(b"%x\r\n" % len(data) + data + b"\r\n")
+                self.wfile.flush()
+        except (OSError, ValueError, BrokenPipeError):
+            pass
+        finally:
+            stop()
+        self.close_connection = True
 
     def phone_mic(self, parsed):
         """Raw s16le PCM from the paired phone, chunked, until it hangs up."""

@@ -26,6 +26,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - decluttered Remote tab
   - YouTube mini player over MPRIS
 - **Playback:** skip intro/recap (file chapters, then TheIntroDB), Up next countdown, "Are you still watching?".
+- **Twitch (ad-free):** Apps-row tile + `TwitchScreen` rail (top live streams) and a phone Search-tab block; `twitch.py` lists via public GQL and launches streamlink→mpv through `Controller.play_twitch`. Not verified on the real TV (needs streamlink; real Twitch ad filtering untested).
 - **YouTube behind Home:** the window is minimized so the video stops rendering; audio is auto-resumed if minimizing paused it.
 - **Not yet verified on the real TV:**
   - VacuumTube's MPRIS controls

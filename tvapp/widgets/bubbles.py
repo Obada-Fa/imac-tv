@@ -125,6 +125,27 @@ def _icon(cr, kind, cx, cy, s):
         for ex in (-0.26, 0.26):
             cr.arc(cx + s * ex, cy - s * 0.04, s * 0.12, 0, 2 * math.pi)
             cr.fill()
+    elif kind == "twitch":       # the Twitch chat glyph: a purple speech block with two bars
+        w, h, r = s * 1.2, s * 1.1, s * 0.16
+        x0, y0 = cx - w / 2, cy - h / 2 - s * 0.05
+        cr.new_sub_path()
+        for ax, ay, a in ((x0 + w - r, y0 + r, -90), (x0 + w - r, y0 + h - r, 0),
+                          (x0 + r, y0 + h - r, 90), (x0 + r, y0 + r, 180)):
+            cr.arc(ax, ay, r, math.radians(a), math.radians(a + 90))
+        cr.close_path()
+        cr.set_source_rgba(0.57, 0.27, 1.0, 0.95)
+        cr.fill()
+        cr.move_to(cx - s * 0.5, y0 + h - s * 0.02)
+        cr.line_to(cx - s * 0.5, y0 + h + s * 0.3)
+        cr.line_to(cx - s * 0.15, y0 + h - s * 0.02)
+        cr.close_path()
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.set_line_width(s * 0.14)
+        for ex in (-0.2, 0.2):
+            cr.move_to(cx + s * ex, cy - s * 0.3)
+            cr.line_to(cx + s * ex, cy + s * 0.08)
+            cr.stroke()
     elif kind == "series":
         for i, dy in enumerate((-0.42, 0.0, 0.42)):
             cr.set_source_rgba(1, 1, 1, 0.92 - i * 0.25)
@@ -155,7 +176,7 @@ def _icon(cr, kind, cx, cy, s):
 
 
 TINTS = {"movies": (0.36, 0.52, 0.86), "series": (0.62, 0.42, 0.84),
-         "youtube": (0.82, 0.30, 0.32), "discord": (0.36, 0.40, 0.90), "search": (0.28, 0.66, 0.62),
+         "youtube": (0.82, 0.30, 0.32), "discord": (0.36, 0.40, 0.90), "twitch": (0.57, 0.27, 1.0), "search": (0.28, 0.66, 0.62),
          "settings": (0.50, 0.56, 0.66)}
 
 

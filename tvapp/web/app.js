@@ -675,7 +675,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       
-      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'skip_segment', 'upnext', 'still_watching', 'playback_suggestion', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'play_twitch', 'skip_segment', 'upnext', 'still_watching', 'playback_suggestion', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
@@ -1051,6 +1051,7 @@
     tabbar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
     updateTabbar();
     if ((tab === 'movie' || tab === 'series') && online && !loaded[tab]) loadTab(tab);
+    if (tab === 'search' && online && !twitchLoaded) loadTwitch();
     if (tab === 'settings' && online) {
       loadSettings();
       if (settingsWasHidden) requestAnimationFrame(() => document.querySelector('#settings-tabs [aria-selected=true]')?.scrollIntoView({block: 'nearest', inline: 'nearest'}));
@@ -1619,6 +1620,36 @@
   const results = $('find-results');
   // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.
   results.addEventListener('touchstart', () => fi.blur(), {passive: true});
+
+  // ---- Twitch (Search tab): a channel box plus the most-watched live streams; the TV plays them ad-free ----
+  let twitchLoaded = false;
+  const kviews = n => n >= 1000 ? (n / 1000).toFixed(1).replace('.0', '') + 'K' : String(n);
+  async function loadTwitch() {
+    twitchLoaded = true;
+    try {
+      const r = await api('/api/twitch');
+      const list = $('twitch-list');
+      list.replaceChildren(...(r.streams || []).slice(0, 12).map(s => {
+        const b = document.createElement('button'), t = document.createElement('span'), n = document.createElement('b'), d = document.createElement('small'), v = document.createElement('span');
+        b.type = 'button'; b.className = 'row'; t.className = 'rt'; v.className = 'rv';
+        n.textContent = s.name; d.textContent = [s.title, s.game].filter(Boolean).join(' · '); v.textContent = kviews(s.viewers);
+        t.append(n, d); b.append(t, v);
+        b.onclick = () => watchTwitch(s.login, s.title);
+        return b;
+      }));
+      $('twitch-empty').textContent = list.children.length ? '' : 'No live streams right now';
+    } catch (e) { twitchLoaded = false; $('twitch-empty').textContent = e.message; }
+  }
+  function watchTwitch(login, title) {
+    message('Opening ' + login + ' on the TV…');
+    send('play_twitch', {login, title: title || ''}).catch(() => {});
+  }
+  $('twitch-form').onsubmit = e => {
+    e.preventDefault();
+    const login = $('twitch-input').value.trim();
+    if (!/^[A-Za-z0-9_]{1,25}$/.test(login)) { message('Enter a Twitch channel name'); return; }
+    $('twitch-input').blur(); watchTwitch(login);
+  };
 
   // ---- Movies / Series panes: search scoped to that kind ----
   document.querySelectorAll('.pane[data-type]').forEach(pane => {

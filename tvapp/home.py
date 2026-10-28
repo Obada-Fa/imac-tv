@@ -18,7 +18,7 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
-                     BrowseScreen, SearchScreen, DetailsScreen, SourcesScreen,
+                     BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
                      BufferingOverlay, Toast, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
@@ -385,7 +385,7 @@ class Home(Gtk.Window):
     # ---- screens / back stack
     def top_screen(self, name):
         if name not in self.tops:
-            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen,
+            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
                                "series": lambda s: BrowseScreen(s, "series")}[name](self)
         return self.tops[name]
@@ -460,6 +460,21 @@ class Home(Gtk.Window):
                 err = str(res.get("error") or "Couldn't start playback")
             if err:
                 GLib.idle_add(self.toast, err, 5)
+        threading.Thread(target=run, daemon=True).start()
+
+    def play_twitch(self, login, title=""):
+        self.toast("Opening " + login + " on Twitch…", 6)
+        self.fast_until = time.monotonic() + 30
+
+        def run():
+            res = cmd("play_twitch", {"login": login, "title": title}, timeout=8)
+            err = None
+            if res is None:
+                err = "Can't reach the TV controller"
+            elif isinstance(res, dict) and (res.get("error") or res.get("ok") is False):
+                err = str(res.get("error") or "Couldn't start Twitch")
+            if err:
+                GLib.idle_add(self.toast, err, 6)
         threading.Thread(target=run, daemon=True).start()
 
     # ---- focus
