@@ -31,6 +31,10 @@ class PhoneMicTest(unittest.TestCase):
             return self.default
         if args[0] == "set-default-source":
             self.default = args[1]
+        if args[0] == "list" and args[2] == "sources":
+            return "3\tmic0\n4\timactv_phone_speaker.monitor"
+        if args[0] == "list" and args[2] == "source-outputs":
+            return "20\t3\t1\tdiscord\ts16le\n21\t4\t2\tparec\ts16le"
         if args[0] == "load-module":
             return str(10 + sum(1 for c in self.calls if c[0] == "load-module"))
         return ""
@@ -78,6 +82,11 @@ class PhoneMicTest(unittest.TestCase):
         self.assertEqual(self.default, phonemic.SOURCE)
         stop_new()
         self.assertEqual(self.default, "mic0")
+
+    def test_moves_recorders_but_not_the_speaker_feed(self):
+        self.mic().start(48000, 1)
+        self.assertIn(("move-source-output", "20", phonemic.SOURCE), self.calls)
+        self.assertNotIn(("move-source-output", "21", phonemic.SOURCE), self.calls)
 
     def test_rejects_bad_format(self):
         with self.assertRaises(ValueError):

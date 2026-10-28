@@ -8,6 +8,8 @@ import logging
 import subprocess
 import threading
 
+import phonemic
+
 LOG = logging.getLogger("imactv.phonespeaker")
 SINK = "imactv_phone_speaker"
 RATE = 48000
@@ -86,30 +88,47 @@ class PhoneSpeaker:
                 except Exception:
                     pass
 
+    def _sink_index(self, name):
+        try:
+            for line in self._pactl("list", "short", "sinks").splitlines():
+                parts = line.split("\t")
+                if len(parts) > 1 and parts[1] == name:
+                    return parts[0]
+        except Exception:
+            pass
+        return None
+
+    def _sink_inputs(self):
+        """(index, sink index) of every playing stream."""
+        try:
+            lines = self._pactl("list", "short", "sink-inputs").splitlines()
+        except Exception:
+            return []
+        return [(p[0], p[1]) for p in (line.split("\t") for line in lines) if len(p) > 1 and p[0].isdigit()]
+
     def _move_outputs(self):
         # Streams that were already playing (a running Discord) stay on the old sink unless moved.
-        try:
-            for line in self._pactl("list", "short", "sink-inputs").splitlines():
-                parts = line.split("\t")
-                if parts and parts[0].isdigit():
-                    try:
-                        self._pactl("move-sink-input", parts[0], SINK)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # The phone mic's own feed plays into its private sink and must stay there, or the
+        # phone would hear itself and Discord would lose the mic.
+        mic_sink = self._sink_index(phonemic.SINK)
+        for index, sink in self._sink_inputs():
+            if sink != mic_sink:
+                try:
+                    self._pactl("move-sink-input", index, SINK)
+                except Exception:
+                    pass
 
     def _restore_outputs(self, previous):
-        try:
-            for line in self._pactl("list", "short", "sink-inputs").splitlines():
-                parts = line.split("\t")
-                if len(parts) > 1 and parts[0].isdigit():
-                    try:
-                        self._pactl("move-sink-input", parts[0], previous)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # Only what plays on the phone goes back; never the mic feed (that was the echo on the TV).
+        own = self._sink_index(SINK)
+        if own is None:
+            return
+        for index, sink in self._sink_inputs():
+            if sink == own:
+                try:
+                    self._pactl("move-sink-input", index, previous)
+                except Exception:
+                    pass
 
     def _teardown(self):
         proc, self._proc = self._proc, None

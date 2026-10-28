@@ -100,17 +100,34 @@ class PhoneMic:
                     pass
 
     def _move_inputs(self):
-        # Streams that were already recording stay on their old device unless moved.
+        # Streams that were already recording stay on their old device unless moved. Recordings of a
+        # monitor (the phone speaker's feed) are not microphones and stay where they are.
         try:
+            monitors = {p[0] for p in (line.split("\t") for line in self._pactl("list", "short", "sources").splitlines())
+                        if len(p) > 1 and p[1].endswith(".monitor")}
             for line in self._pactl("list", "short", "source-outputs").splitlines():
                 parts = line.split("\t")
-                if parts and parts[0].isdigit():
+                if parts and parts[0].isdigit() and (len(parts) < 2 or parts[1] not in monitors):
                     try:
                         self._pactl("move-source-output", parts[0], SOURCE)
                     except Exception:
                         pass
         except Exception:
             pass
+
+    @property
+    def muted(self):
+        try:
+            return "yes" in self._pactl("get-source-mute", SOURCE).lower()
+        except Exception:
+            return False
+
+    def toggle_mute(self):
+        with self._lock:
+            if not self._modules:
+                raise RuntimeError("The phone microphone isn't connected")
+            self._pactl("set-source-mute", SOURCE, "toggle")
+        return self.muted
 
     def close(self):
         """Server shutdown: remove the virtual devices as well."""

@@ -352,7 +352,15 @@
       lastError = '';
       if ($('message').textContent === 'Reconnecting to the TV…') message('');
     }
-    const preferred = 'dpad';
+    // Discord: a big touchpad by default, and the phone mic's mute within thumb reach.
+    const discord = s.app === 'discord', phoneAudio = s.phone_audio || {};
+    $('hive').classList.toggle('discord', discord);
+    const micMute = $('mic-mute');
+    micMute.hidden = !(discord && phoneAudio.mic);
+    micMute.classList.toggle('muted', Boolean(phoneAudio.mic_muted));
+    micMute.setAttribute('aria-pressed', String(Boolean(phoneAudio.mic_muted)));
+    micMute.textContent = phoneAudio.mic_muted ? 'Phone mic muted · Tap to unmute' : 'Phone mic on · Tap to mute';
+    const preferred = discord ? 'pointer' : 'dpad';
     const remembered = sessionStorage.getItem('mode-' + s.app);
     if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
@@ -833,6 +841,10 @@
   function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
   $('sheet-close').onclick = closeSheet;
   $('mode').onclick = () => setMode(mode === 'pointer' ? 'dpad' : 'pointer');
+  $('mic-mute').onclick = () => send('mic_mute').then(r => {
+    if (state && state.phone_audio) state.phone_audio.mic_muted = Boolean(r && r.muted);
+    if (state) render(state);
+  }).catch(() => {});
   // One request per drag: the readout follows the thumb, the TV changes on release.
   $('brightness').addEventListener('pointerdown', () => draggingBrightness = true);
   $('brightness').addEventListener('input', () => {

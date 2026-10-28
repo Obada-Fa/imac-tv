@@ -24,6 +24,7 @@ class PhoneSpeakerTest(unittest.TestCase):
         self.calls = []
         self.default = "tv_sink"
         self.procs = []
+        self.discord_sink = "1"
 
     def pactl(self, *args, timeout=3):
         self.calls.append(args)
@@ -34,8 +35,11 @@ class PhoneSpeakerTest(unittest.TestCase):
             return ""
         if args[0] == "load-module":
             return "42"
+        if args[0] == "list" and args[2] == "sinks":
+            return "1\ttv_sink\n5\timactv_phone_mic\n9\t" + phonespeaker.SINK
         if args[0] == "list" and args[2] == "sink-inputs":
-            return "7\t1\t2\tdiscord\ts16le"
+            # 7 = Discord, 8 = the phone mic's own feed into its private sink
+            return "7\t%s\t2\tdiscord\ts16le\n8\t5\t3\tpacat\ts16le" % self.discord_sink
         return ""
 
     def popen(self, argv, **kw):
@@ -52,6 +56,7 @@ class PhoneSpeakerTest(unittest.TestCase):
         read, stop = speaker.start()
         self.assertEqual(self.default, phonespeaker.SINK)
         self.assertIn(("move-sink-input", "7", phonespeaker.SINK), self.calls)
+        self.assertNotIn(("move-sink-input", "8", phonespeaker.SINK), self.calls)
         self.assertIn(f"--device={phonespeaker.SINK}.monitor", self.argv)
         self.assertTrue(speaker.active)
         self.assertTrue(read())
@@ -60,9 +65,12 @@ class PhoneSpeakerTest(unittest.TestCase):
     def test_stop_restores_previous_output(self):
         speaker = self.make()
         _, stop = speaker.start()
+        self.discord_sink = "9"  # Discord now plays on the phone
         stop()
         self.assertEqual(self.default, "tv_sink")
         self.assertIn(("move-sink-input", "7", "tv_sink"), self.calls)
+        # The mic feed is never pushed to the TV speakers (the user heard themselves).
+        self.assertNotIn(("move-sink-input", "8", "tv_sink"), self.calls)
         self.assertIn(("unload-module", "42"), self.calls)
         self.assertTrue(self.procs[0].terminated)
         self.assertFalse(speaker.active)

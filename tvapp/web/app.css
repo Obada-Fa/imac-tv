@@ -356,3 +356,9 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .twitch h3 small{margin-left:6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#b48cff}
 .twitch .findbox{position:static;margin:0;padding:0 0 10px;background:none}
 .twitch .findbox button{width:auto;padding:0 18px}
+/* Discord: the touchpad fills a taller hive; Back/Home stay a tap away under Directions. */
+.hive.discord.pointer{width:100%;aspect-ratio:.95}
+.hive.discord.pointer .pad{left:0!important;top:0!important;width:100%!important;height:100%!important;clip-path:none!important;border-radius:24px;background:rgba(22,29,45,.72);border:1px solid var(--hair);padding:0 12%}
+.hive.discord.pointer .pad .pad-face,.hive.discord.pointer .sat{display:none}
+.micbtn{margin:4px 0 8px;border-radius:16px}
+.micbtn.muted{color:#ffb4b4;border-color:rgba(255,120,120,.45);background:rgba(120,30,40,.35)}

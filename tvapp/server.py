@@ -1716,8 +1716,12 @@ class Controller:
                                    (gpu_temp is not None and gpu_temp >= 85),
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "visualizer": self.visualizer_state(),
-                "phone_audio": {"mic": PHONE_MIC.active, "speaker": PHONE_SPEAKER.active},
+                "phone_audio": self.phone_audio(),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
+
+    def phone_audio(self):
+        mic = PHONE_MIC.active
+        return {"mic": mic, "mic_muted": mic and PHONE_MIC.muted, "speaker": PHONE_SPEAKER.active}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
                         "background_set", "retro_toggle", "retro_remove", "setting_set")
@@ -1940,6 +1944,8 @@ class Controller:
                     raise RuntimeError("No next episode")
                 return self.play_media({"type": "series", "id": target["id"],
                                         "season": nxt["season"], "episode": nxt["episode"]})
+            if action == "mic_mute":
+                return {"ok": True, "muted": PHONE_MIC.toggle_mute()}
             if action == "mute":
                 command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
                 percent, muted = self._system_volume()
