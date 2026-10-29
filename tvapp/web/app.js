@@ -1414,8 +1414,73 @@
     }
     access.append(card, rows);
   }
+  // ---- iMac: live stats and stuck-app controls, polled only while this panel is on screen ----
+  let systemTimer = null;
+  const fmtBytes = b => b == null ? '—' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? Math.round(b / 1e6) + ' MB' : Math.round(b / 1e3) + ' KB';
+  const fmtRate = b => fmtBytes(b) + '/s';
+  const fmtUptime = s => s == null ? '—' : s >= 86400 ? `${Math.floor(s / 86400)}d ${Math.floor(s % 86400 / 3600)}h` : `${Math.floor(s / 3600)}h ${Math.floor(s % 3600 / 60)}m`;
+  function gauge(label) {
+    const g = el('div', 'gauge');
+    g.innerHTML = '<svg viewBox="0 0 64 64" aria-hidden="true"><circle class="track" cx="32" cy="32" r="26"/><circle class="arc" cx="32" cy="32" r="26" pathLength="100"/></svg>';
+    const value = el('b', '', '—'), name = el('small', '', label), sub = el('span', 'gsub', '');
+    g.append(value, name, sub);
+    g.set = (pct, text, detail, hot) => {
+      g.querySelector('.arc').style.strokeDasharray = `${Math.max(0, Math.min(100, pct || 0)).toFixed(1)} 100`;
+      value.textContent = text; sub.textContent = detail || ''; g.classList.toggle('hot', Boolean(hot));
+    };
+    return g;
+  }
+  function renderImac(system) {
+    const card = section(system, 'iMac');
+    card.classList.add('imac');
+    const gauges = el('div', 'gauges'); gauges.id = 'imac-gauges';
+    const cpu = gauge('CPU'), ram = gauge('Memory'), heat = gauge('Heat');
+    gauges.append(cpu, ram, heat); card.append(gauges);
+    const facts = el('div', 'facts'); card.append(facts);
+    const top = el('div', 'tops'); card.append(top);
+    const apps = section(system, 'Apps');
+    apps.id = 'imac-apps';
+    const update = d => {
+      const mem = d.memory || {}, memPct = mem.total ? 100 * mem.used / mem.total : 0;
+      cpu.set(d.cpu, Math.round(d.cpu || 0) + '%', d.load ? `load ${d.load[0].toFixed(2)}` : '', d.cpu >= 90);
+      ram.set(memPct, Math.round(memPct) + '%', `${fmtBytes(mem.used)} of ${fmtBytes(mem.total)}`, memPct >= 90);
+      const t = d.temperature;
+      heat.set(t == null ? 0 : (t - 30) / 70 * 100, t == null ? '—' : Math.round(t) + '°', d.gpu_temperature != null ? `GPU ${Math.round(d.gpu_temperature)}°` : 'CPU', t >= 80);
+      const rows = [['Uptime', fmtUptime(d.uptime)],
+        ['Disk', d.disk ? `${fmtBytes(d.disk.used)} of ${fmtBytes(d.disk.total)}` : '—'],
+        ['Network', `↓ ${fmtRate(d.network && d.network.rx)} · ↑ ${fmtRate(d.network && d.network.tx)}`]];
+      if (mem.swap_total) rows.push(['Swap', `${fmtBytes(mem.swap_used)} of ${fmtBytes(mem.swap_total)}`]);
+      if (d.battery) rows.push(['Battery', `${d.battery.percent}%${d.battery.status ? ' · ' + d.battery.status : ''}`]);
+      facts.replaceChildren(...rows.map(([k, v]) => { const r = el('div', 'fact'); r.append(el('span', '', k), el('b', '', v)); return r; }));
+      top.replaceChildren(el('small', 'lbl', 'Busiest'),
+        ...(d.top_cpu || []).slice(0, 4).map(p => { const r = el('div', 'fact'); r.append(el('span', '', p.name), el('b', '', `${p.cpu}% · ${fmtBytes(p.memory)}`)); return r; }));
+      apps.replaceChildren(...(d.apps || []).map(a => {
+        const row = el('div', 'row static app-row');
+        row.append(rowText(a.title, a.running ? `Running · ${fmtBytes(a.memory)} · ${a.cpu}% CPU` : 'Not running'));
+        const actions = el('span', 'app-actions');
+        if (a.key !== 'player') {
+          const restart = el('button', 'quiet', a.running ? 'Restart' : 'Open'); restart.type = 'button';
+          restart.onclick = () => a.running ? fire('app_restart', {app: a.key}) : fire('select', {app: a.key});
+          actions.append(restart);
+        }
+        const close = el('button', 'quiet danger', 'Close'); close.type = 'button'; close.disabled = !a.running;
+        close.onclick = () => { if (confirm(`Close ${a.title} on the iMac?`)) fire('app_close', {app: a.key}); };
+        actions.append(close); row.append(actions);
+        return row;
+      }));
+    };
+    const tick = async () => {
+      if (!document.body.contains(card)) { clearInterval(systemTimer); systemTimer = null; return; }
+      if (tab !== 'settings' || system.hidden || document.hidden) return;
+      try { update(await api('/api/system')); } catch (e) { /* offline: keep the last numbers */ }
+    };
+    clearInterval(systemTimer);
+    systemTimer = setInterval(tick, 2000);
+    tick();
+  }
   function renderSystem() {
     const system = $('settings-system'); system.replaceChildren();
+    renderImac(system);
     const updates = section(system, 'Software updates');
     const updateText = el('p', 'note'); updateText.id = 'update-status'; updateText.setAttribute('role', 'status');
     updates.append(updateText);

@@ -362,3 +362,24 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .hive.discord.pointer .pad .pad-face,.hive.discord.pointer .sat{display:none}
 .micbtn{margin:4px 0 8px;border-radius:16px}
 .micbtn.muted{color:#ffb4b4;border-color:rgba(255,120,120,.45);background:rgba(120,30,40,.35)}
+/* iMac: ring gauges, facts and per-app controls in Settings → System */
+.imac{padding:14px 12px}
+.gauges{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.gauge{position:relative;display:grid;justify-items:center;text-align:center;gap:2px}
+.gauge svg{width:76px;height:76px;transform:rotate(-90deg)}
+.gauge circle{fill:none;stroke-width:6}
+.gauge .track{stroke:var(--hair-soft)}
+.gauge .arc{stroke:var(--accent);stroke-linecap:round;stroke-dasharray:0 100;transition:stroke-dasharray .6s ease;filter:drop-shadow(0 0 4px rgba(var(--accent-rgb),.5))}
+.gauge.hot .arc{stroke:#ff8a7a;filter:drop-shadow(0 0 5px rgba(255,120,100,.6))}
+.gauge b{position:absolute;top:24px;width:76px;font-size:17px;font-weight:500;font-variant-numeric:tabular-nums}
+.gauge small{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2)}
+.gauge .gsub{font-size:11px;color:var(--ink3);min-height:14px}
+.facts,.tops{display:grid;gap:6px;margin-top:12px}
+.fact{display:flex;justify-content:space-between;gap:10px;font-size:13px;color:var(--ink2)}
+.fact b{font-weight:400;color:var(--ink);font-variant-numeric:tabular-nums;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tops .lbl{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink3)}
+.app-row{gap:8px}
+.app-actions{display:flex;gap:6px;flex:none}
+.app-actions button{min-height:38px;padding:0 12px;font-size:13px;border-color:var(--hair-soft);background:var(--glass)}
+.app-actions .danger{color:#ffb4b4}
+.app-actions button:disabled{opacity:.4}

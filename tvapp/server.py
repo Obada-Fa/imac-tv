@@ -32,6 +32,7 @@ import backgrounds
 import nowplaying
 import phonemic
 import phonespeaker
+import sysinfo
 import twitch
 import widgets
 try:
@@ -1684,33 +1685,13 @@ class Controller:
             current_media = dict(self.media) if self.media else None
             deadline = self.timer.get("deadline")
         percent, muted = self._system_volume()  # one system volume, also while mpv plays
-        temps = []
-        for sensor in Path("/sys/class/hwmon").glob("hwmon*/temp*_input"):
-            try:
-                if (sensor.parent / "name").read_text().strip() == "coretemp":
-                    value = int(sensor.read_text()) / 1000
-                    if 0 < value < 120:
-                        temps.append(value)
-            except (OSError, ValueError):
-                continue
-        gpu_temps = []
-        smc = Path("/sys/devices/platform/applesmc.768")
-        for label in smc.glob("temp*_label"):
-            try:
-                if label.read_text().strip() in ("TG0D", "TG0H", "TG0p"):
-                    value = int(label.with_name(label.name.replace("_label", "_input")).read_text()) / 1000
-                    if 0 < value < 120:
-                        gpu_temps.append(value)
-            except (OSError, ValueError):
-                continue
+        cpu_temp, gpu_temp = sysinfo.temps()
         try:
             gui = bool(command(["xdpyinfo"], timeout=1, check=False))
         except Exception:
             gui = False
         player = playback()
         yt_now = self.youtube_now()
-        cpu_temp = max(temps) if temps else None
-        gpu_temp = max(gpu_temps) if gpu_temps else None
         win = window_for(app) if gui else None
         if current_media is not None:
             nxt = current_media.pop("next", None)
@@ -1736,6 +1717,52 @@ class Controller:
                 "phone_audio": self.phone_audio(),
                 "discord": app == "discord" or (gui and discord_in_front()),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
+
+    APP_FLATPAKS = {"discord": "com.discordapp.Discord", "youtube": "rocks.shy.VacuumTube"}
+
+    def close_app(self, app, restart=False):
+        """Close (and optionally reopen) one of sysinfo.MANAGED; for stuck instances. Runs in the
+        background: a polite window close, flatpak kill, then SIGTERM and SIGKILL for what is left."""
+        if app not in sysinfo.MANAGED:
+            raise ValueError("Unknown app")
+        if restart and app not in APPS:
+            raise ValueError("This app can't be restarted from here")
+
+        def work():
+            try:
+                if app == "player":
+                    self._end_playback()
+                    self._stop_proc()
+                else:
+                    win = window_for(app)
+                    if win:
+                        command(["wmctrl", "-i", "-c", win["id"]], check=False)
+                    if app in self.APP_FLATPAKS:
+                        command(["flatpak", "kill", self.APP_FLATPAKS[app]], timeout=5, check=False)
+                for sig, wait in ((signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
+                    pids = SYSTEM.pids(app)
+                    if not pids:
+                        break
+                    for pid in pids:
+                        try:
+                            os.kill(pid, sig)
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                    deadline = time.monotonic() + wait
+                    while time.monotonic() < deadline and SYSTEM.pids(app):
+                        time.sleep(0.2)
+                LOG.info("Closed %s%s", app, " for a restart" if restart else "")
+                if restart:
+                    self.select(app)
+                else:
+                    with self.lock:
+                        current = self.app
+                    if current == app:
+                        self.select("home")
+            except Exception as exc:
+                LOG.warning("Closing %s failed: %s", app, exc)
+        threading.Thread(target=work, daemon=True).start()
+        return {"ok": True}
 
     def phone_audio(self):
         mic = PHONE_MIC.active
@@ -1962,6 +1989,10 @@ class Controller:
                     raise RuntimeError("No next episode")
                 return self.play_media({"type": "series", "id": target["id"],
                                         "season": nxt["season"], "episode": nxt["episode"]})
+            if action == "app_close":
+                return self.close_app(params.get("app"), restart=False)
+            if action == "app_restart":
+                return self.close_app(params.get("app"), restart=True)
             if action == "mic_mute":
                 return {"ok": True, "muted": PHONE_MIC.toggle_mute()}
             if action == "mute":
@@ -2219,6 +2250,7 @@ class Controller:
 CONTROL = None
 
 
+SYSTEM = sysinfo.Sampler()
 PHONE_MIC = phonemic.PhoneMic()
 PHONE_SPEAKER = phonespeaker.PhoneSpeaker()
 
@@ -2281,6 +2313,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            return
+        if parsed.path == "/api/system":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            self._note_presence()
+            self.respond(200, SYSTEM.sample())
             return
         if parsed.path == "/api/speaker":
             self.phone_speaker(parsed)

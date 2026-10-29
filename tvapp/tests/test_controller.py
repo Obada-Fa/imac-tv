@@ -1081,3 +1081,49 @@ class PlaybackRecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CloseAppTests(unittest.TestCase):
+    """Phone 'Close'/'Restart' for stuck apps: only known apps, polite first, never arbitrary pids."""
+
+    def run_close(self, app, restart=False, pids_seq=None):
+        pids_seq = list(pids_seq or [[]])
+        calls, kills = [], []
+        def pids(key):
+            self.assertEqual(key, app)
+            return pids_seq.pop(0) if len(pids_seq) > 1 else pids_seq[0]
+        class Inline:
+            def __init__(self, target, daemon=None):
+                self.target = target
+            def start(self):
+                self.target()
+        c = server.Controller()
+        with mock.patch.object(server, "command", side_effect=lambda argv, **kw: calls.append(argv) or ""), \
+                mock.patch.object(server, "window_for", return_value={"id": "0x1"}), \
+                mock.patch.object(server.SYSTEM, "pids", side_effect=pids), \
+                mock.patch.object(server.os, "kill", side_effect=lambda pid, sig: kills.append((pid, sig))), \
+                mock.patch.object(server.time, "sleep"), \
+                mock.patch.object(server.threading, "Thread", Inline), \
+                mock.patch.object(c, "select") as select:
+            self.assertEqual(c.close_app(app, restart=restart), {"ok": True})
+        return calls, kills, select
+
+    def test_rejects_unknown_apps(self):
+        c = server.Controller()
+        for bad in ("bash", None, 123, "../x"):
+            with self.assertRaises(ValueError):
+                c.close_app(bad)
+        with self.assertRaises(ValueError):
+            c.close_app("player", restart=True)
+
+    def test_close_discord_politely_then_signals_leftovers(self):
+        calls, kills, select = self.run_close("discord", pids_seq=[[42], [42], []])
+        self.assertIn(["wmctrl", "-i", "-c", "0x1"], calls)
+        self.assertIn(["flatpak", "kill", "com.discordapp.Discord"], calls)
+        self.assertEqual(kills[0], (42, server.signal.SIGTERM))
+        select.assert_not_called()
+
+    def test_restart_reopens(self):
+        _, kills, select = self.run_close("discord", restart=True, pids_seq=[[]])
+        self.assertEqual(kills, [])
+        select.assert_called_once_with("discord")

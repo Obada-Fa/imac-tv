@@ -58,6 +58,19 @@ class Preview(SimpleHTTPRequestHandler):
                        "fullscreen": True, "screen_off": False, "timer": {"active": False},
                        "torbox": {"configured": True}, "remote": {"connected": True, "count": 1},
                        "updates": {"status": "up_to_date", "message": "Your TV is up to date."}})
+        elif path == "/api/system":
+            gb = 1024 ** 3
+            self.json({"cpu": 23.4, "cores": 4, "load": [0.82, 0.71, 0.6], "uptime": 93784,
+                       "memory": {"total": 8 * gb, "used": int(5.6 * gb), "swap_total": 2 * gb, "swap_used": gb // 4},
+                       "disk": {"total": 240 * gb, "used": 131 * gb}, "network": {"rx": 2_400_000, "tx": 180_000},
+                       "battery": None, "temperature": 64.0, "gpu_temperature": 58.0,
+                       "top_cpu": [{"pid": 1, "name": "Discord", "cpu": 12.5, "memory": 610_000_000},
+                                   {"pid": 2, "name": "python3", "cpu": 4.1, "memory": 120_000_000},
+                                   {"pid": 3, "name": "Xorg", "cpu": 3.0, "memory": 90_000_000}],
+                       "top_memory": [],
+                       "apps": [{"key": "discord", "title": "Discord", "running": True, "pids": [1], "memory": 610_000_000, "cpu": 12.5},
+                                {"key": "youtube", "title": "YouTube", "running": False, "pids": [], "memory": 0, "cpu": 0.0},
+                                {"key": "player", "title": "Video player", "running": False, "pids": [], "memory": 0, "cpu": 0.0}]})
         elif path == "/api/settings":
             self.json({"outputs": [], "trial": {"active": False}, "display_error": "",
                        "torbox": {"configured": True}, "fields": settings_model.FIELDS,
