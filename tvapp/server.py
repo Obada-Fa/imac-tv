@@ -113,6 +113,23 @@ def window_for(app):
     return None
 
 
+def active_window_id():
+    out = command(["xprop", "-root", "_NET_ACTIVE_WINDOW"], timeout=1, check=False)
+    m = re.search(r"0x[0-9a-fA-F]+", out or "")
+    return int(m.group(0), 16) if m else None
+
+
+def discord_in_front():
+    """Discord counts as open on the TV when its window has focus, however it was started."""
+    win = window_for("discord")
+    if not win:
+        return False
+    try:
+        return int(win["id"], 16) == active_window_id()
+    except (TypeError, ValueError):
+        return False
+
+
 def activate(win):
     command(["xdotool", "windowmap", win["id"]], check=False)
     command(["wmctrl", "-i", "-R", win["id"]])
@@ -1717,6 +1734,7 @@ class Controller:
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "visualizer": self.visualizer_state(),
                 "phone_audio": self.phone_audio(),
+                "discord": app == "discord" or (gui and discord_in_front()),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
 
     def phone_audio(self):

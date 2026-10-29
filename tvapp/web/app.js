@@ -353,15 +353,17 @@
       if ($('message').textContent === 'Reconnecting to the TV…') message('');
     }
     // Discord: a big touchpad by default, and the phone mic's mute within thumb reach.
-    const discord = s.app === 'discord', phoneAudio = s.phone_audio || {};
+    const discord = Boolean(s.discord) || s.app === 'discord', phoneAudio = s.phone_audio || {};
     $('hive').classList.toggle('discord', discord);
     const micMute = $('mic-mute');
-    micMute.hidden = !(discord && phoneAudio.mic);
+    micMute.hidden = !discord;
+    micMute.disabled = !phoneAudio.mic;
     micMute.classList.toggle('muted', Boolean(phoneAudio.mic_muted));
     micMute.setAttribute('aria-pressed', String(Boolean(phoneAudio.mic_muted)));
-    micMute.textContent = phoneAudio.mic_muted ? 'Phone mic muted · Tap to unmute' : 'Phone mic on · Tap to mute';
+    micMute.textContent = !phoneAudio.mic ? 'Phone mic not connected' :
+      phoneAudio.mic_muted ? 'Phone mic muted · Tap to unmute' : 'Phone mic on · Tap to mute';
     const preferred = discord ? 'pointer' : 'dpad';
-    const remembered = sessionStorage.getItem('mode-' + s.app);
+    const remembered = sessionStorage.getItem('mode-' + (discord ? 'discord' : s.app));
     if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
     if (tab === 'settings' && setState) {
@@ -699,7 +701,7 @@
     $('pad').hidden = which !== 'pointer';
     $('mode').textContent = which === 'pointer' ? 'Directions' : 'Pointer';
     $('hive').classList.toggle('pointer', which === 'pointer');
-    if (state) sessionStorage.setItem('mode-' + state.app, which);
+    if (state) sessionStorage.setItem('mode-' + (state.discord || state.app === 'discord' ? 'discord' : state.app), which);
   }
 
   function openSheet(name) {
