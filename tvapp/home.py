@@ -22,6 +22,7 @@ from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_
                      BufferingOverlay, Toast, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
+VITALS_KEYS = ("Info", "XF86Info")      # a remote's Info key (keymap-dependent); "i" works too outside text fields
 from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
@@ -34,6 +35,16 @@ import display  # noqa: E402
 
 BASE = Path(__file__).resolve().parent
 DATA = screens.DATA
+TRACE = os.environ.get("IMACTV_TRACE")    # test hook: append timed events here (times the YouTube -> Home path)
+
+
+def trace(event):
+    if TRACE:
+        try:
+            with open(TRACE, "a") as fh:
+                fh.write(f"{time.time():.4f} home {event}\n")
+        except OSError:
+            pass
 
 
 def ui_scale(height):
@@ -148,6 +159,7 @@ class Home(Gtk.Window):
         self.avoid_rect = None
         self.ui_handled = 0.0
         self.ui_mtime = None
+        self.ui_at = 0.0                        # monotonic time the last ui request was handled
         self.viz_written = (None, 0.0)          # last viz.json payload and when it was written
         self.tick_n = 0
         self.tops = {}
@@ -189,6 +201,10 @@ class Home(Gtk.Window):
         self.toaster.hide()
         self.push(self.top_screen("home"))
         GLib.timeout_add(500, self.tick)
+        self.watch_ui_requests()
+        if TRACE:
+            self.trace_frames = 0
+            self.connect_after("draw", self.trace_draw)
         fake = os.environ.get("IMACTV_FAKE_BUFFERING")      # test hook: show the loading screen with this state
         if fake:
             try:
@@ -582,6 +598,14 @@ class Home(Gtk.Window):
             screen.poke()
         return False
 
+    def peek_vitals(self):
+        """Info (or i): a short TV stats overlay from widgets.vitals; never lets that module break Home."""
+        try:
+            from widgets import vitals
+            vitals.peek(self)
+        except Exception as exc:
+            print("vitals:", exc)
+
     def on_key_press(self, _window, event):
         key = Gdk.keyval_name(event.keyval)
         display.poke()                  # someone is pressing keys: the screen is probably on
@@ -607,10 +631,13 @@ class Home(Gtk.Window):
                 self.navigate(key)
                 return True
             return False        # Enter / space reach the focused sheet button
-        if hasattr(screen, "handle_key") and screen.handle_key(key):
-            return True
         focus = self.get_focus()
         in_entry = isinstance(focus, Gtk.Entry)
+        if key in VITALS_KEYS or (key in ("i", "I") and not in_entry):
+            self.peek_vitals()
+            return True
+        if hasattr(screen, "handle_key") and screen.handle_key(key):
+            return True
         if key in BACK_KEYS:
             if key == "BackSpace" and in_entry and focus.get_text():
                 return False
@@ -628,7 +655,23 @@ class Home(Gtk.Window):
             return True
         return False
 
+    def trace_draw(self, *_):
+        if self.trace_frames > 0:
+            self.trace_frames -= 1
+            home = self.tops.get("home")
+            trace(f"frame active={home.active() if home else None} prev_app={self.prev_app}")
+        return False
+
     # ---- ui_request.json
+    def watch_ui_requests(self):
+        """React to ui_request.json at once (inotify) instead of on the next 500 ms tick; the tick still checks."""
+        try:
+            from gi.repository import Gio
+            self.ui_monitor = Gio.File.new_for_path(str(DATA / "ui_request.json")).monitor_file(Gio.FileMonitorFlags.NONE, None)
+            self.ui_monitor.connect("changed", lambda *_: self.check_ui_request())
+        except Exception as exc:
+            print("ui_request monitor:", exc)
+
     def check_ui_request(self):
         path = DATA / "ui_request.json"
         try:
@@ -644,7 +687,11 @@ class Home(Gtk.Window):
             return
         if fresh_request(req, self.ui_handled, time.time()):
             self.ui_handled = req["ts"]
+            trace(f"ui_request {req.get('screen')} seen")
             self.handle_ui_request(req)
+            trace("ui_request handled")
+            if TRACE:
+                self.trace_frames = 3
 
     def handle_ui_request(self, req):
         name = req.get("screen")
@@ -653,6 +700,11 @@ class Home(Gtk.Window):
             if home is not None and hasattr(home, "next_viz") and home.next_viz():
                 self.write_viz_state(force=True)
             return
+        # Every request means the controller has already switched to Home: count Home as the app in front now,
+        # so its animation and timers run from the first frame instead of after the next /api/state poll.
+        self.ui_at = time.monotonic()
+        self.prev_app = "home"
+        self.last_state_poll = 0
         self.close_sheet()
         if name == "search":
             scope = search_scope(getattr(self.current(), "sname", ""))
@@ -727,8 +779,9 @@ class Home(Gtk.Window):
 
     # ---- state polling
     def poll_state(self):
+        started = time.monotonic()
         state = local_api("/api/state")
-        GLib.idle_add(self.apply_state, state)
+        GLib.idle_add(self.apply_state, state, started)
 
     def set_remote(self, remote):
         """Presence controls pairing UI; only a newly paired device gets a connected toast."""
@@ -749,9 +802,12 @@ class Home(Gtk.Window):
         if newly_paired:
             GLib.idle_add(self.toast, "Phone connected", 3)
 
-    def apply_state(self, state):
+    def apply_state(self, state, started=None):
         self.state_loading = False
         if not state:
+            return False
+        if started is not None and started < self.ui_at:
+            self.last_state_poll = 0              # asked before the last ui request: stale app, poll again
             return False
         self.settings_status = state
         updates = state.get('updates') or {}
@@ -787,6 +843,9 @@ class Home(Gtk.Window):
             if isinstance(media, dict) and media.get("id"):
                 self.show_media(media)
                 self.present()
+        if TRACE and app != self.prev_app:
+            trace(f"prev_app {self.prev_app} -> {app}")
+            self.trace_frames = 3
         self.prev_app = app
         self.state_seen = True
         self.update_playback_prompt(state.get("playback_suggestion"))

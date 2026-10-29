@@ -79,11 +79,24 @@ APPS = {
 # setup-privileges.sh installs alongside the sudo rule.
 BRIGHTNESS_HELPER = "/usr/local/sbin/imactv-brightness"
 LOG = logging.getLogger("imactv")
+TRACE = os.environ.get("IMACTV_TRACE")    # test hook: append timed events here (times the YouTube -> Home path)
+
+
+def trace(event):
+    if TRACE:
+        try:
+            with open(TRACE, "a") as fh:
+                fh.write(f"{time.time():.4f} server {event}\n")
+        except OSError:
+            pass
 
 
 def command(argv, *, timeout=3, env=None, check=True):
+    started = time.monotonic()
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
                             env=env or DISPLAY_ENV)
+    if TRACE:
+        trace(f"cmd {' '.join(argv[:3])} {1000 * (time.monotonic() - started):.0f}ms")
     if check and result.returncode:
         raise RuntimeError((result.stderr or result.stdout or "command failed").strip()[:300])
     return result.stdout.strip()
@@ -694,12 +707,12 @@ class Controller:
         if not self.home_lock.acquire(blocking=False):
             return
         try:
-            try:
-                command(["xdpyinfo"], timeout=1)
-            except Exception:
-                return
             win = window_for("home")
             if not win:
+                try:
+                    command(["xdpyinfo"], timeout=1)   # no X yet: don't start Home into nothing
+                except Exception:
+                    return
                 subprocess.Popen(["/usr/bin/python3", str(BASE / "home.py")], env=DISPLAY_ENV,
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, start_new_session=True)
@@ -744,28 +757,42 @@ class Controller:
     def select(self, app):
         if app != "home" and app not in APPS:
             raise ValueError("Unknown app")
+        trace(f"select {app} start")
         self._end_playback()
-        if app == "home":
-            with self.lock:
-                self._yt_cache = None
-            home_key = nowplaying.track_key(self.youtube_now())
         with self.lock:
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
             self.buffering = None
             if app == "home":
-                self._yt_dismissed = home_key or self._yt_key
-                self._yt_home_until = time.monotonic() + 6 if not home_key else 0.0
+                # Don't bring the track the user just left back up. The MPRIS lookup can take a second while
+                # VacuumTube is busy, so it runs after Home is up (_dismiss_youtube); until then the last known
+                # track counts, and the YouTube tick takes the first track it sees within 6 s.
+                self._yt_dismissed = self._yt_key
+                self._yt_home_until = time.monotonic() + 6
                 self._yt_pending_mode = None
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
         self._stop_proc()
         if app == "home":
             self._ui_request("home")
+            trace("ui_request written")
             self._show_home()
+            trace("show_home done")
+            threading.Thread(target=self._dismiss_youtube, args=(generation,), daemon=True).start()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
+
+    def _dismiss_youtube(self, generation):
+        """After Home is up: the track playing behind it now is the one the user left."""
+        with self.lock:
+            self._yt_cache = None
+        key = nowplaying.track_key(self.youtube_now())
+        trace("youtube_now done")
+        with self.lock:
+            if key and generation == self.generation:
+                self._yt_dismissed = key
+                self._yt_home_until = 0.0
 
     YT_TICK = 3.0
 
