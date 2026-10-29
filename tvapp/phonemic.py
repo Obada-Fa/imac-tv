@@ -30,6 +30,7 @@ class PhoneMic:
         self._modules = []
         self._format = None
         self._previous = None
+        self._muted = False
 
     @property
     def active(self):
@@ -76,6 +77,9 @@ class PhoneMic:
         LOG.info("Phone microphone is now the default input")
 
         def write(data):
+            # Mute in the feed itself: silence reaches every app, whichever device they recorded from.
+            if self._muted:
+                data = bytes(len(data))
             proc.stdin.write(data)
             proc.stdin.flush()
 
@@ -117,17 +121,15 @@ class PhoneMic:
 
     @property
     def muted(self):
-        try:
-            return "yes" in self._pactl("get-source-mute", SOURCE).lower()
-        except Exception:
-            return False
+        return self._muted
 
     def toggle_mute(self):
         with self._lock:
-            if not self._modules:
+            if self._proc is None:
                 raise RuntimeError("The phone microphone isn't connected")
-            self._pactl("set-source-mute", SOURCE, "toggle")
-        return self.muted
+            self._muted = not self._muted
+        LOG.info("Phone microphone %s", "muted" if self._muted else "unmuted")
+        return self._muted
 
     def close(self):
         """Server shutdown: remove the virtual devices as well."""

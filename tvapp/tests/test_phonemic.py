@@ -88,6 +88,16 @@ class PhoneMicTest(unittest.TestCase):
         self.assertIn(("move-source-output", "20", phonemic.SOURCE), self.calls)
         self.assertNotIn(("move-source-output", "21", phonemic.SOURCE), self.calls)
 
+    def test_mute_writes_silence(self):
+        mic = self.mic()
+        write, _ = mic.start(48000, 1)
+        write(b"\x10\x20")
+        self.assertTrue(mic.toggle_mute())
+        write(b"\x30\x40")
+        self.assertFalse(mic.toggle_mute())
+        write(b"\x50\x60")
+        self.assertEqual(self.procs[0].stdin.getvalue(), b"\x10\x20\x00\x00\x50\x60")
+
     def test_rejects_bad_format(self):
         with self.assertRaises(ValueError):
             self.mic().start(12345, 1)
