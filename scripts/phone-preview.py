@@ -7,6 +7,8 @@ Capture the browser at 390 × 844, then stop this process when done.
 """
 import argparse
 import json
+import math
+import time
 from pathlib import Path
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -60,10 +62,11 @@ class Preview(SimpleHTTPRequestHandler):
                        "updates": {"status": "up_to_date", "message": "Your TV is up to date."}})
         elif path == "/api/system":
             gb = 1024 ** 3
-            self.json({"cpu": 23.4, "cores": 4, "load": [0.82, 0.71, 0.6], "uptime": 93784,
+            wave = math.sin(time.time() / 3)   # the numbers drift so live updates show
+            self.json({"cpu": round(23.4 + 15 * wave, 1), "cores": 4, "load": [0.82, 0.71, 0.6], "uptime": 93784,
                        "memory": {"total": 8 * gb, "used": int(5.6 * gb), "swap_total": 2 * gb, "swap_used": gb // 4},
-                       "disk": {"total": 240 * gb, "used": 131 * gb}, "network": {"rx": 2_400_000, "tx": 180_000},
-                       "battery": None, "temperature": 64.0, "gpu_temperature": 58.0,
+                       "disk": {"total": 240 * gb, "used": 131 * gb}, "network": {"rx": int(2_400_000 * (1.2 + wave)), "tx": 180_000},
+                       "battery": None, "temperature": round(64 + 6 * wave, 1), "gpu_temperature": 58.0,
                        "top_cpu": [{"pid": 1, "name": "Discord", "cpu": 12.5, "memory": 610_000_000},
                                    {"pid": 2, "name": "python3", "cpu": 4.1, "memory": 120_000_000},
                                    {"pid": 3, "name": "Xorg", "cpu": 3.0, "memory": 90_000_000}],

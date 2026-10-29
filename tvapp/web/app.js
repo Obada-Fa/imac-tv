@@ -286,7 +286,8 @@
     document.body.classList.toggle('offline', !value);
     remoteLabel = label.replace(/^●\s*/, '');
     tickClock();
-    document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => b.disabled = !value);
+    document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => { if (b.disabled !== !value) b.disabled = !value; });
+    document.querySelectorAll('#imac-apps .app-row').forEach(r => fillApp(r, r.app));   // Close stays off for apps that aren't running
     renderUpdateStatus();
   }
 
@@ -810,6 +811,14 @@
     b.append(rowText(title, sub), el('i', 'chev')); b.onclick = fn;
     return b;
   }
+  // Settings is re-fetched on every state poll; a part is rebuilt only when what it shows changed.
+  const drawn = new WeakMap();
+  function changed(node, ...inputs) {
+    const sig = JSON.stringify(inputs);
+    if (drawn.get(node) === sig) return false;
+    drawn.set(node, sig);
+    return true;
+  }
   function section(container, title) {
     container.append(el('h3', '', title));
     const card = el('div', 'glass rows'); container.append(card);
@@ -1114,34 +1123,36 @@
       if (!trialTimer) trialTimer = setInterval(pollTrial, 1000);
     } else stopTrialPoll();
     const box = $('set-display');
-    box.replaceChildren();
-    const outs = (setState.outputs || []).filter(o => o.connected);
-    if (!outs.length) box.append(el('p', 'note', setState.display_error || 'No connected screen found'));
-    for (const o of outs) {
-      const cur = o.current, card = section(box, o.name);
-      const now = el('div', 'row static');
-      now.append(rowText('Now showing'), el('span', 'rv', cur ? `${sizeText(cur.mode)} · ${rateText(cur.rate)}` : 'Screen is off'));
-      card.append(now);
-      const modes = (o.modes || []).filter(m => wideEnough(m.mode) && !/i$/.test(m.mode));
-      const res = el('div', 'chips pad-chips');
-      for (const m of modes) {
-        const b = el('button', '', sizeText(m.mode) + (o.preferred && o.preferred.mode === m.mode ? ' · Recommended' : '')); b.type = 'button';
-        if (cur && cur.mode === m.mode) b.classList.add('cur', 'on');
-        const t0 = (cur && cur.mode === m.mode && m.rates.includes(cur.rate)) ? cur.rate : m.rates[0];
-        b.onclick = () => startTrial(o.name, m.mode, t0);
-        res.append(b);
-      }
-      card.append(el('div', 'lbl', 'Resolution'), res);
-      const curMode = cur && modes.find(m => m.mode === cur.mode);
-      if (curMode && curMode.rates.length > 1) {
-        const rates = el('div', 'chips pad-chips');
-        for (const r of curMode.rates) {
-          const b = el('button', '', rateText(r)); b.type = 'button';
-          if (cur.rate === r) b.classList.add('cur', 'on');
-          b.onclick = () => startTrial(o.name, curMode.mode, r);
-          rates.append(b);
+    if (changed(box, setState.outputs, setState.display_error)) {
+      box.replaceChildren();
+      const outs = (setState.outputs || []).filter(o => o.connected);
+      if (!outs.length) box.append(el('p', 'note', setState.display_error || 'No connected screen found'));
+      for (const o of outs) {
+        const cur = o.current, card = section(box, o.name);
+        const now = el('div', 'row static');
+        now.append(rowText('Now showing'), el('span', 'rv', cur ? `${sizeText(cur.mode)} · ${rateText(cur.rate)}` : 'Screen is off'));
+        card.append(now);
+        const modes = (o.modes || []).filter(m => wideEnough(m.mode) && !/i$/.test(m.mode));
+        const res = el('div', 'chips pad-chips');
+        for (const m of modes) {
+          const b = el('button', '', sizeText(m.mode) + (o.preferred && o.preferred.mode === m.mode ? ' · Recommended' : '')); b.type = 'button';
+          if (cur && cur.mode === m.mode) b.classList.add('cur', 'on');
+          const t0 = (cur && cur.mode === m.mode && m.rates.includes(cur.rate)) ? cur.rate : m.rates[0];
+          b.onclick = () => startTrial(o.name, m.mode, t0);
+          res.append(b);
         }
-        card.append(el('div', 'lbl', 'Refresh rate'), rates);
+        card.append(el('div', 'lbl', 'Resolution'), res);
+        const curMode = cur && modes.find(m => m.mode === cur.mode);
+        if (curMode && curMode.rates.length > 1) {
+          const rates = el('div', 'chips pad-chips');
+          for (const r of curMode.rates) {
+            const b = el('button', '', rateText(r)); b.type = 'button';
+            if (cur.rate === r) b.classList.add('cur', 'on');
+            b.onclick = () => startTrial(o.name, curMode.mode, r);
+            rates.append(b);
+          }
+          card.append(el('div', 'lbl', 'Refresh rate'), rates);
+        }
       }
     }
     if ((setState.values || {}).node_shape && setState.values.node_shape !== nodeShape) { applyShape(setState.values.node_shape); return; }
@@ -1165,7 +1176,8 @@
   function renderBackground() {
     const bg = setState.background || {source: 'photos', retro: []};
     const list = $('bg-list');
-    list.replaceChildren();
+    const rebuild = changed(list, bg);
+    if (rebuild) list.replaceChildren();
     $('bg-retro').hidden = !bg.retro.length || bg.source !== 'retro';
     for (const button of document.querySelectorAll('#bg-source button')) {
       const on = button.dataset.src === bg.source;
@@ -1179,7 +1191,7 @@
     $('bg-retro-sub').textContent = bg.retro.length ? `${bg.retro.length} picture${bg.retro.length === 1 ? '' : 's'}` : 'Add your own pictures';
     const active = bg.retro.filter(r => r.on).length;
     $('bg-count').textContent = active + ' of ' + bg.retro.length + ' on';
-    for (const r of bg.retro) {
+    for (const r of rebuild ? bg.retro : []) {
       const b = el('button', 'bgitem'); b.type = 'button';
       b.classList.toggle('on', r.on);
       b.setAttribute('role', 'switch'); b.setAttribute('aria-checked', String(r.on));
@@ -1334,6 +1346,7 @@
       // Keep a half-typed value intact during the display countdown poll.
       const active = document.activeElement;
       if (container.contains(active) && active.matches('input, select')) continue;
+      if (!changed(container, setState.fields, setState.values)) continue;
       container.replaceChildren();
       let card = null;
       for (const [key, group, title, kind, options, network] of setState.fields || []) {
@@ -1398,7 +1411,9 @@
   }
   // Connections: the TV's glass QR card says "scan to connect"; here the same card shows the link it made.
   function renderConnections() {
-    const access = $('phone-access'); access.replaceChildren();
+    const access = $('phone-access');
+    if (!changed(access, online, Boolean(state && state.old_link_active))) return;
+    access.replaceChildren();
     const card = el('div', 'glass linkcard' + (online ? '' : ' offline'));
     const sig = el('div', 'sigline'), bars = el('span', 'sig');
     for (let i = 0; i < 4; i++) bars.append(el('i', online || i === 0 ? '' : 'dim'));
@@ -1422,87 +1437,112 @@
   function gauge(label) {
     const g = el('div', 'gauge');
     g.innerHTML = '<svg viewBox="0 0 64 64" aria-hidden="true"><circle class="track" cx="32" cy="32" r="26"/><circle class="arc" cx="32" cy="32" r="26" pathLength="100"/></svg>';
-    const value = el('b', '', '—'), name = el('small', '', label), sub = el('span', 'gsub', '');
+    const arc = g.querySelector('.arc'), value = el('b', '', '—'), name = el('small', '', label), sub = el('span', 'gsub', '');
     g.append(value, name, sub);
+    let dash = '';
     g.set = (pct, text, detail, hot) => {
-      g.querySelector('.arc').style.strokeDasharray = `${Math.max(0, Math.min(100, pct || 0)).toFixed(1)} 100`;
-      value.textContent = text; sub.textContent = detail || ''; g.classList.toggle('hot', Boolean(hot));
+      // Only a new value restarts the ring's transition.
+      const d = `${Math.max(0, Math.min(100, pct || 0)).toFixed(1)} 100`;
+      if (d !== dash) { dash = d; arc.style.strokeDasharray = d; }
+      setText(value, text); setText(sub, detail || ''); g.classList.toggle('hot', Boolean(hot));
     };
     return g;
   }
+  function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
+  // Keep `container`'s rows (after its first `keep` children) in step with `items`; rows are made only when the count changes.
+  function syncRows(container, items, make, fill, keep = 0) {
+    while (container.children.length - keep > items.length) container.lastElementChild.remove();
+    while (container.children.length - keep < items.length) container.append(make());
+    items.forEach((item, i) => fill(container.children[keep + i], item));
+  }
+  function factRow() { const r = el('div', 'fact'); r.append(el('span'), el('b')); return r; }
+  function fillFact(r, [k, v]) { setText(r.firstChild, k); setText(r.lastChild, v); }
+  function appRow() {
+    const row = el('div', 'row static app-row');
+    const title = el('span', 'rt'), sub = el('small');
+    title.append(document.createTextNode(''), sub);
+    const actions = el('span', 'app-actions');
+    const restart = el('button', 'quiet'); restart.type = 'button';
+    restart.onclick = () => { const a = row.app; a.running ? fire('app_restart', {app: a.key}) : fire('select', {app: a.key}); };
+    const close = el('button', 'quiet danger', 'Close'); close.type = 'button';
+    close.onclick = () => { const a = row.app; if (confirm(`Close ${a.title} on the iMac?`)) fire('app_close', {app: a.key}); };
+    actions.append(restart, close); row.append(title, actions);
+    return row;
+  }
+  function fillApp(row, a) {
+    row.app = a;
+    const [title, actions] = row.children, [restart, close] = actions.children;
+    if (title.firstChild.nodeValue !== a.title) title.firstChild.nodeValue = a.title;
+    setText(title.lastChild, a.running ? `Running · ${fmtBytes(a.memory)} · ${a.cpu}% CPU` : 'Not running');
+    if (restart.hidden !== (a.key === 'player')) restart.hidden = a.key === 'player';
+    setText(restart, a.running ? 'Restart' : 'Open');
+    if (close.disabled !== (!online || !a.running)) close.disabled = !online || !a.running;
+  }
+  let imac = null;   // built once and kept; only its numbers change
   function renderImac(system) {
-    const card = section(system, 'iMac');
-    card.classList.add('imac');
-    const gauges = el('div', 'gauges'); gauges.id = 'imac-gauges';
-    const cpu = gauge('CPU'), ram = gauge('Memory'), heat = gauge('Heat');
-    gauges.append(cpu, ram, heat); card.append(gauges);
-    const facts = el('div', 'facts'); card.append(facts);
-    const top = el('div', 'tops'); card.append(top);
-    const apps = section(system, 'Apps');
-    apps.id = 'imac-apps';
-    const update = d => {
-      const mem = d.memory || {}, memPct = mem.total ? 100 * mem.used / mem.total : 0;
-      cpu.set(d.cpu, Math.round(d.cpu || 0) + '%', d.load ? `load ${d.load[0].toFixed(2)}` : '', d.cpu >= 90);
-      ram.set(memPct, Math.round(memPct) + '%', `${fmtBytes(mem.used)} of ${fmtBytes(mem.total)}`, memPct >= 90);
-      const t = d.temperature;
-      heat.set(t == null ? 0 : (t - 30) / 70 * 100, t == null ? '—' : Math.round(t) + '°', d.gpu_temperature != null ? `GPU ${Math.round(d.gpu_temperature)}°` : 'CPU', t >= 80);
-      const rows = [['Uptime', fmtUptime(d.uptime)],
-        ['Disk', d.disk ? `${fmtBytes(d.disk.used)} of ${fmtBytes(d.disk.total)}` : '—'],
-        ['Network', `↓ ${fmtRate(d.network && d.network.rx)} · ↑ ${fmtRate(d.network && d.network.tx)}`]];
-      if (mem.swap_total) rows.push(['Swap', `${fmtBytes(mem.swap_used)} of ${fmtBytes(mem.swap_total)}`]);
-      if (d.battery) rows.push(['Battery', `${d.battery.percent}%${d.battery.status ? ' · ' + d.battery.status : ''}`]);
-      facts.replaceChildren(...rows.map(([k, v]) => { const r = el('div', 'fact'); r.append(el('span', '', k), el('b', '', v)); return r; }));
-      top.replaceChildren(el('small', 'lbl', 'Busiest'),
-        ...(d.top_cpu || []).slice(0, 4).map(p => { const r = el('div', 'fact'); r.append(el('span', '', p.name), el('b', '', `${p.cpu}% · ${fmtBytes(p.memory)}`)); return r; }));
-      apps.replaceChildren(...(d.apps || []).map(a => {
-        const row = el('div', 'row static app-row');
-        row.append(rowText(a.title, a.running ? `Running · ${fmtBytes(a.memory)} · ${a.cpu}% CPU` : 'Not running'));
-        const actions = el('span', 'app-actions');
-        if (a.key !== 'player') {
-          const restart = el('button', 'quiet', a.running ? 'Restart' : 'Open'); restart.type = 'button';
-          restart.onclick = () => a.running ? fire('app_restart', {app: a.key}) : fire('select', {app: a.key});
-          actions.append(restart);
-        }
-        const close = el('button', 'quiet danger', 'Close'); close.type = 'button'; close.disabled = !a.running;
-        close.onclick = () => { if (confirm(`Close ${a.title} on the iMac?`)) fire('app_close', {app: a.key}); };
-        actions.append(close); row.append(actions);
-        return row;
-      }));
-    };
-    const tick = async () => {
-      if (!document.body.contains(card)) { clearInterval(systemTimer); systemTimer = null; return; }
-      if (tab !== 'settings' || system.hidden || document.hidden) return;
-      try { update(await api('/api/system')); } catch (e) { /* offline: keep the last numbers */ }
-    };
-    clearInterval(systemTimer);
-    systemTimer = setInterval(tick, 2000);
-    tick();
+    if (!imac) {
+      const card = el('div', 'glass rows imac');
+      const gauges = el('div', 'gauges'); gauges.id = 'imac-gauges';
+      const cpu = gauge('CPU'), ram = gauge('Memory'), heat = gauge('Heat');
+      gauges.append(cpu, ram, heat); card.append(gauges);
+      const facts = el('div', 'facts'); card.append(facts);
+      const top = el('div', 'tops'); top.append(el('small', 'lbl', 'Busiest')); card.append(top);
+      const apps = el('div', 'glass rows'); apps.id = 'imac-apps';
+      const update = d => {
+        const mem = d.memory || {}, memPct = mem.total ? 100 * mem.used / mem.total : 0;
+        cpu.set(d.cpu, Math.round(d.cpu || 0) + '%', d.load ? `load ${d.load[0].toFixed(2)}` : '', d.cpu >= 90);
+        ram.set(memPct, Math.round(memPct) + '%', `${fmtBytes(mem.used)} of ${fmtBytes(mem.total)}`, memPct >= 90);
+        const t = d.temperature;
+        heat.set(t == null ? 0 : (t - 30) / 70 * 100, t == null ? '—' : Math.round(t) + '°', d.gpu_temperature != null ? `GPU ${Math.round(d.gpu_temperature)}°` : 'CPU', t >= 80);
+        const rows = [['Uptime', fmtUptime(d.uptime)],
+          ['Disk', d.disk ? `${fmtBytes(d.disk.used)} of ${fmtBytes(d.disk.total)}` : '—'],
+          ['Network', `↓ ${fmtRate(d.network && d.network.rx)} · ↑ ${fmtRate(d.network && d.network.tx)}`]];
+        if (mem.swap_total) rows.push(['Swap', `${fmtBytes(mem.swap_used)} of ${fmtBytes(mem.swap_total)}`]);
+        if (d.battery) rows.push(['Battery', `${d.battery.percent}%${d.battery.status ? ' · ' + d.battery.status : ''}`]);
+        syncRows(facts, rows, factRow, fillFact);
+        syncRows(top, (d.top_cpu || []).slice(0, 4).map(p => [p.name, `${p.cpu}% · ${fmtBytes(p.memory)}`]), factRow, fillFact, 1);
+        syncRows(apps, d.apps || [], appRow, fillApp);
+      };
+      imac = {parts: [el('h3', '', 'iMac'), card, el('h3', '', 'Apps'), apps], card, update};
+    }
+    if (!imac.card.isConnected) system.prepend(...imac.parts);
+    if (!systemTimer) { systemTimer = setInterval(systemTick, 2000); systemTick(); }
+  }
+  // One poll, only while Settings is open: stops when the panel leaves the page or the Settings tab, skips while hidden.
+  async function systemTick() {
+    const system = $('settings-system');
+    if (!imac || !imac.card.isConnected || tab !== 'settings') { clearInterval(systemTimer); systemTimer = null; return; }
+    if (system.hidden || document.hidden) return;
+    try { imac.update(await api('/api/system')); } catch (e) { /* offline: keep the last numbers */ }
   }
   function renderSystem() {
-    const system = $('settings-system'); system.replaceChildren();
+    const system = $('settings-system');
     renderImac(system);
-    const updates = section(system, 'Software updates');
-    const updateText = el('p', 'note'); updateText.id = 'update-status'; updateText.setAttribute('role', 'status');
-    updates.append(updateText);
-    const check = actionRow('Check for updates', 'Checks GitHub for a new TV version', () => fire('update_check'));
-    check.id = 'update-check'; updates.append(check);
-    const install = actionRow('Update now', 'Installs and restarts the TV app; playback stops', installUpdate);
-    install.id = 'update-install'; updates.append(install);
-    const feel = section(system, 'This phone');
-    const sw = switchRow('Remote haptics', canVibrate ? 'One light tap as you press' : 'This browser cannot vibrate', haptics, on => {
-      haptics = on;
-      try { localStorage.setItem('remote-haptics', on ? 'on' : 'off'); } catch (e) {}
-      haptic('press');
-    });
-    sw.id = 'haptics'; feel.append(sw);
-    const fix = section(system, 'Maintenance');
-    for (const [title, sub, action] of [['Restart current app', 'Closes and reopens what is on screen', 'restart_app'],
-      ['Recover TV Home', 'Brings Home back to the front', 'recover'], ['Restart desktop session', 'Stops the current video', 'restart_session']]) {
-      fix.append(actionRow(title, sub, () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }));
+    if (!$('system-status')) {
+      const updates = section(system, 'Software updates');
+      const updateText = el('p', 'note'); updateText.id = 'update-status'; updateText.setAttribute('role', 'status');
+      updates.append(updateText);
+      const check = actionRow('Check for updates', 'Checks GitHub for a new TV version', () => fire('update_check'));
+      check.id = 'update-check'; updates.append(check);
+      const install = actionRow('Update now', 'Installs and restarts the TV app; playback stops', installUpdate);
+      install.id = 'update-install'; updates.append(install);
+      const feel = section(system, 'This phone');
+      const sw = switchRow('Remote haptics', canVibrate ? 'One light tap as you press' : 'This browser cannot vibrate', haptics, on => {
+        haptics = on;
+        try { localStorage.setItem('remote-haptics', on ? 'on' : 'off'); } catch (e) {}
+        haptic('press');
+      });
+      sw.id = 'haptics'; feel.append(sw);
+      const fix = section(system, 'Maintenance');
+      for (const [title, sub, action] of [['Restart current app', 'Closes and reopens what is on screen', 'restart_app'],
+        ['Recover TV Home', 'Brings Home back to the front', 'recover'], ['Restart desktop session', 'Stops the current video', 'restart_session']]) {
+        fix.append(actionRow(title, sub, () => { if (action === 'restart_session' && !confirm('Restart the TV desktop? This stops the current video.')) return; fire(action, action === 'restart_session' ? {confirm: true} : {}); }));
+      }
+      system.append(el('h3', '', 'Status'));
+      const status = el('p', 'note'); status.id = 'system-status'; system.append(status);
     }
-    system.append(el('h3', '', 'Status'));
     const deg = v => (v == null ? '—' : Math.round(v) + '°C');
-    system.append(el('p', 'note', `${online ? 'Connected' : 'Offline'} · CPU ${deg(state && state.temperature)} · GPU ${deg(state && state.gpu_temperature)}`));
+    setText($('system-status'), `${online ? 'Connected' : 'Offline'} · CPU ${deg(state && state.temperature)} · GPU ${deg(state && state.gpu_temperature)}`);
     renderUpdateStatus();
   }
 
@@ -1524,8 +1564,9 @@
     notice.textContent = busy ? (u.message || 'Starting update…') : 'TV update available · Update now';
     notice.title = 'Installs the update and restarts the TV app. Playback will stop.';
     if ($('update-status')) $('update-status').textContent = u.message || 'Waiting for the controller…';
-    if ($('update-check')) $('update-check').disabled = !online || busy || !state?.updates;
-    if ($('update-install')) $('update-install').disabled = !online || busy || !u.can_update;
+    const off = (id, v) => { const b = $(id); if (b && b.disabled !== v) b.disabled = v; };
+    off('update-check', !online || busy || !state?.updates);
+    off('update-install', !online || busy || !u.can_update);
   }
 
   const data = r => (r && r.result) || {};
