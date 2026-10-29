@@ -190,6 +190,35 @@ class Sampler:
             self.cached = (now, result)
             return result
 
+    def system(self):
+        """The cheap, system-wide part of sample() (no per-process scan): cpu, memory, network, uptime,
+        disk and temperatures. Its rates use their own baseline, so it can run between full samples."""
+        with self.lock:
+            now = self.clock()
+            busy, total = parse_cpu(_read(self._path("proc/stat")))
+            rx, tx = parse_netdev(_read(self._path("proc/net/dev")))
+            prev = getattr(self, "sys_prev", None)
+            elapsed = now - prev["time"] if prev else 0
+            cpu = 0.0
+            if prev and total > prev["total"]:
+                cpu = 100.0 * (busy - prev["busy"]) / (total - prev["total"])
+            net = {"rx": 0, "tx": 0}
+            if prev and elapsed > 0:
+                net = {"rx": max(0, int((rx - prev["rx"]) / elapsed)), "tx": max(0, int((tx - prev["tx"]) / elapsed))}
+            self.sys_prev = {"time": now, "busy": busy, "total": total, "rx": rx, "tx": tx}
+            uptime = _read(self._path("proc/uptime")).split()
+            try:
+                disk = os.statvfs(self.root)
+                disk_info = {"total": disk.f_blocks * disk.f_frsize,
+                             "used": (disk.f_blocks - disk.f_bfree) * disk.f_frsize}
+            except OSError:
+                disk_info = None
+            cpu_temp, gpu_temp = temps(self.root)
+            return {"cpu": round(max(0.0, min(100.0, cpu)), 1), "cores": self.cores,
+                    "memory": parse_meminfo(_read(self._path("proc/meminfo"))),
+                    "uptime": int(float(uptime[0])) if uptime else None, "disk": disk_info, "network": net,
+                    "temperature": cpu_temp, "gpu_temperature": gpu_temp}
+
     def battery(self):
         for supply in sorted(self._path("sys/class/power_supply").glob("BAT*")):
             capacity = _read(supply / "capacity").strip()

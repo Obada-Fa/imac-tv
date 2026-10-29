@@ -16,7 +16,7 @@ import backgrounds  # noqa: E402
 import display  # noqa: E402
 import settings_model
 import widgets  # noqa: E402
-from widgets import glass, pairing  # noqa: E402
+from widgets import glass, pairing, vitals  # noqa: E402
 from screens import Screen, text_label, cmd, cover_pixbuf, ASSETS  # noqa: E402
 from media import config as media_config  # noqa: E402
 
@@ -801,6 +801,13 @@ class SettingsScreen(Screen):
         threading.Thread(target=work, daemon=True).start()
 
     def render_system(self):
+        self.section('Vitals')
+        card = vitals.VitalsCard(self.shell, self.backdrop, self.look)    # samples only while it is on screen
+        self.content.pack_start(card, False, False, 0)
+        self.section('Apps')
+        for box, row in card.app_rows():
+            self.content.pack_start(box, False, False, 0)
+            self.rows.append(row)
         self.section('Software updates')
         self.update_status = self.note('', top=0)
         self.update_check = self.button('Check for updates', 'Checks GitHub for a new TV version', False,
