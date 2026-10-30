@@ -40,6 +40,28 @@ def volume_osd(percent, muted=False, width=20):
     return f"Volume {'█' * filled}{'░' * (width - filled)} {percent}%"
 
 
+def _rounded_rect(w, h, r):
+    """ASS drawing of a rounded rectangle at the origin."""
+    k = r * 0.45  # distance from a corner to its Bezier control points
+    return (f"m {r} 0 l {w - r} 0 b {w - k} 0 {w} {k} {w} {r} l {w} {h - r} b {w} {h - k} {w - k} {h} {w - r} {h} "
+            f"l {r} {h} b {k} {h} 0 {h - k} 0 {h - r} l 0 {r} b 0 {k} {k} 0 {r} 0")
+
+
+def skip_button_ass(kind):
+    """Skip button for mpv's osd-overlay (ass-events, 1920x1080): Home's dark glass with the focused ice edge."""
+    w, h, r = 272, 80, 18
+    x, y = 1920 - 72 - w, 1080 - 112 - h
+    shape = _rounded_rect(w, h, r)
+    chevrons = "".join(f"m {cx} 0 l {cx + 12} 12 l {cx} 24 l {cx + 5} 24 l {cx + 17} 12 l {cx + 5} 0 " for cx in (0, 15))
+    place = f"\\an7\\pos({x},{y})\\shad0"
+    return "\n".join((
+        f"{{{place}\\bord0\\blur14\\1c&H000000&\\1a&H78&\\p1}}{shape}{{\\p0}}",
+        f"{{{place}\\bord2.5\\1c&H2E1F14&\\1a&H26&\\3c&HF8E8C0&\\3a&H00&\\p1}}{shape}{{\\p0}}",
+        f"{{\\an4\\pos({x + 40},{y + h / 2:g})\\bord0\\shad0\\fnInter\\fs34\\1c&HFFFFFF&\\1a&H00&}}Skip {kind.capitalize()}",
+        f"{{\\an4\\pos({x + w - 70},{y + h / 2:g})\\bord0\\shad0\\1c&HF8E8C0&\\1a&H00&\\p1}}{chevrons.strip()}{{\\p0}}",
+    ))
+
+
 def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_file=None):
     # --force-window=no: the window maps with the first video frame, so TV Home's loading screen
     # shows until then. --ontop: GNOME opens new windows behind the focused fullscreen Home.

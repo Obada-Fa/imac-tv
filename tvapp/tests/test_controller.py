@@ -897,8 +897,37 @@ class PlaybackPromptTests(unittest.TestCase):
         with mock.patch.object(server, "mpv", side_effect=self.fake(log)), mock.patch.object(server.time, "sleep", side_effect=stop_after), \
                 mock.patch.object(server.threading, "Thread"):
             c._flow_loop(c.generation)
-        self.assertIn(("show-text", "Press OK to skip intro", 5000), log)
+        self.assertIn(("osd-overlay", server.SKIP_OVERLAY_ID, "ass-events", server.player.skip_button_ass("intro"), 1920, 1080), log)
         self.assertIn(("keybind", "ENTER", "seek 40 absolute"), log)
+
+    def test_skip_button_hides_after_the_intro(self):
+        c = self.prepared(20.0)
+        log = []
+        calls = {"n": 0}
+
+        def advance(*_):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                self.pos = 50.0
+            if calls["n"] > 2:
+                c.generation += 1
+        with mock.patch.object(server, "mpv", side_effect=self.fake(log)), mock.patch.object(server.time, "sleep", side_effect=advance), \
+                mock.patch.object(server.threading, "Thread"):
+            self.pos = 20.0
+            c._flow_loop(c.generation)
+        self.assertIn(("osd-overlay", server.SKIP_OVERLAY_ID, "none", ""), log)
+
+    def test_skip_button_falls_back_to_text_on_old_mpv(self):
+        c = self.prepared(20.0)
+        log = []
+
+        def old_mpv(*args):
+            log.append(args)
+            if args[0] == "osd-overlay":
+                raise RuntimeError("Player: invalid parameter")
+        with mock.patch.object(server, "mpv", side_effect=old_mpv):
+            c._show_skip_button("intro")
+        self.assertIn(("show-text", "Press OK to skip intro", 5000), log)
 
     def test_exit_near_end_rolls_into_next_episode(self):
         c = self.prepared(990.0)

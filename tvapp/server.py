@@ -77,6 +77,7 @@ APPS = {
 }
 # The backlight node is root-only, so writes go through a fixed root helper that
 # setup-privileges.sh installs alongside the sudo rule.
+SKIP_OVERLAY_ID = 1
 BRIGHTNESS_HELPER = "/usr/local/sbin/imactv-brightness"
 LOG = logging.getLogger("imactv")
 TRACE = os.environ.get("IMACTV_TRACE")    # test hook: append timed events here (times the YouTube -> Home path)
@@ -1325,9 +1326,23 @@ class Controller:
         except (OSError, RuntimeError, ValueError, TimeoutError):
             pass
 
+    def _show_skip_button(self, kind):
+        try:
+            mpv("osd-overlay", SKIP_OVERLAY_ID, "ass-events", player.skip_button_ass(kind), 1920, 1080)
+        except RuntimeError:  # an mpv without osd-overlay
+            self._osd(f"Press OK to skip {kind}", 5000)
+        except (OSError, ValueError, TimeoutError):
+            pass
+
+    def _hide_skip_button(self):
+        try:
+            mpv("osd-overlay", SKIP_OVERLAY_ID, "none", "")
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            pass
+
     def _flow_loop(self, generation, cfg=None, interval=1.0):
         """Once a second: auto-skip, announce segments, drive the up-next / still-watching countdowns."""
-        bound = announced = None
+        announced = None
         while self._current(generation):
             time.sleep(interval)
             if not self._current(generation):
@@ -1349,17 +1364,18 @@ class Controller:
             if prompting:
                 continue
             seg = view["segment"]
-            if seg and announced != (seg["kind"], seg["end"]):
+            skipping = event and event[0] == "skip"  # auto-skip: don't flash the button
+            if seg and not skipping and announced != (seg["kind"], seg["end"]):
                 announced = (seg["kind"], seg["end"])
-                self._osd(f"Press OK to skip {seg['kind']}", 5000)
+                self._show_skip_button(seg["kind"])
                 for key in ("ENTER", "KP_ENTER"):  # a physical Enter key on the TV skips too
                     try:
                         mpv("keybind", key, f"seek {seg['end']} absolute")
-                        bound = True
                     except (OSError, RuntimeError, ValueError, TimeoutError):
                         pass
-            elif not seg and bound:
-                bound, announced = None, None
+            elif not seg and announced:
+                announced = None
+                self._hide_skip_button()
                 for key in ("ENTER", "KP_ENTER"):
                     try:
                         mpv("keybind", key, "ignore")
@@ -1459,6 +1475,7 @@ class Controller:
         if state == "still" and action == "ok":
             return {"ok": True, "handled": "continue"}
         if action == "ok" and seg:
+            self._hide_skip_button()
             self._run_event(("skip", seg["end"]), generation)
             return {"ok": True, "handled": "skip"}
         return None
@@ -2187,6 +2204,7 @@ class Controller:
                     seg = self.flow.segment(pos)
                 if not seg:
                     raise RuntimeError("Nothing to skip right now")
+                self._hide_skip_button()
                 mpv("seek", seg["end"], "absolute")
                 return {"ok": True}
             if action in ("upnext", "still_watching"):
