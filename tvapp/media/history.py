@@ -82,21 +82,15 @@ def cached_videos(kind, item_id):
 
 def _next_episode(item, videos):
     try:
-        season, episode = int(item["season"]), int(item["episode"])
-        found = videos(item["type"], item["id"]) or []
+        nxt = next_video(videos(item["type"], item["id"]), item["season"], item["episode"])
     except (KeyError, TypeError, ValueError):
         return None
-    wanted = (season, episode + 1)
-    for video in found:
-        try:
-            if (int(video.get("season")), int(video.get("episode"))) == wanted:
-                return {"type": item["type"], "id": item["id"], "video_id": f"{item['id']}:{wanted[0]}:{wanted[1]}",
-                        "season": wanted[0], "episode": wanted[1], "name": item.get("name"),
-                        "poster": item.get("poster"), "position": 0.0, "duration": 0.0,
-                        "finished": False, "updated": item.get("updated", 0)}
-        except (TypeError, ValueError, AttributeError):
-            continue
-    return None
+    if not nxt:
+        return None
+    return {"type": item["type"], "id": item["id"], "video_id": f"{item['id']}:{nxt['season']}:{nxt['episode']}",
+            "season": nxt["season"], "episode": nxt["episode"], "name": item.get("name"),
+            "poster": item.get("poster"), "position": 0.0, "duration": 0.0,
+            "finished": False, "updated": item.get("updated", 0)}
 
 
 def next_video(videos, season, episode):
@@ -122,23 +116,30 @@ def next_video(videos, season, episode):
 
 
 def continue_watching(limit=20, videos=cached_videos):
-    """Newest first: unfinished entries past 60s, plus the next episode after a finished one."""
+    """Newest first, one card per title. A series follows only its most recently watched episode, so an
+    older unfinished one never comes back: that episode if unfinished, else the one after it."""
     data = load()
     out, seen = [], set()
-    for item in sorted(data.values(), key=lambda i: i.get("updated", 0), reverse=True):
+    entries = sorted(data.values(), key=lambda i: i.get("updated", 0), reverse=True)
+    for item in entries:
+        series = item.get("type") == "series" and item.get("id")
+        key = item["id"] if series else item.get("video_id")
+        if key in seen:
+            continue
+        seen.add(key)
         if item.get("finished"):
-            if item.get("type") != "series":
+            if not series:
                 continue
             nxt = _next_episode(item, videos)
-            # Skip when that episode already has its own (newer or in-progress) entry.
-            if not nxt or nxt["video_id"] in data:
+            if not nxt:
                 continue
-            item = nxt
+            own = data.get(nxt["video_id"]) or {}
+            started = not own.get("finished") and _number(own.get("position")) > MIN_RESUME
+            item = own if started else nxt
         elif _number(item.get("position")) <= MIN_RESUME:
-            continue
-        if item["video_id"] in seen:
-            continue
-        seen.add(item["video_id"])
+            # A brief start only counts when the series was already under way.
+            if not series or sum(e.get("id") == key for e in entries) < 2:
+                continue
         out.append(item)
         if len(out) >= limit:
             break

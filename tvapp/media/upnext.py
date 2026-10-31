@@ -78,6 +78,10 @@ class Flow:
         seg = segments.active(self.segments, position)
         return seg if seg and seg["kind"] in SKIP_KINDS else None
 
+    def in_credits(self, position):
+        seg = segments.active(self.segments, position)
+        return bool(seg and seg["kind"] == "credits")
+
     def view(self, position):
         """What status() shows the phone."""
         seg = self.segment(position)

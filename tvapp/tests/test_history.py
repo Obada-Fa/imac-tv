@@ -63,7 +63,33 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(out[0]["poster"], "http://p")
         self.assertEqual(history.continue_watching(videos=lambda k, i: [VIDEOS[0]]), [])
         history.record(ep(3, position=990, updated=11))
-        self.assertEqual([i["video_id"] for i in history.continue_watching(videos=lambda k, i: VIDEOS)], ["tt1:1:2"])
+        self.assertEqual(history.continue_watching(videos=lambda k, i: VIDEOS), [])  # the last one watched was the finale
+
+    def continued(self):
+        videos = [{"season": 1, "episode": e} for e in range(1, 11)] + [{"season": 2, "episode": 1}]
+        return [i["video_id"] for i in history.continue_watching(videos=lambda k, i: videos)]
+
+    def test_gap_follows_the_latest_episode_not_the_old_unfinished_one(self):
+        history.record(ep(3, position=500, updated=1))
+        history.record(ep(8, position=990, updated=2))
+        self.assertEqual(self.continued(), ["tt1:1:9"])
+        history.record(ep(9, position=400, updated=3))
+        self.assertEqual(self.continued(), ["tt1:1:9"])
+
+    def test_gap_when_the_latest_is_unfinished_or_barely_started(self):
+        history.record(ep(3, position=500, updated=1))
+        history.record(ep(8, position=20, updated=2))
+        self.assertEqual(self.continued(), ["tt1:1:8"])
+
+    def test_after_a_season_finale_goes_to_the_next_season(self):
+        history.record(ep(3, position=500, updated=1))
+        history.record(ep(10, position=990, updated=2))
+        self.assertEqual(self.continued(), ["tt1:2:1"])
+
+    def test_other_titles_keep_their_own_cards(self):
+        history.record(ep(3, position=500, updated=1))
+        history.record(dict(ep(5, position=500, updated=2), id="tt9", video_id="tt9:1:5"))
+        self.assertEqual(self.continued(), ["tt9:1:5", "tt1:1:3"])
 
 
 class NextVideoTests(unittest.TestCase):

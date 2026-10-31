@@ -927,7 +927,30 @@ class PlaybackPromptTests(unittest.TestCase):
                 raise RuntimeError("Player: invalid parameter")
         with mock.patch.object(server, "mpv", side_effect=old_mpv):
             c._show_skip_button("intro")
-        self.assertIn(("show-text", "Press OK to skip intro", 5000), log)
+        self.assertIn(("show-text", "Skip intro on the phone", 5000), log)
+
+    def end_at(self, live_pos, session_pos=None):
+        """End playback with mpv still reporting live_pos; credits run from 800 s of 1000 s."""
+        c = self.prepared(live_pos)
+        c.session["pos"], c.session["dur"] = live_pos if session_pos is None else session_pos, 1000.0
+        with c.lock:
+            c.flow.begin(self.NEXT, [{"kind": "credits", "start": 800.0, "end": 1000.0}], {})
+        answers = {"time-pos": live_pos, "duration": 1000.0}
+        with mock.patch.object(server, "mpv", side_effect=lambda *a: answers.get(a[-1])):
+            c._end_playback()
+        return server.history.load()["tt9:1:2"]
+
+    def test_leaving_during_credits_counts_as_finished(self):
+        self.assertTrue(self.end_at(805.0)["finished"])
+        self.assertEqual(server.history.resume_position("tt9:1:2"), 0)
+
+    def test_autoplay_keeps_episode_watched_while_mpv_is_still_at_the_credits(self):
+        self.assertTrue(self.end_at(795.0, session_pos=1000.0)["finished"])
+
+    def test_leaving_before_the_credits_still_resumes(self):
+        entry = self.end_at(700.0)
+        self.assertFalse(entry["finished"])
+        self.assertEqual(server.history.resume_position("tt9:1:2"), 700.0)
 
     def test_exit_near_end_rolls_into_next_episode(self):
         c = self.prepared(990.0)

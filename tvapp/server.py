@@ -968,14 +968,18 @@ class Controller:
         if not session and not self._mpv_active():
             return False
         if session:
+            watched = session["dur"] > 0 and session["pos"] >= session["dur"]  # autoplay counted it as watched
             try:
                 pos, dur = mpv("get_property", "time-pos"), mpv("get_property", "duration")
-                if isinstance(pos, (int, float)):
+                if isinstance(pos, (int, float)) and not watched:
                     session["pos"] = float(pos)
                 if isinstance(dur, (int, float)) and dur > 0:
                     session["dur"] = float(dur)
             except (OSError, RuntimeError, ValueError, TimeoutError):
                 pass
+            with self.lock:
+                if self.flow.in_credits(session["pos"]):  # leaving during the credits: a replay starts over
+                    session["pos"] = max(session["pos"], session["dur"])
             entry = dict(session["entry"], position=session["pos"], duration=session["dur"])
             if entry["position"] > 0 or entry["duration"] > 0:
                 try:
@@ -1330,7 +1334,7 @@ class Controller:
         try:
             mpv("osd-overlay", SKIP_OVERLAY_ID, "ass-events", player.skip_button_ass(kind), 1920, 1080)
         except RuntimeError:  # an mpv without osd-overlay
-            self._osd(f"Press OK to skip {kind}", 5000)
+            self._osd(f"Skip {kind} on the phone", 5000)
         except (OSError, ValueError, TimeoutError):
             pass
 
