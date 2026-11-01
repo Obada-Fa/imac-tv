@@ -524,6 +524,7 @@
       if (view !== 'browse') { closeSearch(); showTab('remote'); }
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
+    $('remote').classList.toggle('media-first', view !== 'browse');
     renderYoutube(s.youtube_now, view);
     renderViz(s.visualizer, view);
     $('apps').hidden = view === 'playing';

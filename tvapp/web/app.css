@@ -93,6 +93,7 @@ input[type=range]::-moz-range-thumb{width:18px;height:16px;border:0;border-radiu
 
 /* ---- Remote: the honeycomb ---- */
 .controls{display:flex;flex-direction:column;gap:14px;flex:1;min-height:0}
+.media-first>.masthead{order:-2}.media-first>.controls{order:-1;flex:none}
 .browse{display:flex;flex-direction:column;gap:12px;margin-top:auto}
 .hive{position:relative;width:min(100%,var(--hive-w,346px));aspect-ratio:var(--hive-ar,1.42);margin:4px auto 0}
 .dpad{position:absolute;inset:0;pointer-events:none}
