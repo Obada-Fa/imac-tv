@@ -58,7 +58,8 @@ class ViewTests(unittest.TestCase):
     PAGES = [{"id": "A1B2C3D4", "title": "One", "url": "u1"}, {"id": "A1B2C3D5", "title": "Two", "url": "u2"}]
 
     def active(self, title):
-        with mock.patch.object(browser, "tabs", return_value=self.PAGES):
+        with mock.patch.object(browser, "tabs", return_value=self.PAGES), \
+                mock.patch.object(browser, "field_focused", return_value=False):
             return [t["id"] for t in browser.view(title)["tabs"] if t["active"]]
 
     def test_window_title_marks_the_tab_in_front(self):
@@ -66,6 +67,23 @@ class ViewTests(unittest.TestCase):
 
     def test_unknown_title_still_marks_one_tab(self):
         self.assertEqual(self.active("Something else"), ["A1B2C3D4"])
+
+    def test_view_says_when_a_page_field_has_focus(self):
+        with mock.patch.object(browser, "tabs", return_value=self.PAGES), \
+                mock.patch.object(browser, "field_focused", return_value=True) as check:
+            self.assertTrue(browser.view("Two - Brave")["typing"])
+        self.assertEqual(check.call_args.args[0], "A1B2C3D5")
+
+    def test_field_check_survives_a_dead_tab(self):
+        with mock.patch.object(browser, "_page_command", side_effect=OSError):
+            self.assertFalse(browser.field_focused("A1B2C3D4"))
+
+    def test_server_frames_of_each_length_are_read(self):
+        sock = mock.Mock()
+        self.assertEqual(browser._ws_read(bytes([0x81, 2]) + b"ok", sock), b"ok")
+        self.assertEqual(browser._ws_read(bytes([0x81, 126, 1, 44]) + b"x" * 300, sock), b"x" * 300)
+        sock.recv.side_effect = [b"lo", b""]
+        self.assertEqual(browser._ws_read(bytes([0x81, 5]) + b"hel", sock), b"hello")
 
     def test_no_browser_means_no_view(self):
         with mock.patch.object(browser, "tabs", side_effect=OSError):

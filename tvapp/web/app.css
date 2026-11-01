@@ -422,3 +422,10 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .web-on .clock{font-size:30px}.web-on .masthead{margin-bottom:4px}
 .hive.discord.webnav-on.pointer{aspect-ratio:auto;height:max(240px,calc(100dvh - 460px))}
 .hive.webnav-on.pointer .pad span,.hive.webnav-on.pointer .pad small{margin-right:48px}
+.web-on #type-open{display:none}
+.webrecent{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+.webrecent button{flex:none;min-height:40px;max-width:200px;padding:0 14px;border-radius:20px;border:1px solid var(--hair);background:rgba(22,29,45,.72);color:var(--ink2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.webtyping{display:flex;gap:8px}
+.webtyping input{flex:1;min-width:0;min-height:48px;font-size:16px;padding:0 14px;border-radius:14px;border:1px solid rgba(192,232,248,.7);background:rgba(192,232,248,.08);color:#fff}
+.webtyping button{min-height:48px;padding:0 16px;border-radius:14px;font-size:14px;font-weight:500}
+.web-typing-on .hive.discord.webnav-on.pointer{height:max(200px,calc(100dvh - 518px))}

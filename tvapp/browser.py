@@ -23,6 +23,9 @@ SHORTCUTS = {"back": "alt+Left", "forward": "alt+Right", "reload": "ctrl+r", "zo
              "zoom_out": "ctrl+minus", "zoom_reset": "ctrl+0"}
 PAGES = {"shields": "brave://settings/shields", "settings": "brave://settings", "bookmarks": "brave://bookmarks",
          "history": "brave://history", "downloads": "brave://downloads"}
+FIELD_CHECK = ("(()=>{let e=document.activeElement;while(e&&e.shadowRoot&&e.shadowRoot.activeElement)e=e.shadowRoot.activeElement;"
+               "if(!e)return false;if(e.isContentEditable||e.tagName==='TEXTAREA')return true;"
+               "return e.tagName==='INPUT'&&!/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/i.test(e.type)})()")
 _DOMAIN = re.compile(r"^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?([/?#]\S*)?$")
 _TAB_ID = re.compile(r"^[0-9A-Fa-f-]{8,64}$")
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -96,14 +99,15 @@ def view(window_title, timeout=0.4):
         return None
     title = re.sub(r" - Brave$", "", window_title or "")
     front = next((p for p in pages if p["title"] == title), pages[0] if pages else None)
-    return {"tabs": [{**p, "active": p is front} for p in pages]}
+    return {"tabs": [{**p, "active": p is front} for p in pages],
+            "typing": bool(front) and field_focused(front["id"], timeout)}
 
 
-def navigate(tab_id, url):
-    """Load an address in an open tab, so its Back history stays. One command over the tab's DevTools WebSocket."""
+def _page_command(tab_id, method, params, timeout=2):
+    """One command over the tab's DevTools WebSocket; returns its "result"."""
     if not isinstance(tab_id, str) or not _TAB_ID.match(tab_id):
         raise ValueError("Unknown tab")
-    with socket.create_connection(("127.0.0.1", PORT), timeout=2) as sock:
+    with socket.create_connection(("127.0.0.1", PORT), timeout=timeout) as sock:
         key = base64.b64encode(os.urandom(16)).decode()
         sock.sendall((f"GET /devtools/page/{tab_id} HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nUpgrade: websocket\r\n"
                       f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
@@ -115,8 +119,43 @@ def navigate(tab_id, url):
             reply += chunk
         if b" 101 " not in reply.split(b"\r\n", 1)[0]:
             raise OSError("The tab refused the connection")
-        sock.sendall(_ws_frame(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}).encode()))
-        sock.recv(4096)             # the answer: nothing in it changes what happens next
+        sock.sendall(_ws_frame(json.dumps({"id": 1, "method": method, "params": params}).encode()))
+        return json.loads(_ws_read(reply.split(b"\r\n\r\n", 1)[1], sock)).get("result") or {}
+
+
+def navigate(tab_id, url):
+    """Load an address in an open tab, so its Back history stays."""
+    _page_command(tab_id, "Page.navigate", {"url": url})
+
+
+def field_focused(tab_id, timeout=0.4):
+    """Whether a text field on the page has the focus, so the phone can offer its keyboard."""
+    try:
+        reply = _page_command(tab_id, "Runtime.evaluate", {"expression": FIELD_CHECK, "returnByValue": True}, timeout)
+    except (OSError, ValueError):
+        return False
+    return (reply.get("result") or {}).get("value") is True
+
+
+def _ws_read(data, sock):
+    """The payload of one unmasked server frame; `data` is what already came after the handshake."""
+    def need(count):
+        nonlocal data
+        while len(data) < count:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise OSError("The tab closed the connection")
+            data += chunk
+    need(2)
+    size, start = data[1] & 0x7F, 2
+    if size == 126:
+        need(4)
+        size, start = struct.unpack(">H", data[2:4])[0], 4
+    elif size == 127:
+        need(10)
+        size, start = struct.unpack(">Q", data[2:10])[0], 10
+    need(start + size)
+    return data[start:start + size]
 
 
 def _ws_frame(payload):

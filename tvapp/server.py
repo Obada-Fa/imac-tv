@@ -2381,7 +2381,7 @@ class Controller:
     def _browser_view(self, win):
         """Cached: /api/state is polled by every phone, and this is a local HTTP call to Brave."""
         at, view = self._browser_cache
-        if time.monotonic() - at > 1.5:
+        if time.monotonic() - at > 1:
             view = browser.view((win or {}).get("title"))
             self._browser_cache = (time.monotonic(), view)
         return view

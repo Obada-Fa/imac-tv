@@ -958,7 +958,34 @@
     const front = webFront(s);
     $('web-tab-count').textContent = webTabs(s).length || '–';
     webUrl.placeholder = (front && front.title) || 'Search or type a website';
+    const typing = Boolean(s.browser && s.browser.typing);
+    const typed = $('web-typing');
+    $('remote').classList.toggle('web-typing-on', typing);
+    if (typed.hidden === typing) {
+      typed.hidden = !typing;
+      if (typing) { haptic('press'); try { $('web-text').focus(); } catch (x) {} }   // phones may still want a tap
+    }
     if (sheetName === 'web') renderWebSheet();
+  }
+  // Sites this phone opened from the address bar, offered while the bar is in use
+  function recentSites() {
+    try { return JSON.parse(localStorage.getItem('web-recent') || '[]'); } catch (x) { return []; }
+  }
+  function rememberSite(text) {
+    if (!/^(https?:\/\/)?[\w-]+(\.[\w-]+)+([:/?#]\S*)?$/.test(text)) return;   // a search isn't a site
+    const site = text.replace(/^https?:\/\/(www\.)?/, '');
+    try { localStorage.setItem('web-recent', JSON.stringify([site, ...recentSites().filter(r => r !== site)].slice(0, 6))); } catch (x) {}
+  }
+  function drawRecent() {
+    const box = $('web-recent'), sites = recentSites();
+    box.textContent = '';
+    box.hidden = !sites.length;
+    for (const site of sites) {
+      const b = el('button'); b.type = 'button'; b.textContent = site;
+      b.addEventListener('pointerdown', e => e.preventDefault());   // keeps the bar focused until the tap lands
+      b.onclick = () => { rememberSite(site); webDo('open', {text: site}); webUrl.blur(); };
+      box.append(b);
+    }
   }
   function renderWebSheet() {
     const content = $('sheet-content'), tabs = webTabs(state);
@@ -999,12 +1026,25 @@
   webUrl.onfocus = () => {     // like a phone browser: the current address, ready to be typed over
     const front = webFront(state);
     if (front && !webUrl.value) { webUrl.value = front.url; webUrl.select(); }
+    drawRecent();
   };
-  webUrl.onblur = () => { webUrl.value = ''; };
+  webUrl.onblur = () => { webUrl.value = ''; $('web-recent').hidden = true; };
+  $('web-typing').onsubmit = e => {
+    e.preventDefault();
+    const box = $('web-text'), text = box.value;
+    if (text) send('type', {text}).then(() => { box.value = ''; }).catch(() => {});
+    else fire('enter');
+  };
+  $('web-enter').addEventListener('pointerdown', e => e.preventDefault());
+  $('web-enter').onclick = () => {
+    const box = $('web-text'), text = box.value;
+    box.value = '';
+    (text ? send('type', {text}) : Promise.resolve()).then(() => send('enter')).catch(() => {});
+  };
   $('web-form').onsubmit = e => {
     e.preventDefault();
     const text = webUrl.value.trim();
-    if (text) webDo('open', {text});
+    if (text) { rememberSite(text); webDo('open', {text}); }
     webUrl.blur();
   };
 
