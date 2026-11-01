@@ -1,0 +1,8 @@
+{
+  "interval": {"type": "slider", "value": 5, "min": 1, "max": 60, "step": 1, "text": "Minutes per picture"},
+  "dim": {"type": "slider", "value": 0, "min": 0, "max": 60, "step": 5, "text": "Darken picture (%)"},
+  "brightness": {"type": "slider", "value": 100, "min": 20, "max": 200, "step": 10, "text": "Runner brightness (%)"},
+  "fps": {"type": "slider", "value": 30, "min": 10, "max": 60, "step": 5, "text": "Max FPS with music"},
+  "idle_runners": {"type": "checkbox", "value": true, "text": "Keep runners drifting without music"},
+  "shuffle": {"type": "checkbox", "value": true, "text": "Shuffle pictures"}
+}

@@ -1,0 +1,17 @@
+{
+  "title": "Retro Circuit",
+  "description": "Retro pictures with music-reactive light runners tracing their contours.",
+  "type": "web",
+  "file": "index.html",
+  "preview": "preview.jpg",
+  "general": {
+    "supportsaudioprocessing": true,
+    "properties": {
+      "interval": {"order": 100, "text": "Minutes per picture", "type": "slider", "value": 5, "min": 1, "max": 60, "step": 1},
+      "dim": {"order": 101, "text": "Darken picture (%)", "type": "slider", "value": 0, "min": 0, "max": 60, "step": 5},
+      "brightness": {"order": 102, "text": "Runner brightness (%)", "type": "slider", "value": 100, "min": 20, "max": 200, "step": 10},
+      "idle_runners": {"order": 103, "text": "Keep runners drifting without music", "type": "bool", "value": true},
+      "shuffle": {"order": 104, "text": "Shuffle pictures", "type": "bool", "value": true}
+    }
+  }
+}

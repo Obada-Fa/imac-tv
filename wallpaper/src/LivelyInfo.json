@@ -1,0 +1,13 @@
+{
+  "AppVersion": "2.0.0.0",
+  "Title": "Retro Circuit",
+  "Desc": "Retro pictures with music-reactive light runners tracing their contours.",
+  "Author": "iMac TV",
+  "License": "Pictures: see images/CREDITS.txt",
+  "Contact": "",
+  "Type": 1,
+  "Thumbnail": "preview.jpg",
+  "FileName": "index.html",
+  "Arguments": "--audio",
+  "IsAbsolutePath": false
+}
