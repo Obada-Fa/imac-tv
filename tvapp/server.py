@@ -178,6 +178,25 @@ def fullscreen_state(window_id):
     return "_NET_WM_STATE_FULLSCREEN" in state
 
 
+def pin_youtube_volume(home=None):
+    """VacuumTube keeps its own saved player volume. Reset it to 100 so only the system volume sets the level.
+
+    Call this only before launching: a running VacuumTube overwrites the file from memory."""
+    home = Path(home) if home else Path.home()
+    for folder in (home / ".config/VacuumTube", home / ".var/app/rocks.shy.VacuumTube/config/VacuumTube"):
+        path = folder / "config.json"
+        try:
+            config = json.loads(path.read_text())
+            if not isinstance(config, dict) or config.get("volume", 100) == 100:
+                continue
+            config["volume"] = 100
+            temp = path.with_name("config.json.imactv-tmp")
+            temp.write_text(json.dumps(config, indent=4))
+            temp.replace(path)
+        except (OSError, ValueError):
+            continue
+
+
 def backlight_device():
     """The panel backlight node, preferring the built-in eDP display."""
     try:
@@ -753,6 +772,8 @@ class Controller:
             win = window_for(app)
             if not win:
                 app_cmd = resolve_app_command(app)
+                if app == "youtube":
+                    pin_youtube_volume()
                 subprocess.Popen(app_cmd, env=DISPLAY_ENV, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)

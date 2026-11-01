@@ -111,6 +111,19 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(info["signal"], 85)
             self.assertEqual(info["ip"], "192.168.68.124")
 
+    def test_youtube_volume_is_pinned_to_full(self):
+        with tempfile.TemporaryDirectory() as home:
+            native = Path(home, ".config/VacuumTube/config.json")
+            flatpak = Path(home, ".var/app/rocks.shy.VacuumTube/config/VacuumTube/config.json")
+            for path in (native, flatpak):
+                path.parent.mkdir(parents=True)
+            native.write_text('{"volume": 30, "adblock": false}')
+            flatpak.write_text("not json")
+            server.pin_youtube_volume(home)
+            self.assertEqual(server.json.loads(native.read_text()), {"volume": 100, "adblock": False})
+            self.assertEqual(flatpak.read_text(), "not json")   # a file we cannot read is left alone
+            self.assertEqual(sorted(p.name for p in native.parent.iterdir()), ["config.json"])
+
     def test_external_screen_has_no_brightness_control(self):
         with mock.patch.object(server.display, "external_connected", return_value=True):
             self.assertEqual(server.brightness(), {"level": None, "available": False, "external": True})
