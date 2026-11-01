@@ -405,7 +405,7 @@
     return [lang, detail].filter(Boolean).join(' · ') || `Track ${t.id}`;
   };
   const isPreferred = t => PREFERRED.includes(LANG[String(t.lang || '').toLowerCase()]);
-  let sigs = {}, subDelay = 0, searching = false, sent = '', typeTimer = null;
+  let sigs = {}, subDelay = 0, delayTouched = 0, delayWanted = null, delaySending = false, searching = false, sent = '', typeTimer = null;
 
   function chip(label, on, fn) {
     const b = document.createElement('button');
@@ -587,7 +587,8 @@
       const audSel = labelled(audio).find(([t]) => t.selected);
       $('pick-audio').hidden = audio.length < 2;
       $('pick-audio-label').textContent = (audSel ? audSel[1] : audio.length ? 'Auto' : '—') + ' ▾';
-      $('np-delay') && ($('np-delay').textContent = delayText());
+      if (Date.now() - delayTouched > 1500) subDelay = Number(pb.sub_delay) || 0;   // a poll must not undo a change still on its way
+      showDelay();
       if (sheetName === 'subs' || sheetName === 'audio') renderTrackSheet();
     }
     $('search-open').classList.toggle('on', searching);
@@ -639,7 +640,32 @@
     const p = state && state.playback; if (!p || !p.active) return;
     fire('seek', {seconds: Math.max(0, Math.min(p.duration || 86400, (p.position || 0) + Number(b.dataset.skip)))});
   });
-  const delayText = () => `Delay ${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)}s`;
+  function showDelay() {
+    const label = $('np-delay'), range = $('delay-range');
+    if (!label) return;
+    label.textContent = `${subDelay > 0 ? '+' : ''}${subDelay.toFixed(1)} s`;
+    range.value = subDelay;
+    const at = (Number(range.value) + 10) * 5;   // the bar grows out of the centre, where 0 is
+    range.style.setProperty('--from', Math.min(at, 50) + '%');
+    range.style.setProperty('--to', Math.max(at, 50) + '%');
+    $('delay-reset').disabled = subDelay === 0;
+  }
+  // One request at a time, always the newest value, so a drag can't queue up or land out of order.
+  async function setDelay(seconds) {
+    subDelay = Math.max(-60, Math.min(60, Math.round(seconds * 10) / 10));
+    delayTouched = Date.now();
+    showDelay();
+    delayWanted = subDelay;
+    if (delaySending) return;
+    delaySending = true;
+    while (delayWanted !== null) {
+      const value = delayWanted;
+      delayWanted = null;
+      await send('subdelay', {seconds: value}).catch(() => {});
+    }
+    delaySending = false;
+    delayTouched = Date.now();
+  }
   $('np-next').onclick = () => { fire('next_episode'); };
   $('pick-sub').onclick = () => openSheet('subs');
   $('pick-audio').onclick = () => openSheet('audio');
@@ -670,14 +696,17 @@
     const parts = [list];
     if (kind === 'subs') {
       const d = document.createElement('div'); d.className = 'delay';
-      d.innerHTML = '<button type="button" aria-label="Subtitles earlier">−</button><span id="np-delay"></span><button type="button" aria-label="Subtitles later">＋</button>';
-      const [minus, , plus] = d.children, label = d.children[1];
-      label.textContent = delayText();
-      const bump = x => () => { subDelay = Math.round((subDelay + x) * 10) / 10; label.textContent = delayText(); fire('subdelay', {delta: x}); };
-      minus.onclick = bump(-0.1); plus.onclick = bump(0.1);
-      parts.push(d);
+      d.innerHTML = `<div class="delay-head"><h3>Subtitle delay</h3><button type="button" id="delay-reset">Reset</button></div>
+        <div class="delay-steps"><button type="button" data-step="-0.5">−0.5</button><button type="button" data-step="-0.1">−0.1</button><output id="np-delay"></output><button type="button" data-step="0.1">+0.1</button><button type="button" data-step="0.5">+0.5</button></div>
+        <input id="delay-range" type="range" min="-10" max="10" step="0.1" value="0" aria-label="Subtitle delay in seconds">
+        <div class="delay-ends"><span>Earlier</span><span>Later</span></div>`;
+      d.querySelectorAll('[data-step]').forEach(b => b.onclick = () => setDelay(subDelay + Number(b.dataset.step)));
+      d.querySelector('#delay-reset').onclick = () => setDelay(0);
+      d.querySelector('#delay-range').addEventListener('input', e => setDelay(Number(e.target.value)));
+      parts.unshift(d);
     }
     content.replaceChildren(...parts);
+    showDelay();
   }
 
   async function refresh() {

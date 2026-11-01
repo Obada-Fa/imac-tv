@@ -367,9 +367,10 @@ class PlayMediaTests(unittest.TestCase):
 
     def test_playback_reports_lang_and_audio(self):
         tracks = [{"type": "sub", "id": 1, "lang": "ara", "selected": True}, {"type": "audio", "id": 1, "lang": "eng", "title": "Stereo"}]
-        answers = {"time-pos": 3, "duration": 9, "pause": False, "media-title": "T", "track-list": tracks}
+        answers = {"time-pos": 3, "duration": 9, "pause": False, "media-title": "T", "track-list": tracks, "sub-delay": 1.5}
         with mock.patch.object(server, "mpv", side_effect=lambda cmd, prop: answers[prop]):
             out = server.playback()
+        self.assertEqual(out["sub_delay"], 1.5)
         self.assertEqual(out["subtitles"][0]["lang"], "ara")
         self.assertEqual(out["audio"], [{"id": 1, "title": "Stereo", "lang": "eng", "selected": False}])
 
@@ -535,6 +536,20 @@ class LifecycleTests(unittest.TestCase):
         with mock.patch.object(server, "playback", return_value={"active": False}), mock.patch.object(server, "mpv") as mpv:
             with self.assertRaisesRegex(RuntimeError, "only while MPV"):
                 c.action("set_paused", {"paused": True})
+            mpv.assert_not_called()
+
+    def test_subtitle_delay_is_set_to_an_exact_value(self):
+        c = self.controller()
+        with mock.patch.object(server, "playback", return_value={"active": True}), mock.patch.object(server, "mpv") as mpv:
+            for seconds in (1.3, -10, 0):
+                c.action("subdelay", {"seconds": seconds})
+            self.assertEqual(mpv.call_args_list, [mock.call("set_property", "sub-delay", 1.3),
+                                                mock.call("set_property", "sub-delay", -10),
+                                                mock.call("set_property", "sub-delay", 0)])
+            mpv.reset_mock()
+            for bad in (None, "1", True, 61, -61, float("nan")):
+                with self.assertRaises(ValueError):
+                    c.action("subdelay", {"seconds": bad})
             mpv.assert_not_called()
 
     def test_notification_youtube_transport_uses_explicit_commands(self):

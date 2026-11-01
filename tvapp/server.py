@@ -272,7 +272,8 @@ def playback():
                      "lang": t.get("lang"), "selected": bool(t.get("selected"))}
                     for t in tracks if t.get("type") == kind]
         return {"active": True, "title": title, "position": pos, "duration": duration,
-                "paused": paused, "subtitles": listing("sub"), "audio": listing("audio")}
+                "paused": paused, "subtitles": listing("sub"), "audio": listing("audio"),
+                "sub_delay": mpv("get_property", "sub-delay") or 0}
     except (OSError, RuntimeError, ValueError, TimeoutError):
         return {"active": False}
 
@@ -2306,10 +2307,10 @@ class Controller:
                         raise ValueError("Invalid track")
                     mpv("set_property", "sid" if action == "subtitle" else "aid", value)
                 else:
-                    delta = float(params.get("delta", 0))
-                    if abs(delta) > 5:
+                    seconds = params.get("seconds")
+                    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not -60 <= seconds <= 60:
                         raise ValueError("Invalid subtitle delay")
-                    mpv("add", "sub-delay", delta)
+                    mpv("set_property", "sub-delay", seconds)
                 return {"ok": True}
             if action == "skip_segment":
                 pos = mpv("get_property", "time-pos") or 0

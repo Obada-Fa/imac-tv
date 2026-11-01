@@ -222,7 +222,16 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .tracklist{display:flex;flex-direction:column;gap:2px}
 .tracklist button{width:100%;text-align:left;border-radius:12px;padding:0 14px;font-size:15px;min-height:50px;background:none;border-color:transparent;display:flex;align-items:center}
 .tracklist button.on{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.08)}
-.delay{display:flex;align-items:center;gap:12px;margin-top:16px}.delay button{width:52px;font-size:20px;padding:0}.delay span{flex:1;text-align:center;font-size:13px;color:var(--ink2)}
+.delay{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--hair-soft)}
+.delay-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.delay-head h3{margin:0}
+.delay-head button{min-height:40px;padding:0 14px;font-size:14px}.delay-head button:disabled{opacity:.4}
+.delay-steps{display:flex;align-items:center;gap:6px;margin-top:8px}.delay-steps button{flex:none;width:52px;min-height:46px;padding:0;font-size:14px;font-variant-numeric:tabular-nums}
+.delay-steps output{flex:1;min-width:0;text-align:center;font-size:24px;font-weight:300;white-space:nowrap;font-variant-numeric:tabular-nums}
+.delay input[type=range]{display:block;width:100%;height:44px;margin-top:4px}
+.delay input[type=range]::-webkit-slider-runnable-track{background:linear-gradient(90deg,rgba(255,255,255,.18) var(--from,50%),rgba(var(--accent-rgb),.85) var(--from,50%),rgba(var(--accent-rgb),.85) var(--to,50%),rgba(255,255,255,.18) var(--to,50%))}
+.delay input[type=range]::-moz-range-track{background:linear-gradient(90deg,rgba(255,255,255,.18) var(--from,50%),rgba(var(--accent-rgb),.85) var(--from,50%),rgba(var(--accent-rgb),.85) var(--to,50%),rgba(255,255,255,.18) var(--to,50%))}
+.delay input[type=range]::-moz-range-progress{background:transparent}
+.delay-ends{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3)}
 .order-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--hair-soft)}
 .order-row span{flex:1;min-width:0;font-size:15px}.order-row button{min-width:48px;padding:6px 10px;font-size:14px}
 #sheet-content>button{width:100%;margin-top:14px}
