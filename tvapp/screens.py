@@ -229,6 +229,11 @@ def search_items(kind, query):
     return [i for i in (item_from_meta(m, kind) for m in addons.search(kind, query)) if i]
 
 
+def twitch_search_items(query):
+    import twitch
+    return [twitch_stream_item(st) for st in twitch.find(query)]
+
+
 # ---------------------------------------------------------------- network helpers
 
 def local_api(path):
@@ -854,46 +859,76 @@ class BrowseScreen(RailsScreen):
         return groups[0][0] if groups else None
 
 
-def twitch_items():
-    """Top live Twitch streams as Rail items (the streamer is the card name, the stream title the hero copy)."""
+def twitch_count(viewers):
+    return f"{viewers / 1000:.1f}K".replace(".0K", "K") if viewers >= 1000 else str(viewers)
+
+
+def twitch_stream_item(st):
+    """One live stream as a Rail item (the streamer is the card name, the stream title the hero copy)."""
+    return {"type": "", "kicker": "LIVE ON TWITCH", "id": st["login"], "login": st["login"],
+            "name": st["name"], "subtitle": " · ".join(p for p in (f"{twitch_count(st['viewers'])} watching", st["game"]) if p),
+            "description": st["title"], "background": st["thumbnail"] or None}
+
+
+def twitch_items(game=None):
+    """Top live Twitch streams (in one category when `game` is given) as Rail items."""
     import twitch
-    out = []
-    for st in twitch.top_streams():
-        viewers = st["viewers"]
-        count = f"{viewers / 1000:.1f}K".replace(".0K", "K") if viewers >= 1000 else str(viewers)
-        out.append({"type": "", "kicker": "LIVE ON TWITCH", "id": st["login"], "login": st["login"],
-                    "name": st["name"], "subtitle": " · ".join(p for p in (f"{count} watching", st["game"]) if p),
-                    "description": st["title"], "background": st["thumbnail"] or None})
-    return out
+    return [twitch_stream_item(st) for st in (twitch.game_streams(game) if game else twitch.top_streams())]
+
+
+def twitch_game_items():
+    """Top Twitch categories as poster cards; OK opens that category's live streams."""
+    import twitch
+    return [{"type": "", "kicker": "TWITCH CATEGORY", "game": g["name"], "name": g["title"], "poster": g["box_art"] or None,
+             "subtitle": f"{twitch_count(g['viewers'])} watching", "description": "Press OK for live streams in " + g["title"]}
+            for g in twitch.top_games()]
+
+
+TWITCH_SEARCH = {"type": "", "kicker": "TWITCH", "name": "Search Twitch", "twitch_search": True,
+                 "description": "Find a live channel by name. You can also type in the phone's Search tab."}
 
 
 class TwitchScreen(RailsScreen):
-    """Top live streams; OK plays the channel ad-free (streamlink drops Twitch's ad segments)."""
+    """Twitch: a search chip, the top live streams and categories; OK plays a channel ad-free (streamlink drops
+    Twitch's ad segments). With `game` it is that category's live streams, pushed over the main Twitch screen."""
     sname = "twitch"
 
-    def __init__(self, shell):
+    def __init__(self, shell, game=None):
         super().__init__(shell)
-        self.make_rail("Live now", twitch_items, kind="wide", hide_empty=False)
+        self.game = game
+        if game:
+            self.make_rail("Live in " + game["name"], lambda: twitch_items(game["game"]), kind="wide", hide_empty=False)
+        else:
+            self.make_rail(None, lambda: [TWITCH_SEARCH], kind="pill")
+            self.make_rail("Live now", twitch_items, kind="wide", hide_empty=False)
+            self.make_rail("Categories", twitch_game_items, kind="poster")
 
     def activate(self, item):
-        self.shell.play_twitch(item["login"], item["description"])
+        if item.get("twitch_search"):
+            self.shell.open_search("twitch")
+        elif item.get("game") and not item.get("login"):
+            self.shell.push(TwitchScreen(self.shell, item))
+        else:
+            self.shell.play_twitch(item["login"], item["description"])
 
     def first_focus(self, flat):
         groups = self.focus_groups()
+        if len(groups) > 1 and not self.game:
+            return groups[1][0]                 # start on the streams; the search chip is one Up away
         return groups[0][0] if groups else None
 
     def on_enter(self, returning):
         super().on_enter(returning)
         if returning:
-            self.rails[0].reload()
+            self.rails[0 if self.game else 1].reload()
 
 
-SEARCH_SCOPES = {None: ("movie", "series"), "movie": ("movie",), "series": ("series",)}
-SEARCH_SCOPE_LABEL = {None: "movies and series", "movie": "Movies", "series": "Series"}
+SEARCH_SCOPES = {None: ("movie", "series", "twitch"), "movie": ("movie",), "series": ("series",), "twitch": ("twitch",)}
+SEARCH_SCOPE_LABEL = {None: "movies, series and Twitch", "movie": "Movies", "series": "Series", "twitch": "Twitch"}
 
 
 def search_kinds(scope):
-    """Kinds a SearchScreen scoped to `scope` searches (None = both)."""
+    """Kinds a SearchScreen scoped to `scope` searches (None = all of them)."""
     return SEARCH_SCOPES.get(scope, SEARCH_SCOPES[None])
 
 
@@ -913,7 +948,7 @@ class SearchScreen(Screen):
         page.set_margin_start(px(68))
         page.set_margin_end(px(68))
         self.entry = Gtk.Entry()
-        self.entry.set_placeholder_text("Search movies and series")
+        self.entry.set_placeholder_text("Search " + SEARCH_SCOPE_LABEL[None])
         self.entry.get_style_context().add_class("search-entry")
         self.entry.set_size_request(-1, px(76))
         self.entry.connect("changed", self.on_changed)
@@ -943,12 +978,15 @@ class SearchScreen(Screen):
         page.pack_start(scroll, True, True, 0)
         self.movies = Rail(shell, "Movies", kind="poster", on_activate=shell.open_details, quiet=True)
         self.series = Rail(shell, "Series", kind="poster", on_activate=shell.open_details, quiet=True)
+        self.twitch = Rail(shell, "Live on Twitch", kind="wide", quiet=True,
+                           on_activate=lambda item: shell.play_twitch(item["login"], item["description"]))
+        self.rails = {"movie": self.movies, "series": self.series, "twitch": self.twitch}
         self.counts = {}
-        for r in (self.movies, self.series):
+        for r in self.rails.values():
             box.pack_start(r, False, False, 0)
 
     def focus_groups(self):
-        return [[self.entry]] + [r.cards for r in (self.movies, self.series) if r.cards and r.get_visible()]
+        return [[self.entry]] + [r.cards for r in self.rails.values() if r.cards and r.get_visible()]
 
     def first_focus(self, flat):
         return self.entry
@@ -962,14 +1000,14 @@ class SearchScreen(Screen):
         self.run()
 
     def set_scope(self, kind):
-        """Limit search to "movie" or "series" (None = both); re-runs the current query."""
-        kind = kind if kind in ("movie", "series") else None
+        """Limit search to "movie", "series" or "twitch" (None = all); re-runs the current query."""
+        kind = kind if kind in SEARCH_SCOPES and kind else None
         changed = kind != self.scope
         self.scope = kind
-        self.entry.set_placeholder_text(f"Search {SEARCH_SCOPE_LABEL[kind]}" if kind else "Search movies and series")
+        self.entry.set_placeholder_text("Search " + SEARCH_SCOPE_LABEL[kind])
         self.chip.set_text(f"in {SEARCH_SCOPE_LABEL[kind]}" if kind else "")
         self.chip.set_visible(bool(kind))
-        for k, rail in (("movie", self.movies), ("series", self.series)):
+        for k, rail in self.rails.items():
             if k not in search_kinds(kind):
                 rail.hide()  # in-scope rails show themselves when results load
         if changed and self.entry.get_text().strip():
@@ -988,10 +1026,10 @@ class SearchScreen(Screen):
         self.token += 1
         tok = self.token
         self.counts = {}
-        rails = {"movie": self.movies, "series": self.series}
+        rails = self.rails
         active = [(k, rails[k]) for k in search_kinds(self.scope)]
         if not q:
-            for r in (self.movies, self.series):
+            for r in rails.values():
                 r.token += 1
                 r.set_items([])
             self.info.set_text("Type on your phone to search")
@@ -1003,7 +1041,7 @@ class SearchScreen(Screen):
                 rail.set_items([])
         for kind, rail in active:
             rail.hide_empty = True
-            rail.load(lambda k=kind: search_items(k, q))
+            rail.load(lambda k=kind: twitch_search_items(q) if k == "twitch" else search_items(k, q))
             self.watch(rail, tok, q)
         return False
 

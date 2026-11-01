@@ -44,6 +44,7 @@ class HelperTests(unittest.TestCase):
     def test_search_scope_follows_the_screen_we_leave(self):
         self.assertEqual(homescreen.search_scope("movies"), "movie")
         self.assertEqual(homescreen.search_scope("series"), "series")
+        self.assertEqual(homescreen.search_scope("twitch"), "twitch")
         for other in ("home", "search", "", None):
             self.assertIsNone(homescreen.search_scope(other))
 
@@ -93,16 +94,21 @@ class UiRequestTests(unittest.TestCase):
         self.home.Home.handle_ui_request(self.shell, req)
 
     def test_search_is_scoped_by_current_top_screen(self):
-        for sname, scope in (("movies", "movie"), ("series", "series"), ("home", None)):
+        for sname, scope in (("movies", "movie"), ("series", "series"), ("twitch", "twitch"), ("home", None)):
             self.search.reset_mock()
+            self.shell.open_search.reset_mock()
             self.run_req({"screen": "search", "query": "dune"}, sname)
-            self.shell.goto_top.assert_called_with("search")
-            self.search.set_scope.assert_called_once_with(scope)
+            self.shell.open_search.assert_called_once_with(scope)
             self.search.set_query.assert_called_once_with("dune")
+
+    def test_open_search_goes_to_search_and_sets_scope(self):
+        self.home.Home.open_search(self.shell, "twitch")
+        self.shell.goto_top.assert_called_with("search")
+        self.search.set_scope.assert_called_once_with("twitch")
 
     def test_search_without_set_scope_still_works(self):
         self.shell.tops = {"search": mock.Mock(spec=["set_query"])}
-        self.run_req({"screen": "search"}, "movies")
+        self.home.Home.open_search(self.shell, "movie")
         self.shell.goto_top.assert_called_with("search")
 
     def test_movies_series_home_go_to_top(self):

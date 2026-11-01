@@ -451,6 +451,12 @@ class Home(Gtk.Window):
         screen.on_enter(returning)
         GLib.idle_add(self.focus_screen, screen)
 
+    def open_search(self, scope=None):
+        """The Search screen, limited to "movie", "series" or "twitch" (None = all)."""
+        self.goto_top("search")
+        if hasattr(self.tops["search"], "set_scope"):
+            self.tops["search"].set_scope(scope)
+
     def open_details(self, item, season=None, episode=None):
         self.push(DetailsScreen(self, item, season, episode))
 
@@ -707,10 +713,7 @@ class Home(Gtk.Window):
         self.last_state_poll = 0
         self.close_sheet()
         if name == "search":
-            scope = search_scope(getattr(self.current(), "sname", ""))
-            self.goto_top("search")
-            if hasattr(self.tops["search"], "set_scope"):
-                self.tops["search"].set_scope(scope)
+            self.open_search(search_scope(getattr(self.current(), "sname", "")))
             if isinstance(req.get("query"), str):
                 self.tops["search"].set_query(req["query"])
         elif name == "details" and isinstance(req.get("media"), dict) and req["media"].get("id"):

@@ -12,11 +12,12 @@ import time
 from pathlib import Path
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tvapp"))
 import settings_model
+import twitch
 import widgets
 from media.config import DEFAULTS
 
@@ -87,6 +88,10 @@ class Preview(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/twitch":
+            q = (parse_qs(urlsplit(self.path).query).get("q") or [""])[0].lower()
+            self.json({"streams": [s for s in twitch.FAKE_STREAMS
+                                   if not q or q in s["login"] or q in s["name"].lower() or q in s["title"].lower()]})
         elif path.startswith("/api/"):
             self.json({"error": "This preview has no TV connection."}, 404)
         else:

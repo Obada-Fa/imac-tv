@@ -1716,6 +1716,7 @@
     const q = fi.value.trim(), seq = ++findSeq;
     if (q.length < 2) { showFind(null); return; }
     $('find-spin').hidden = false; $('find-empty').textContent = '';
+    findTwitch(q, seq);
     try {
       const r = data(await send('find', {query: q}));
       if (seq !== findSeq) return;
@@ -1728,7 +1729,8 @@
     fill($('find-movies').querySelector('.grid'), movies, false);
     fill($('find-series').querySelector('.grid'), series, false);
     $('find-movies').hidden = !movies.length; $('find-series').hidden = !series.length;
-    $('find-empty').textContent = r && !movies.length && !series.length ? 'No results' : '';
+    $('find-empty').textContent = r && !movies.length && !series.length && !twitchHits ? 'No results' : '';
+    if (fi.value.trim().length < 2) showTopTwitch();
   }
   fi.addEventListener('input', () => {
     $('find-clear').hidden = !fi.value;
@@ -1742,35 +1744,50 @@
   // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.
   results.addEventListener('touchstart', () => fi.blur(), {passive: true});
 
-  // ---- Twitch (Search tab): a channel box plus the most-watched live streams; the TV plays them ad-free ----
-  let twitchLoaded = false;
+  // ---- Twitch (Search tab): the same search box finds live channels; with no query it lists the most-watched ----
+  let twitchLoaded = false, twitchTop = null, twitchHits = 0;
   const kviews = n => n >= 1000 ? (n / 1000).toFixed(1).replace('.0', '') + 'K' : String(n);
+  function drawTwitch(head, streams, empty) {
+    const list = $('twitch-list');
+    $('twitch-head').textContent = head;
+    list.replaceChildren(...streams.slice(0, 12).map(s => {
+      const b = document.createElement('button'), t = document.createElement('span'), n = document.createElement('b'), d = document.createElement('small'), v = document.createElement('span');
+      b.type = 'button'; b.className = 'row'; t.className = 'rt'; v.className = 'rv';
+      n.textContent = s.name; d.textContent = [s.title, s.game].filter(Boolean).join(' · '); v.textContent = kviews(s.viewers);
+      t.append(n, d); b.append(t, v);
+      b.onclick = () => watchTwitch(s.login, s.title);
+      return b;
+    }));
+    $('twitch-empty').textContent = list.children.length ? '' : empty;
+    $('twitch').hidden = !list.children.length && !empty;
+  }
+  function showTopTwitch() {
+    twitchHits = 0;
+    if (twitchTop) drawTwitch('Live on Twitch', twitchTop, 'No live streams right now');
+  }
   async function loadTwitch() {
     twitchLoaded = true;
     try {
       const r = await api('/api/twitch');
-      const list = $('twitch-list');
-      list.replaceChildren(...(r.streams || []).slice(0, 12).map(s => {
-        const b = document.createElement('button'), t = document.createElement('span'), n = document.createElement('b'), d = document.createElement('small'), v = document.createElement('span');
-        b.type = 'button'; b.className = 'row'; t.className = 'rt'; v.className = 'rv';
-        n.textContent = s.name; d.textContent = [s.title, s.game].filter(Boolean).join(' · '); v.textContent = kviews(s.viewers);
-        t.append(n, d); b.append(t, v);
-        b.onclick = () => watchTwitch(s.login, s.title);
-        return b;
-      }));
-      $('twitch-empty').textContent = list.children.length ? '' : 'No live streams right now';
+      twitchTop = r.streams || [];
+      if (fi.value.trim().length < 2) showTopTwitch();
     } catch (e) { twitchLoaded = false; $('twitch-empty').textContent = e.message; }
+  }
+  async function findTwitch(q, seq) {
+    twitchHits = 0; $('twitch').hidden = true;
+    try {
+      const r = await api('/api/twitch?q=' + encodeURIComponent(q));
+      if (seq !== findSeq) return;
+      const streams = r.streams || [];
+      twitchHits = streams.length;
+      drawTwitch('Twitch', streams, '');
+      if (twitchHits && $('find-empty').textContent === 'No results') $('find-empty').textContent = '';
+    } catch (e) {}
   }
   function watchTwitch(login, title) {
     message('Opening ' + login + ' on the TV…');
     send('play_twitch', {login, title: title || ''}).catch(() => {});
   }
-  $('twitch-form').onsubmit = e => {
-    e.preventDefault();
-    const login = $('twitch-input').value.trim();
-    if (!/^[A-Za-z0-9_]{1,25}$/.test(login)) { message('Enter a Twitch channel name'); return; }
-    $('twitch-input').blur(); watchTwitch(login);
-  };
 
   // ---- Movies / Series panes: search scoped to that kind ----
   document.querySelectorAll('.pane[data-type]').forEach(pane => {

@@ -25,6 +25,8 @@ STREAM_FIELDS = ("id title viewersCount previewImageURL(width: 640, height: 360)
                  "broadcaster { login displayName } game { displayName }")
 TOP_QUERY = "query { streams(first: %d) { edges { node { %s } } } }"
 USER_QUERY = 'query { user(login: "%s") { login displayName stream { %s } } }'
+GAMES_QUERY = "query { games(first: %d) { edges { node { name displayName boxArtURL(width: 285, height: 380) viewersCount } } } }"
+GAME_QUERY = "query { game(name: %s) { streams(first: %d) { edges { node { %s } } } } }"
 SEARCH_QUERY = ('query { searchFor(userQuery: %s, platform: "web", options: {targets: [{index: CHANNEL}]}) '
                 '{ channels { edges { item { ... on User { login displayName stream { %s } } } } } } }')
 
@@ -142,6 +144,47 @@ def top_streams(limit=24):
         edges = (_post(TOP_QUERY % (limit, STREAM_FIELDS)).get("streams") or {}).get("edges") or []
         return [s for s in (_stream((e or {}).get("node")) for e in edges) if s]
     return _cached(("top", limit), fetch)
+
+
+def top_games(limit=24):
+    """Most-watched categories, as [{name, title, box_art, viewers}] (name is what game_streams takes)."""
+    fake = _fake()
+    if fake is not None:
+        games = {}
+        for s in fake:
+            if s["game"]:
+                g = games.setdefault(s["game"], {"name": s["game"], "title": s["game"], "box_art": "", "viewers": 0})
+                g["viewers"] += s["viewers"]
+        return sorted(games.values(), key=lambda g: -g["viewers"])[:limit]
+    limit = max(1, min(int(limit), 50))
+
+    def fetch():
+        out = []
+        for e in (_post(GAMES_QUERY % limit).get("games") or {}).get("edges") or []:
+            node = (e or {}).get("node") or {}
+            name = node.get("name")
+            if isinstance(name, str) and name:
+                out.append({"name": name[:120], "title": str(node.get("displayName") or name)[:120],
+                            "box_art": node.get("boxArtURL") or "", "viewers": int(node.get("viewersCount") or 0)})
+        return out
+    return _cached(("games", limit), fetch)
+
+
+def game_streams(game, limit=24):
+    """Most-watched live streams in one category (by its name from top_games)."""
+    game = (game or "").strip() if isinstance(game, str) else ""
+    if not game:
+        return []
+    fake = _fake()
+    if fake is not None:
+        return [s for s in fake if s["game"] == game][:limit]
+    limit = max(1, min(int(limit), 50))
+
+    def fetch():
+        found = _post(GAME_QUERY % (json.dumps(game[:120]), limit, STREAM_FIELDS)).get("game") or {}
+        edges = (found.get("streams") or {}).get("edges") or []
+        return [s for s in (_stream((e or {}).get("node")) for e in edges) if s]
+    return _cached(("game", game, limit), fetch)
 
 
 def find(query, limit=12):

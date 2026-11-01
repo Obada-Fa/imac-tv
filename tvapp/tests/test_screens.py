@@ -16,10 +16,11 @@ except Exception as exc:  # no PyGObject / GTK typelibs
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
 class SearchScopeTests(unittest.TestCase):
     def test_kinds_per_scope(self):
-        self.assertEqual(screens.search_kinds(None), ("movie", "series"))
+        self.assertEqual(screens.search_kinds(None), ("movie", "series", "twitch"))
         self.assertEqual(screens.search_kinds("movie"), ("movie",))
         self.assertEqual(screens.search_kinds("series"), ("series",))
-        self.assertEqual(screens.search_kinds("bogus"), ("movie", "series"))
+        self.assertEqual(screens.search_kinds("twitch"), ("twitch",))
+        self.assertEqual(screens.search_kinds("bogus"), ("movie", "series", "twitch"))
 
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")

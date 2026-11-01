@@ -125,7 +125,7 @@
   </section>
   <section id="tab-search" class="pane" hidden>
     <header class="masthead"><div class="mast-text"><small class="eyebrow">IMAC TV</small><h2 class="ptitle">Search</h2></div></header>
-    <form id="find-form" class="findbox" autocomplete="off"><input id="find-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies and series" aria-label="Search titles"><button type="button" id="find-clear" aria-label="Clear" hidden>✕</button></form>
+    <form id="find-form" class="findbox" autocomplete="off"><input id="find-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search movies, series and Twitch" aria-label="Search movies, series and Twitch"><button type="button" id="find-clear" aria-label="Clear" hidden>✕</button></form>
     <div id="find-results">
       <div class="spin" id="find-spin" hidden><div class="spinner" aria-hidden="true"></div></div>
       <p id="find-empty" class="muted"></p>
@@ -133,8 +133,7 @@
       <div id="find-series" hidden><h3>Series</h3><div class="grid"></div></div>
     </div>
     <div id="twitch" class="twitch">
-      <h3>Twitch <small>no ads</small></h3>
-      <form id="twitch-form" class="findbox" autocomplete="off"><input id="twitch-input" type="text" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" maxlength="25" placeholder="Channel name" aria-label="Twitch channel name"><button type="submit" id="twitch-go" class="go">Watch</button></form>
+      <h3><span id="twitch-head">Live on Twitch</span> <small>no ads</small></h3>
       <p id="twitch-empty" class="muted"></p>
       <div id="twitch-list" class="glass rows"></div>
     </div>

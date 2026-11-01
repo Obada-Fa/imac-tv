@@ -85,10 +85,31 @@ class TwitchTest(unittest.TestCase):
             twitch.find('a" } evil { x ')
         self.assertIn('userQuery: ' + json.dumps('a" } evil { x'), json.loads(sent[0])["query"])
 
+    def test_top_games_parses_and_skips_nameless(self):
+        games = {"data": {"games": {"edges": [
+            {"node": {"name": "Chess", "displayName": "Chess", "boxArtURL": "http://x/b.jpg", "viewersCount": 900}},
+            {"node": {"name": "", "displayName": "?"}}, {"node": None}]}}}
+        with mock.patch("urllib.request.urlopen", return_value=FakeResponse(games)):
+            self.assertEqual(twitch.top_games(), [{"name": "Chess", "title": "Chess", "box_art": "http://x/b.jpg", "viewers": 900}])
+
+    def test_game_streams_quotes_the_name(self):
+        sent = []
+
+        def fake(req, timeout=0):
+            sent.append(json.loads(req.data.decode())["query"])
+            return FakeResponse({"data": {"game": {"streams": {"edges": [{"node": TOP["data"]["streams"]["edges"][0]["node"]}]}}}})
+        with mock.patch("urllib.request.urlopen", fake):
+            found = twitch.game_streams('Just "Chatting"')
+        self.assertIn("game(name: " + json.dumps('Just "Chatting"'), sent[0])
+        self.assertEqual([s["login"] for s in found], ["alice"])
+        self.assertEqual(twitch.game_streams(""), [])
+
     def test_fake_hook(self):
         os.environ["IMACTV_FAKE_TWITCH"] = "1"
         self.assertGreater(len(twitch.top_streams()), 3)
         self.assertEqual([s["login"] for s in twitch.find("lofi")], ["lofigirl"])
+        self.assertIn("Chess", [g["name"] for g in twitch.top_games()])
+        self.assertEqual([s["login"] for s in twitch.game_streams("Chess")], ["chess"])
 
     def mpv(self):
         return player.mpv_argv("http://u", title="T", subs=[], start=30, ipc="/tmp/s.sock")
