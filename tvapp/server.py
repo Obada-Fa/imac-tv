@@ -37,6 +37,7 @@ import audio_output
 import phonespeaker
 import sysinfo
 import twitch
+import youtube_volume
 import widgets
 try:
     import display
@@ -66,11 +67,11 @@ def resolve_app_command(app):
     if app == "youtube":
         bin_path = shutil.which("vacuumtube") or shutil.which("VacuumTube")
         if bin_path:
-            return [bin_path]
+            return [bin_path, youtube_volume.FLAG]
         opt_bin = Path("/opt/VacuumTube/vacuumtube")
         if opt_bin.is_file() and os.access(opt_bin, os.X_OK):
-            return [str(opt_bin)]
-        return ["flatpak", "run", "rocks.shy.VacuumTube"]
+            return [str(opt_bin), youtube_volume.FLAG]
+        return ["flatpak", "run", "rocks.shy.VacuumTube", youtube_volume.FLAG]
     if app.startswith("desktop:"):
         argv = apps.launch_argv(app)
         if not argv:
@@ -898,6 +899,7 @@ class Controller:
     def _youtube_tick(self):
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
         try:
+            youtube_volume.enforce()
             with self.lock:
                 generation = self.generation
             state = self.youtube_now()

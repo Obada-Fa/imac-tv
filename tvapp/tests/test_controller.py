@@ -124,6 +124,26 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(flatpak.read_text(), "not json")   # a file we cannot read is left alone
             self.assertEqual(sorted(p.name for p in native.parent.iterdir()), ["config.json"])
 
+    def test_youtube_launches_with_the_volume_lock_port(self):
+        with mock.patch.object(server.shutil, "which", return_value=None), \
+                mock.patch.object(server.Path, "is_file", return_value=False):
+            self.assertEqual(server.resolve_app_command("youtube"),
+                             ["flatpak", "run", "rocks.shy.VacuumTube", server.youtube_volume.FLAG])
+
+    def test_youtube_volume_lock_reaches_pages_only(self):
+        targets = [{"id": "a", "type": "page"}, {"id": "b", "type": "service_worker"}]
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = server.json.dumps(targets).encode()
+        with mock.patch.object(server.youtube_volume._opener, "open", return_value=response), \
+                mock.patch.object(server.youtube_volume.browser, "_page_command") as page:
+            server.youtube_volume.enforce()
+        page.assert_called_once()
+        self.assertEqual(page.call_args.args[0], "a")
+
+    def test_youtube_volume_lock_is_quiet_while_youtube_is_closed(self):
+        with mock.patch.object(server.youtube_volume._opener, "open", side_effect=OSError):
+            server.youtube_volume.enforce()
+
     def test_external_screen_has_no_brightness_control(self):
         with mock.patch.object(server.display, "external_connected", return_value=True):
             self.assertEqual(server.brightness(), {"level": None, "available": False, "external": True})

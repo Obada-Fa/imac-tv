@@ -103,13 +103,14 @@ def view(window_title, timeout=0.4):
             "typing": bool(front) and field_focused(front["id"], timeout)}
 
 
-def _page_command(tab_id, method, params, timeout=2):
+def _page_command(tab_id, method, params, timeout=2, port=None):
     """One command over the tab's DevTools WebSocket; returns its "result"."""
     if not isinstance(tab_id, str) or not _TAB_ID.match(tab_id):
         raise ValueError("Unknown tab")
-    with socket.create_connection(("127.0.0.1", PORT), timeout=timeout) as sock:
+    port = port or PORT
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
         key = base64.b64encode(os.urandom(16)).decode()
-        sock.sendall((f"GET /devtools/page/{tab_id} HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nUpgrade: websocket\r\n"
+        sock.sendall((f"GET /devtools/page/{tab_id} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
                       f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
         reply = b""
         while b"\r\n\r\n" not in reply:

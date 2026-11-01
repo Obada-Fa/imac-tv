@@ -29,8 +29,10 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
 - **Twitch (ad-free):** Apps-row tile + `TwitchScreen` rail (top live streams) and a phone Search-tab block; `twitch.py` lists via public GQL and launches streamlink→mpv through `Controller.play_twitch`. Not verified on the real TV (needs streamlink; real Twitch ad filtering untested).
 - **Brave as a TV app:** `tvapp/browser.py` launches a natively installed Brave in kiosk mode on its own profile (`~/.local/share/imactv/brave-tv`; logins and extensions need setting up there once) with a local debugging port. `widgets/browser_menu.py` is the TV menu. The phone's Remote tab switches to a browser layout while it runs: address bar, page buttons, a full touchpad with a one-finger scroll edge, and a Browser sheet (tabs, zoom, Shields, Menu on TV). Not verified on the real TV (Mutter stacking, CPU).
 - **YouTube behind Home:** the window is minimized so the video stops rendering; audio is auto-resumed if minimizing paused it.
+- **YouTube volume:** `tvapp/youtube_volume.py` locks the video element at full level over a local debugging port (9334), so only the system volume counts. Not verified in real VacuumTube.
 - **Not yet verified on the real TV:**
   - VacuumTube's MPRIS controls
+  - the YouTube volume lock, including on the Flatpak build
   - CPU saved by minimizing
   - the visualizer with real music
   - mpv OSD prompts and OK routing
