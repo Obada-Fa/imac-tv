@@ -405,3 +405,20 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .approw button:disabled{opacity:.42}
 .approw+.approw::before{pointer-events:none}
 .apps button[data-app]{padding:0 9px}   /* the Apps icon joined the nav: keep it clear of the clock */
+.webnav{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.webbar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.webbar button{min-height:50px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:14px;border:1px solid var(--hair);background:rgba(22,29,45,.72);color:var(--ink2)}
+.webbar svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.webbar b{min-width:24px;padding:2px 5px;border:1.6px solid currentColor;border-radius:7px;font-size:13px;font-weight:600}
+.hive.webnav-on.pointer .pad::after{content:"";position:absolute;top:18px;bottom:18px;right:10px;width:36px;border-radius:18px;background:rgba(255,255,255,.05);border:1px solid var(--hair);pointer-events:none}
+.webtabs{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.webtab{display:flex;align-items:stretch;border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+.webtab.on{border-color:rgba(192,232,248,.7);background:rgba(192,232,248,.08)}
+.webtab-open{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 14px;border:0;border-radius:0;background:none;text-align:left}
+.webtab-open b,.webtab-open small{display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.webtab-open b{font-weight:500;font-size:14px}.webtab-open small{color:var(--ink3);font-size:12px}
+.webtab-close{width:52px;min-height:52px;padding:0;border:0;border-radius:0;background:none;font-size:22px;font-weight:300;color:var(--ink2)}
+.web-on .notice,.web-on .phone-media,.web-on .topbar{display:none!important}
+.web-on .clock{font-size:30px}.web-on .masthead{margin-bottom:4px}
+.hive.discord.webnav-on.pointer{aspect-ratio:auto;height:max(240px,calc(100dvh - 460px))}
+.hive.webnav-on.pointer .pad span,.hive.webnav-on.pointer .pad small{margin-right:48px}

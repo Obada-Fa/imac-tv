@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
+import browser
+
 MAX_FAVORITES = 6
 SCAN_SECONDS = 60
 DEFAULT_FAVORITES = ["movies", "series", "youtube", "twitch", "desktop:brave-browser", "desktop:rustdesk"]
@@ -299,6 +301,8 @@ def window_hints(app_id):
     e = lookup(app_id)
     if not e:
         return []
+    if browser.is_brave_argv(e["argv"]):    # the TV's own Brave only: a normal Brave window is someone else's
+        return [browser.WM_CLASS.lower()]
     hints = []
     for h in (e["wmclass"], e["desktop_id"], e["desktop_id"].rsplit(".", 1)[-1], os.path.basename(e["argv"][0])):
         h = (h or "").lower()
@@ -316,7 +320,14 @@ def matches_window(app_id, wm_class):
 
 def launch_argv(app_id):
     e = lookup(app_id)
-    return list(e["argv"]) if e else None
+    if not e:
+        return None
+    return browser.tv_argv(e["argv"]) if browser.is_brave_argv(e["argv"]) else list(e["argv"])
+
+
+def is_tv_browser(app_id):
+    e = lookup(app_id) if isinstance(app_id, str) and app_id.startswith("desktop:") else None
+    return bool(e) and browser.is_brave_argv(e["argv"])
 
 
 # ---- icons ------------------------------------------------------------------------------------------------

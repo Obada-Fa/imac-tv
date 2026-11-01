@@ -30,6 +30,7 @@ import settings_model
 import updater
 import apps
 import backgrounds
+import browser
 import nowplaying
 import phonemic
 import phonespeaker
@@ -116,9 +117,11 @@ def windows():
         return []
     found = []
     for line in lines:
-        part = line.split(None, 9)
-        if len(part) >= 10:
-            found.append({"id": part[0], "pid": part[2], "class": part[7].lower(), "title": part[9]})
+        part = line.split(None, 7)
+        # Chromium on its own profile has spaces in the class: "brave-browser (/path).Class"
+        rest = re.match(r"(\S+(?: \([^)]*\)\S*)?)\s+\S+\s+(.+)$", part[7]) if len(part) == 8 else None
+        if rest:
+            found.append({"id": part[0], "pid": part[2], "class": rest.group(1).lower(), "title": rest.group(2)})
     return found
 
 
@@ -134,6 +137,11 @@ def window_for(app):
     if app == "player":
         return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
     return None
+
+
+def browser_menu_window():
+    """The TV browser's menu, while it is open."""
+    return next((w for w in windows() if w["title"] == browser.MENU_TITLE), None)
 
 
 def active_window_id():
@@ -450,6 +458,7 @@ class Controller:
         self.prefetch = None
         self.cache_ready = False
         self.ui_path = DATA / "ui_request.json"
+        self._browser_cache = (0.0, None)
         self.media_path = DATA / "last_media.json"
         self.media = self._read_json(self.media_path, None)
         self.pointer = XPointer(DISPLAY_ENV["DISPLAY"], DISPLAY_ENV["XAUTHORITY"])
@@ -1774,8 +1783,10 @@ class Controller:
                 nxt = None
             current_media["next"] = nxt
         app_name = (apps.lookup(app) or {}).get("name") if app.startswith("desktop:") else None
+        tv_browser = apps.is_tv_browser(app)
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "apps_rev": apps.apps_rev(), **({"app_name": app_name} if app_name else {}),
+                "tv_browser": tv_browser, **({"browser": self._browser_view(win)} if tv_browser and phase == "ready" else {}),
                 "playback_suggestion": self._health_view(),
                 "gui": gui, "volume": percent, "muted": muted,
                 "audio_warning": self.audio_warning,
@@ -2107,6 +2118,8 @@ class Controller:
                         "max_favorites": apps.MAX_FAVORITES}
             if action == "app_open":
                 return self.open_app(params)
+            if action == "browser":
+                return self.browser_do(params)
             if action == "app_close":
                 return self.close_app(params.get("app"), restart=False)
             if action == "app_restart":
@@ -2310,6 +2323,14 @@ class Controller:
                 if self.app == "player" or player:
                     return self.stop_playback("home")
                 return self.select("home")
+            tv_browser = apps.is_tv_browser(self.app)
+            if tv_browser and action == "menu":
+                self._ui_request("browser_menu")
+                return {"ok": True}
+            if tv_browser and action == "back" and not browser_menu_window():
+                self._focus_target()
+                command(["xdotool", "key", "--clearmodifiers", browser.SHORTCUTS["back"]])
+                return {"ok": True}
             if action == "back":
                 action = "Escape"
             keymap = {"left": "Left", "right": "Right", "up": "Up", "down": "Down",
@@ -2357,9 +2378,74 @@ class Controller:
                 return {"ok": True}
             raise ValueError("Unknown action")
 
+    def _browser_view(self, win):
+        """Cached: /api/state is polled by every phone, and this is a local HTTP call to Brave."""
+        at, view = self._browser_cache
+        if time.monotonic() - at > 1.5:
+            view = browser.view((win or {}).get("title"))
+            self._browser_cache = (time.monotonic(), view)
+        return view
+
+    def _front_tab(self, win):
+        view = browser.view(win["title"], timeout=2)
+        return next((t for t in (view or {}).get("tabs", []) if t["active"]), None)
+
+    def _browser_open(self, url, win):
+        """In the tab in front, like an address bar; a new tab if that doesn't work."""
+        front = self._front_tab(win)
+        try:
+            if not front:
+                raise OSError("No tab in front")
+            browser.navigate(front["id"], url)
+        except OSError:
+            browser.new_tab(url)
+
+    def _browser_close_tab(self, tab_id, win):
+        pages = browser.tabs()
+        if tab_id is None:
+            tab_id = (self._front_tab(win) or {}).get("id")
+        if len(pages) <= 1:         # closing the last tab would quit the browser: start a fresh one first
+            browser.new_tab(browser.START_URL)
+        browser.close_tab(tab_id)
+
+    def browser_do(self, params):
+        """A TV browser menu command: a key press on the browser's window, or a tab through its debugging port."""
+        if not apps.is_tv_browser(self.app) or self.phase != "ready":
+            raise RuntimeError("Brave isn't open")
+        win = window_for(self.app)
+        if not win:
+            raise RuntimeError("TV window is unavailable; use Recover")
+        do = params.get("do")
+        try:
+            if do == "open":
+                self._browser_open(browser.target_url(params.get("text")), win)
+            elif do in browser.PAGES:
+                browser.new_tab(browser.PAGES[do])
+            elif do == "new_tab":
+                browser.new_tab(browser.START_URL)
+            elif do == "tab":
+                browser.activate_tab(params.get("id"))
+            elif do == "close_tab":
+                self._browser_close_tab(params.get("id"), win)
+            elif do == "quit":
+                return self.close_app(self.app)
+            elif do not in browser.SHORTCUTS:
+                raise ValueError("Unknown browser command")
+        except (OSError, urllib.error.URLError) as exc:
+            raise RuntimeError("Brave isn't answering") from exc
+        self._browser_cache = (0.0, None)
+        activate(win)
+        if do in browser.SHORTCUTS:
+            command(["xdotool", "key", "--clearmodifiers", browser.SHORTCUTS[do]])
+        return {"ok": True}
+
     def _focus_target(self):
         if self.phase != "ready":
             raise RuntimeError("App is still opening")
+        menu = browser_menu_window() if apps.is_tv_browser(self.app) else None
+        if menu:                                # the menu is over the browser: keys are for the menu
+            command(["wmctrl", "-i", "-R", menu["id"]])
+            return
         win = window_for(self.app)
         if not win:
             raise RuntimeError("TV window is unavailable; use Recover")

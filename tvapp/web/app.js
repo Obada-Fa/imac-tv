@@ -361,6 +361,7 @@
     const discord = Boolean(s.discord) || s.app === 'discord', phoneAudio = s.phone_audio || {};
     const bigpad = discord || desktop;   // desktop apps want the pointer first, like Discord
     $('hive').classList.toggle('discord', bigpad);
+    renderWeb(s);
     const micMute = $('mic-mute');
     micMute.hidden = !discord;
     micMute.disabled = !phoneAudio.mic;
@@ -713,11 +714,12 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'apps') { renderAppsSheet(); return; }
+    if (name === 'web') { renderWebSheet(); return; }
     if (name === 'type') {
       content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
       $('text-form').onsubmit = e => {
@@ -942,6 +944,70 @@
     }
   });
 
+  // ---- TV browser: address bar, page buttons and the Browser sheet (tabs and the rest of the toolbar) ----
+  const webUrl = $('web-url'), padHint = $('pad').querySelector('small'), padHintText = padHint.textContent;
+  const webTabs = s => (s && s.browser && s.browser.tabs) || [];
+  const webFront = s => webTabs(s).find(t => t.active);
+  const webDo = (doing, params) => send('browser', {do: doing, ...params}).then(() => refresh()).catch(() => {});
+  function renderWeb(s) {
+    $('webnav').hidden = !s.tv_browser;
+    $('hive').classList.toggle('webnav-on', Boolean(s.tv_browser));
+    $('remote').classList.toggle('web-on', Boolean(s.tv_browser));   // less around it, so the touchpad gets the room
+    padHint.textContent = s.tv_browser ? 'Tap to click · hold for right click · slide the right edge to scroll' : padHintText;
+    if (!s.tv_browser) { if (sheetName === 'web') closeSheet(); return; }
+    const front = webFront(s);
+    $('web-tab-count').textContent = webTabs(s).length || '–';
+    webUrl.placeholder = (front && front.title) || 'Search or type a website';
+    if (sheetName === 'web') renderWebSheet();
+  }
+  function renderWebSheet() {
+    const content = $('sheet-content'), tabs = webTabs(state);
+    const sig = JSON.stringify(tabs);
+    if (content.dataset.sig === sig) return;
+    content.dataset.sig = sig;
+    content.textContent = '';
+    const list = el('div', 'webtabs');
+    for (const tab of tabs) {
+      const row = el('div', 'webtab' + (tab.active ? ' on' : ''));
+      const open = el('button', 'webtab-open'); open.type = 'button';
+      const title = el('b'); title.textContent = tab.title || 'New tab';
+      const url = el('small'); url.textContent = tab.url.replace(/^https?:\/\/(www\.)?/, '');
+      open.append(title, url);
+      open.onclick = () => { closeSheet(); webDo('tab', {id: tab.id}); };
+      const close = el('button', 'webtab-close'); close.type = 'button'; close.textContent = '×';
+      close.setAttribute('aria-label', 'Close ' + (tab.title || 'tab'));
+      close.onclick = () => webDo('close_tab', {id: tab.id});
+      row.append(open, close); list.append(row);
+    }
+    if (!tabs.length) { const none = el('p'); none.textContent = 'Brave isn’t answering yet.'; list.append(none); }
+    const rowOf = (...items) => {
+      const row = el('div', 'sheet-row');
+      for (const [label, fn] of items) { const b = el('button'); b.type = 'button'; b.textContent = label; b.onclick = fn; row.append(b); }
+      return row;
+    };
+    const go = page => () => { closeSheet(); webDo(page); };
+    content.append(list, rowOf(['New tab', go('new_tab')]),
+      rowOf(['Zoom −', () => webDo('zoom_out')], ['100%', () => webDo('zoom_reset')], ['Zoom +', () => webDo('zoom_in')]),
+      rowOf(['Shields', go('shields')], ['Bookmarks', go('bookmarks')]),
+      rowOf(['History', go('history')], ['Downloads', go('downloads')]),
+      rowOf(['Settings', go('settings')], ['Menu on TV', () => { closeSheet(); fire('menu'); }]),
+      rowOf(['Close Brave', () => { if (confirm('Close Brave on the TV?')) { closeSheet(); webDo('quit'); } }]));
+  }
+  document.querySelectorAll('[data-web]').forEach(b => b.onclick = () => webDo(b.dataset.web));
+  $('web-tabs').onclick = () => openSheet('web');
+  $('web-type').onclick = () => openSheet('type');
+  webUrl.onfocus = () => {     // like a phone browser: the current address, ready to be typed over
+    const front = webFront(state);
+    if (front && !webUrl.value) { webUrl.value = front.url; webUrl.select(); }
+  };
+  webUrl.onblur = () => { webUrl.value = ''; };
+  $('web-form').onsubmit = e => {
+    e.preventDefault();
+    const text = webUrl.value.trim();
+    if (text) webDo('open', {text});
+    webUrl.blur();
+  };
+
   // ---- Touchpad: quiet, coalesced per frame, one move request in flight ----
   const pad = $('pad');
   const quiet = (action, params) => online ? api('/api/commands', {action, params}).catch(() => {}) : Promise.resolve();
@@ -997,11 +1063,15 @@
     touches.set(e.pointerId, {x: e.clientX, y: e.clientY, t: e.timeStamp});
     if (!gesture) {
       gesture = {sx: e.clientX, sy: e.clientY, moved: false, right: false, multi: false};
+      // TV browser: the pad's right edge scrolls with one finger, so the phone works one-handed
+      const box = pad.getBoundingClientRect();
+      gesture.strip = Boolean(state && state.tv_browser) && e.clientX > box.right - 56;
+      if (gesture.strip) return;
       gesture.hold = setTimeout(() => {
         if (gesture && !gesture.moved && !gesture.multi) { gesture.right = true; haptic('long'); quiet('rightclick', {}); }
       }, 550);
     } else {
-      gesture.multi = true; clearTimeout(gesture.hold);
+      gesture.multi = true; gesture.strip = false; clearTimeout(gesture.hold);
       queue = []; remX = remY = 0;
     }
   });
@@ -1010,6 +1080,12 @@
     if (!t || !gesture) return;
     const dx = e.clientX - t.x, dy = e.clientY - t.y, dt = e.timeStamp - t.t;
     t.x = e.clientX; t.y = e.clientY; t.t = e.timeStamp;
+    if (gesture.strip) {
+      gesture.moved = true;
+      scrollAcc += dy;
+      flushScroll();
+      return;
+    }
     if (gesture.multi) {
       if (touches.size >= 2) scrollAcc += dy / touches.size;
       flushScroll();
@@ -1032,7 +1108,7 @@
     if (!touches.delete(e.pointerId) || !gesture) return;
     if (touches.size) return;
     clearTimeout(gesture.hold);
-    if (!cancelled && !gesture.moved && !gesture.right && !gesture.multi) { quiet('click', {}); }
+    if (!cancelled && !gesture.moved && !gesture.right && !gesture.multi && !gesture.strip) { quiet('click', {}); }
     gesture = null; scrollAcc = 0; remX = remY = 0;
   }
   pad.addEventListener('pointerup', e => endTouch(e, false));

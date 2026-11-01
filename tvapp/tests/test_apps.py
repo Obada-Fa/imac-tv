@@ -166,8 +166,11 @@ class AppsTests(unittest.TestCase):
     def test_window_hints_and_matching(self):
         self.write("brave-browser", "Brave", exec_="/usr/bin/brave-browser-stable %U", extra="StartupWMClass=Brave-browser")
         self.write("org.rustdesk.RustDesk", "RustDesk", exec_="flatpak run org.rustdesk.RustDesk")
-        self.assertTrue(apps.matches_window("desktop:brave-browser", "brave-browser.brave-browser"))
-        self.assertTrue(apps.matches_window("desktop:brave-browser", "Brave-browser.Brave-browser"))
+        self.write("firefox", "Firefox", exec_="firefox %U", extra="StartupWMClass=Firefox")
+        self.assertTrue(apps.matches_window("desktop:firefox", "Navigator.firefox"))
+        # Brave runs as the TV's own kiosk window; a normal Brave window is not it
+        self.assertTrue(apps.matches_window("desktop:brave-browser", "brave-browser (/data/brave-tv).imactvbrave"))
+        self.assertFalse(apps.matches_window("desktop:brave-browser", "brave-browser.brave-browser"))
         self.assertTrue(apps.matches_window("desktop:org.rustdesk.RustDesk", "rustdesk.rustdesk"))
         self.assertFalse(apps.matches_window("desktop:brave-browser", "firefox.firefox"))
         self.assertNotIn("flatpak", apps.window_hints("desktop:org.rustdesk.RustDesk"))

@@ -29,6 +29,7 @@ from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
 from widgets import chrome, glass  # noqa: E402
+from widgets.browser_menu import BrowserMenu  # noqa: E402
 from widgets.playback import PlaybackSuggestion
 from theme import theme_css
 from widgets.settings import SettingsScreen, show_trial_sheet, settings_css  # noqa: E402
@@ -151,6 +152,7 @@ class Home(Gtk.Window):
         self.playback_prompt_id = None
         self.modal_open = False     # legacy flag, no longer set: overlays use self.sheet
         self.sheet = None
+        self.browser_menu = None
         self.net = None
         self.code = None
         self.remote = None
@@ -761,6 +763,13 @@ class Home(Gtk.Window):
             if home is not None and hasattr(home, "next_viz") and home.next_viz():
                 self.write_viz_state(force=True)
             return
+        if name == "browser_menu":              # over the TV browser: Home itself stays behind it
+            if self.browser_menu is None:
+                self.browser_menu = BrowserMenu(self.scale)
+            self.browser_menu.toggle()
+            return
+        if getattr(self, "browser_menu", None) is not None:
+            self.browser_menu.close()
         # Every request means the controller has already switched to Home: count Home as the app in front now,
         # so its animation and timers run from the first frame instead of after the next /api/state poll.
         self.ui_at = time.monotonic()

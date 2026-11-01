@@ -78,6 +78,16 @@
     <div id="browse" class="browse">
       <form id="search-box" class="searchbox" hidden autocomplete="off"><input id="search-input" type="search" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type to search on the TV" aria-label="Search text"><button type="button" id="search-del" class="hb" aria-label="Backspace"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11v12H9l-5-6zM12 10l4 4M16 10l-4 4"/></svg></button></form>
       <button id="mic-mute" type="button" class="wide micbtn" aria-pressed="false" hidden>Phone mic on · Tap to mute</button>
+      <div id="webnav" class="webnav" hidden>
+        <form id="web-form" class="searchbox" autocomplete="off"><input id="web-url" type="text" inputmode="url" enterkeyhint="go" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search or type a website" aria-label="Search or type a website"></form>
+        <div class="webbar">
+          <button data-web="back" type="button" aria-label="Previous page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <button data-web="forward" type="button" aria-label="Next page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+          <button data-web="reload" type="button" aria-label="Reload"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12a7 7 0 1 1-2-4.9M19 4v4h-4"/></svg></button>
+          <button id="web-type" type="button" aria-label="Type on the page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8"/></svg></button>
+          <button id="web-tabs" type="button" aria-label="Tabs and browser options"><b id="web-tab-count">1</b></button>
+        </div>
+      </div>
       <div id="hive" class="hive">
         <div id="dpad" class="dpad">
           <button data-action="up" type="button" class="cell seg" aria-label="Up"></button>
