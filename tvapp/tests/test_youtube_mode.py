@@ -289,6 +289,38 @@ class ServerPopUpTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.c.app, "youtube")
 
+    def test_visualizer_keeps_a_new_video_behind_home(self):
+        self.c.visualizer_state = mock.Mock(return_value={"active": True, "mode": "edge"})
+        self.tick()
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
+    def test_track_change_gap_in_the_visualizer_does_not_pop(self):
+        self.c.visualizer_state = mock.Mock(return_value={"active": True, "mode": "edge"})
+        self.tick()
+        self.c.visualizer_state.return_value = {"active": False, "mode": None}   # resting between tracks
+        self.now = track("Next video", "Some Tech")
+        self.tick()
+        self.assertEqual(self.c.app, "home")
+        self.activate.assert_not_called()
+
+    def test_track_from_the_visualizer_stays_down_but_later_videos_pop(self):
+        self.c.visualizer_state = mock.Mock(return_value={"active": True, "mode": "edge"})
+        self.tick()
+        self.c.visualizer_state.return_value = {"active": False, "mode": None}
+        self.c._yt_viz_until = 0.0                    # grace over
+        self.tick()
+        self.assertEqual(self.c.app, "home")          # same track, even with the visualizer gone
+        self.now = track("Next video", "Some Tech")
+        self.tick()
+        self.assertEqual(self.c.app, "youtube")
+
+    def test_phone_video_toggle_still_pops_over_the_visualizer(self):
+        self.c.visualizer_state = mock.Mock(return_value={"active": True, "mode": "edge"})
+        self.tick()
+        self.c.set_youtube_mode("video")
+        self.assertEqual(self.c.app, "youtube")
+
     def test_home_dismisses_the_track(self):
         self.tick()
         self.assertEqual(self.c.app, "youtube")

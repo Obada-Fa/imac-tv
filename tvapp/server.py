@@ -482,6 +482,7 @@ class Controller:
         self._yt_popped = None          # track VacuumTube was brought up for
         self._yt_dismissed = None       # track the user sent back to Home
         self._yt_home_until = 0.0       # absorb a metadata gap when Home was pressed
+        self._yt_viz_until = 0.0        # the visualizer showed recently: don't bring YouTube over it
         self._yt_pending_mode = None    # (deadline, mode) while MPRIS changes tracks
         self._yt_busy = False
         self._yt_tick_at = 0.0
@@ -796,6 +797,7 @@ class Controller:
                 self._yt_home_until = 0.0
 
     YT_TICK = 3.0
+    YT_VIZ_GRACE = 20.0     # the visualizer rests in the silence between two tracks; this bridges it
 
     def _youtube_overrides(self):
         """youtube_modes from home.json, re-read only when the file changed."""
@@ -859,7 +861,12 @@ class Controller:
                 return
             mode, _reason, pending = self._youtube_classify(state)
             key = nowplaying.track_key(state)
+            now = time.monotonic()
+            if self.visualizer_state()["active"]:
+                self._yt_viz_until = now + self.YT_VIZ_GRACE
             with self.lock:
+                if now < self._yt_viz_until and key and not pending:
+                    self._yt_dismissed = key    # stays behind Home after the visualizer too
                 app, dismissed, popped = self.app, self._yt_dismissed, self._yt_popped
             if mode != "video" or app != "home" or pending:
                 return
