@@ -111,6 +111,13 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(info["signal"], 85)
             self.assertEqual(info["ip"], "192.168.68.124")
 
+    def test_external_screen_has_no_brightness_control(self):
+        with mock.patch.object(server.display, "external_connected", return_value=True):
+            self.assertEqual(server.brightness(), {"level": None, "available": False, "external": True})
+            with mock.patch.object(server, "command") as run, self.assertRaises(RuntimeError):
+                server.Controller.set_brightness(None, 50)
+            run.assert_not_called()
+
     def test_qr_pixbuf_generates_correct_dimensions(self):
         import home
         pb = home.make_qr_pixbuf("http://192.168.68.124:8765/?pair=123456", 80)

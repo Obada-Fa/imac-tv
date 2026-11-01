@@ -325,7 +325,12 @@
     $('volume-label').textContent = vol; $('np-volume-label').textContent = vol;
     const light = s.brightness;
     const off = Boolean(s.screen_off);
-    const reason = light === undefined ? 'Restart the TV controller to update' :
+    // An HDMI or DisplayPort screen sets its own brightness: only the screen-off button stays.
+    const external = Boolean(light && light.external);
+    $('brightness').parentElement.classList.toggle('external', external);
+    $('brightness').hidden = external;
+    $('brightness-level').hidden = external;
+    const reason = external ? '' : light === undefined ? 'Restart the TV controller to update' :
       light.level == null ? 'This display has no adjustable backlight' :
       light.available === false ? 'Run setup-privileges.sh on the TV to allow brightness control' : '';
     const power = $('screen-off');
@@ -339,7 +344,7 @@
     $('brightness').title = off ? 'The screen is off; audio keeps playing' : reason || 'TV screen brightness';
     if (off) {
       $('brightness-level').textContent = 'Off';
-    } else if (!reason && !draggingBrightness) {
+    } else if (!reason && !external && !draggingBrightness) {
       $('brightness').value = light.level;
       $('brightness-level').textContent = `${light.level}%`;
       fillRange($('brightness'));

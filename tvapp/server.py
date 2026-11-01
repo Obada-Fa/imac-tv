@@ -195,6 +195,9 @@ def backlight_device():
 
 
 def brightness():
+    # An HDMI or DisplayPort screen sets its own brightness; the laptop backlight would only dim the lid panel.
+    if display and display.external_connected():
+        return {"level": None, "available": False, "external": True}
     device = backlight_device()
     if device:
         try:
@@ -1684,6 +1687,8 @@ class Controller:
     def set_brightness(self, level):
         if isinstance(level, bool) or not isinstance(level, int) or not 5 <= level <= 100:
             raise ValueError("Brightness must be between 5 and 100")
+        if display and display.external_connected():
+            raise RuntimeError("Set the brightness on the screen itself: it is connected over HDMI or DisplayPort")
         if not backlight_device():
             raise RuntimeError("This display has no adjustable backlight")
         if not Path(BRIGHTNESS_HELPER).exists():

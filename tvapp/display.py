@@ -32,6 +32,7 @@ Screen-off idle:
     subscribe(cb) / unsubscribe(cb)    cb(live: bool) on the GTK main loop when it changes
     start_watch()                 polls every 5 s (file reads; `xset q` at most every 10 s), GTK process only
     poke()                        user input: re-check now, and count the screen as live for a minute
+    external_connected() -> bool  a screen is plugged into HDMI/DP/etc: the phone hides the brightness slider
 
 Test hooks: IMACTV_FAKE_SCREEN=on|off|<path to a file holding on/off>; IMACTV_FAKE_XRANDR=<path to an
 `xrandr --query` text> makes list/apply work on that file instead of the X server (apply moves the `*`).
@@ -484,6 +485,21 @@ def sysfs_screen(drm_root="/sys/class/drm", lid_glob="/proc/acpi/button/lid/*/st
         except OSError:
             pass
     return screen_from_connectors(conns, lid_closed)
+
+
+def external_connected(drm_root="/sys/class/drm"):
+    """True when an HDMI, DisplayPort or other non-built-in connector has a screen on it: its brightness is not ours to set."""
+    for d in glob.glob(os.path.join(drm_root, "card*-*")):
+        name = os.path.basename(d).split("-", 1)[1]
+        if name.startswith(("Writeback",) + INTERNAL):
+            continue
+        try:
+            with open(os.path.join(d, "status")) as fh:
+                if fh.read().strip() == "connected":
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def screen_from_connectors(conns, lid_closed=False):

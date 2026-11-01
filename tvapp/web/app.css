@@ -77,6 +77,7 @@ button:disabled{opacity:.38;cursor:default;transform:none;box-shadow:none}
 /* Brightness well + fullscreen node */
 .topbar{display:flex;gap:10px;align-items:center}
 .brightness{flex:1;min-width:0;display:flex;align-items:center;gap:10px;height:50px;padding:0 14px 0 6px;border-radius:14px}
+.brightness.external{flex:none;padding:0 3px;margin-right:auto}
 #screen-off{width:44px;flex:none;color:#ffdca8}
 #screen-off svg{width:50%;height:50%}
 #screen-off .slash{opacity:0}#screen-off.off{color:#ffb98a}#screen-off.off .slash{opacity:1}#screen-off.off .power{opacity:0}

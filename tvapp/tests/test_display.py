@@ -252,6 +252,20 @@ class ScreenTest(unittest.TestCase):
             (lid / "state").write_text("state:      closed\n")
             self.assertFalse(display.sysfs_screen(drm, lids))
 
+    def test_external_connected(self):
+        with tempfile.TemporaryDirectory() as d:
+            def conn(name, status):
+                p = Path(d, name)
+                p.mkdir()
+                Path(p, "status").write_text(status + "\n")
+            self.assertFalse(display.external_connected(d))
+            conn("card0-eDP-1", "connected")
+            conn("card0-Writeback-1", "connected")
+            conn("card0-HDMI-A-1", "disconnected")
+            self.assertFalse(display.external_connected(d))     # the built-in panel alone keeps the slider
+            conn("card0-DP-1", "connected")
+            self.assertTrue(display.external_connected(d))
+
     def test_xset(self):
         self.assertFalse(display.xset_monitor("DPMS is Enabled\n  Monitor is Off\n"))
         self.assertFalse(display.xset_monitor("  Monitor is in Standby\n") is True)
