@@ -173,7 +173,25 @@ if [ "$(streamlink_major)" -lt 6 ] 2>/dev/null || [ -z "$(streamlink_major)" ]; 
   printf "Installing a current streamlink for Twitch via pip...\n"
   python3 -m pip install --user --upgrade streamlink 2>/dev/null \
     || python3 -m pip install --user --upgrade --break-system-packages streamlink 2>/dev/null \
-    || printf "${YELLOW}Could not install streamlink; the Twitch app will ask for it. Try: pip install --user streamlink${NC}\n"
+    || true
+fi
+# No pip (Zorin and Ubuntu ship without it) and no sudo for apt: use streamlink's official AppImage instead.
+# It is extracted rather than run directly, so it doesn't need FUSE.
+if [ "$(streamlink_major)" -lt 6 ] 2>/dev/null || [ -z "$(streamlink_major)" ]; then
+  printf "Installing streamlink for Twitch from its AppImage...\n"
+  SL_DIR="$HOME/.local/share/imactv/streamlink"
+  SL_URL="$(curl -fsSL --max-time 20 https://api.github.com/repos/streamlink/streamlink-appimage/releases/latest 2>/dev/null \
+    | grep -o '"browser_download_url": *"[^"]*/streamlink-[^"+]*x86_64\.AppImage"' | sed 's/.*"\(https[^"]*\)"/\1/' | head -1)"
+  SL_TMP="$(mktemp -d)"
+  if [ "$(uname -m)" = x86_64 ] && [ -n "$SL_URL" ] && curl -fsSL --max-time 300 -o "$SL_TMP/streamlink.AppImage" "$SL_URL" \
+     && chmod +x "$SL_TMP/streamlink.AppImage" && (cd "$SL_TMP" && ./streamlink.AppImage --appimage-extract >/dev/null); then
+    rm -rf "$SL_DIR" && mkdir -p "$(dirname "$SL_DIR")" "$HOME/.local/bin" && mv "$SL_TMP/squashfs-root" "$SL_DIR"
+    ln -sf "$SL_DIR/AppRun" "$HOME/.local/bin/streamlink"
+  fi
+  rm -rf "$SL_TMP"
+  [ -n "$(streamlink_major)" ] && [ "$(streamlink_major)" -ge 6 ] 2>/dev/null \
+    && printf "${GREEN}✓ streamlink $(streamlink_major) installed.${NC}\n" \
+    || printf "${YELLOW}Could not install streamlink; Twitch won't play. Try: sudo apt install streamlink${NC}\n"
 fi
 
 # 2. TV Applications (VacuumTube) and streaming engine
