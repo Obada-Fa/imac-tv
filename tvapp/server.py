@@ -33,6 +33,7 @@ import backgrounds
 import browser
 import nowplaying
 import phonemic
+import audio_output
 import phonespeaker
 import sysinfo
 import twitch
@@ -2153,6 +2154,14 @@ class Controller:
                 return self.close_app(params.get("app"), restart=True)
             if action == "mic_mute":
                 return {"ok": True, "muted": PHONE_MIC.toggle_mute()}
+            if action == "audio_outputs":
+                return {"outputs": audio_output.outputs()}
+            if action == "audio_output":
+                output = params.get("id")
+                if not isinstance(output, str):
+                    raise ValueError("Invalid sound output")
+                audio_output.select(output)
+                return {"outputs": audio_output.outputs()}
             if action == "mute":
                 command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
                 percent, muted = self._system_volume()

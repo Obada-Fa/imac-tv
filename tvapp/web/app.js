@@ -748,12 +748,13 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'apps') { renderAppsSheet(); return; }
     if (name === 'web') { renderWebSheet(); return; }
+    if (name === 'output') { renderOutputSheet(); return; }
     if (name === 'type') {
       content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
       $('text-form').onsubmit = e => {
@@ -770,14 +771,31 @@
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
       $('off-cancel').onclick = closeSheet;
     } else {
-      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div class="sheet-row"><button id="quick-subtitles" type="button">Subtitles</button></div><div class="sheet-row"><button data-action="menu">Menu</button><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
+      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Sound</label><div class="sheet-row"><button id="quick-output" type="button">Sound output</button></div><label>Playback</label><div class="sheet-row"><button id="quick-subtitles" type="button">Subtitles</button></div><div class="sheet-row"><button data-action="menu">Menu</button><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
       $('turn-off').onclick = () => openSheet('off');
       $('quick-subtitles').onclick = () => openSheet('subs');
+      $('quick-output').onclick = () => openSheet('output');
       content.querySelectorAll('[data-minutes]').forEach(b => b.onclick = () => {
         send('timer', {minutes: Number(b.dataset.minutes) || null}).then(refresh).catch(() => {});
       });
       renderMoreDynamic();
     }
+  }
+
+  async function renderOutputSheet(pick) {
+    const content = $('sheet-content');
+    if (!pick) content.innerHTML = '<p>Looking for sound outputs…</p>';
+    let outputs = null;
+    try {
+      outputs = (await (pick ? send('audio_output', {id: pick}) : send('audio_outputs'))).result.outputs;
+    } catch (e) {
+      if (!pick) outputs = [];
+    }
+    if (sheetName !== 'output' || !outputs) return;
+    const list = document.createElement('div'); list.className = 'tracklist';
+    for (const o of outputs) list.append(chip((o.current ? '✓ ' : '') + o.name, o.current, () => { if (!o.current) renderOutputSheet(o.id); }));
+    if (!outputs.length) { const p = document.createElement('p'); p.textContent = 'No sound outputs found on the TV.'; list.append(p); }
+    content.replaceChildren(list);
   }
 
   function renderMoreDynamic() {

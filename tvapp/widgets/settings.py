@@ -3,6 +3,7 @@
 Display operations run on workers; the shell owns the confirmation countdown so
 it survives resolution changes and trials initiated by a paired phone.
 """
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -12,6 +13,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import audio_output  # noqa: E402
 import backgrounds  # noqa: E402
 import display  # noqa: E402
 import settings_model
@@ -94,7 +96,7 @@ def chunk(seq, n):
 SUBTITLES = {
     "Appearance": "Make it yours. Shape the look and choose a lighter experience.",
     "Ambient": "Set the mood for the moments between watching.",
-    "Display": "A comfortable picture, matched to your screen.",
+    "Display": "A comfortable picture matched to your screen, and where the sound goes.",
     "Playback": "Your languages, quality and watching preferences.",
     "Connections": "Keep your phone and streaming services close.",
     "System": "Everything you need to keep your TV running smoothly.",
@@ -143,6 +145,7 @@ class SettingsScreen(Screen):
         self.torbox_busy = False
         self.loading = False
         self.outputs = None
+        self.sound_outputs = []
         self.busy = False
         self.qr_refresh = None
         self.signal = None
@@ -328,14 +331,20 @@ class SettingsScreen(Screen):
             except display.DisplayError as exc:
                 print("settings:", exc)
                 outs = []
-            GLib.idle_add(self.loaded, outs)
+            try:
+                sound = audio_output.outputs()
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                print("settings:", exc)
+                sound = []
+            GLib.idle_add(self.loaded, outs, sound)
         threading.Thread(target=work, daemon=True).start()
 
-    def loaded(self, outs):
+    def loaded(self, outs, sound=()):
         if self.disposed:
             return False
         self.loading = False
         self.outputs = outs
+        self.sound_outputs = list(sound)
         had = self.shell.get_focus()
         key = getattr(had, "sel_key", None) if had and had.is_ancestor(self) else None
         self.remember()
@@ -448,6 +457,10 @@ class SettingsScreen(Screen):
         if shown:
             self.note("A new resolution goes back by itself after %d seconds unless you keep it."
                       % display.TRIAL_SECONDS, top=22)
+        if self.sound_outputs:
+            self.section('Sound output')
+            self.grid([self.button(o["name"], "", o["current"], ("sound", o["id"]), lambda i=o["id"]: self.pick_sound(i))
+                       for o in self.sound_outputs])
 
     def render_connections(self):
         px = self.shell.px
@@ -861,6 +874,22 @@ class SettingsScreen(Screen):
             GLib.idle_add(self.picked, err)
         threading.Thread(target=work, daemon=True).start()
         shell.toast("Switching to %s…" % fmt_mode(mode), 2)
+
+    def pick_sound(self, output_id):
+        def work():
+            err = None
+            try:
+                audio_output.select(output_id)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                err = str(exc)
+            GLib.idle_add(self.sound_picked, err)
+        threading.Thread(target=work, daemon=True).start()
+
+    def sound_picked(self, err):
+        if err:
+            self.shell.toast("Couldn't change the sound output: " + err[:80], 6)
+        self.load()
+        return False
 
     def picked(self, err):
         self.busy = False
