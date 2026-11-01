@@ -906,6 +906,12 @@ class AmbientHomeScreen(Screen):
             self.now_state = state          # same track; the music/video answer may have arrived
         return False
 
+    def set_apps_rev(self, rev):
+        """apps_rev from the state poll: the Apps row rebuilds when favorites changed."""
+        for w in self.items:
+            if hasattr(w, "set_rev"):
+                w.set_rev(rev)
+
     def update_bottom_label(self):
         cap, credit = bottom_label(self.current_item, self.now_state)
         self.cap.set_text(cap)

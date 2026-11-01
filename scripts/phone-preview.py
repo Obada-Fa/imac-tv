@@ -22,8 +22,33 @@ import widgets
 from media.config import DEFAULTS
 
 
+SAMPLE_APPS = ["Brave", "RustDesk", "Firefox", "Files", "Terminal", "VLC media player", "Spotify", "Steam", "LibreOffice Writer",
+               "Settings", "Calculator", "Text Editor", "OBS Studio", "GIMP", "Kodi",
+               "An application with a really quite remarkably long name that cannot possibly fit on one line"]
+
+
+def sample_apps(count):
+    # Built-in tiles first, then fake PC apps; every third has no icon and every seventh has a broken one
+    items = [{"id": "movies", "name": "Movies", "kind": "screen", "builtin_kind": "movies"},
+             {"id": "twitch", "name": "Twitch", "kind": "screen", "builtin_kind": "twitch"},
+             {"id": "youtube", "name": "YouTube", "kind": "app", "builtin_kind": "youtube"}]
+    for i in range(count):
+        base = SAMPLE_APPS[i % len(SAMPLE_APPS)]
+        name = base if i < len(SAMPLE_APPS) else f"{base} {i}"
+        slug = f"{base.lower().replace(' ', '-')}-{i}"
+        items.append({"id": f"desktop:{slug}", "name": name, "kind": "desktop", "builtin_kind": None})
+    for i, a in enumerate(items):
+        a["favorite"] = a["id"] in ("movies", "youtube") or a["id"] == "desktop:brave-0"
+        a["icon"] = None if i % 3 == 2 else "/api/apps/icon?id=" + a["id"].replace(":", "%3A")
+    return items
+
+
 class Preview(SimpleHTTPRequestHandler):
     native_bridge = None
+    apps = []
+    max_favorites = 6
+    apps_rev = 1
+    desktop_app = None   # id of a "running" desktop app, for the touchpad view
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "tvapp/web"), **kwargs)
 
@@ -55,12 +80,30 @@ class Preview(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif path == "/api/apps":
+            self.json(self.apps_payload())
+        elif path == "/api/apps/icon":
+            ident = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
+            if ident.startswith("desktop:") and hash(ident) % 7 == 0:
+                self.json({"error": "no icon"}, 404)   # a missing icon file: the sheet shows a letter instead
+                return
+            hue = sum(map(ord, ident)) * 47 % 360   # a stand-in icon: a coloured disc per app
+            body = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="hsl({hue},55%,48%)"/>'
+                    f'<circle cx="24" cy="24" r="9" fill="hsl({hue},70%,86%)"/></svg>').encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/api/state":
-            self.json({"app": "home", "phase": "ready", "gui": True, "playback": {"active": False},
+            extra = {}
+            if self.desktop_app:
+                extra = {"app": self.desktop_app, "app_name": next((a["name"] for a in self.apps if a["id"] == self.desktop_app), "App")}
+            self.json({**{"apps_rev": self.apps_rev}, "app": "home", "phase": "ready", "gui": True, "playback": {"active": False},
                        "volume": 45, "muted": False, "brightness": {"level": 80, "available": True},
                        "fullscreen": True, "screen_off": False, "timer": {"active": False},
                        "torbox": {"configured": True}, "remote": {"connected": True, "count": 1},
-                       "updates": {"status": "up_to_date", "message": "Your TV is up to date."}})
+                       "updates": {"status": "up_to_date", "message": "Your TV is up to date."}, **extra})
         elif path == "/api/system":
             gb = 1024 ** 3
             wave = math.sin(time.time() / 3)   # the numbers drift so live updates show
@@ -97,7 +140,32 @@ class Preview(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
+    def apps_payload(self):
+        return {"apps": sorted(self.apps, key=lambda a: (not a["favorite"], a["name"].lower() if not a["favorite"] else "")),
+                "max_favorites": self.max_favorites}
+
     def do_POST(self):
+        # Only the apps commands act, on in-memory sample data; everything else stays disabled
+        if urlsplit(self.path).path == "/api/commands":
+            try:
+                req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            except ValueError:
+                req = {}
+            action, params = req.get("action"), req.get("params") or {}
+            if action == "app_favorite":
+                app = next((a for a in self.apps if a["id"] == params.get("id")), None)
+                if not app:
+                    return self.json({"error": "Unknown app"}, 400)
+                if params.get("favorite") and not app["favorite"] and sum(a["favorite"] for a in self.apps) >= self.max_favorites:
+                    return self.json({"error": "Home is full: remove a favorite first"}, 400)
+                app["favorite"] = bool(params.get("favorite"))
+                type(self).apps_rev += 1
+                return self.json(self.apps_payload())
+            if action == "app_open":
+                app = next((a for a in self.apps if a["id"] == params.get("id")), None)
+                if not app:
+                    return self.json({"error": "Unknown app"}, 400)
+                return self.json({"app": app["id"], "phase": "opening"})
         self.json({"error": "Documentation preview: TV commands and settings changes are disabled."}, 403)
 
 
@@ -105,7 +173,14 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=8876)
     ap.add_argument("--native-bridge", type=Path, help="Preview the Flutter app's bridge with inert native controls")
+    ap.add_argument("--apps", type=int, default=12, help="How many sample PC apps the Apps sheet lists")
+    ap.add_argument("--max-favorites", type=int, default=6)
+    ap.add_argument("--desktop-app", action="store_true", help="Pretend a desktop app is selected on the TV (touchpad view)")
     args = ap.parse_args()
+    Preview.apps = sample_apps(args.apps)
+    Preview.max_favorites = args.max_favorites
+    if args.desktop_app:
+        Preview.desktop_app = next(a["id"] for a in Preview.apps if a["kind"] == "desktop")
     if args.native_bridge:
         Preview.native_bridge = args.native_bridge.resolve(strict=True)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Preview)

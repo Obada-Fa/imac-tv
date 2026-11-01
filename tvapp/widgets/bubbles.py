@@ -146,6 +146,19 @@ def _icon(cr, kind, cx, cy, s):
             cr.move_to(cx + s * ex, cy - s * 0.3)
             cr.line_to(cx + s * ex, cy + s * 0.08)
             cr.stroke()
+    elif kind == "apps":         # a 2 x 2 grid of rounded squares
+        side, gap = s * 0.5, s * 0.14
+        cr.set_line_width(max(2.0, s * 0.1))
+        for ix in (-1, 1):
+            for iy in (-1, 1):
+                x0, y0 = cx + ix * (side + gap) / 2 - side / 2, cy + iy * (side + gap) / 2 - side / 2
+                r = side * 0.24
+                cr.new_sub_path()
+                for ax, ay, a in ((x0 + side - r, y0 + r, -90), (x0 + side - r, y0 + side - r, 0),
+                                  (x0 + r, y0 + side - r, 90), (x0 + r, y0 + r, 180)):
+                    cr.arc(ax, ay, r, math.radians(a), math.radians(a + 90))
+                cr.close_path()
+                cr.stroke()
     elif kind == "series":
         for i, dy in enumerate((-0.42, 0.0, 0.42)):
             cr.set_source_rgba(1, 1, 1, 0.92 - i * 0.25)
@@ -177,7 +190,7 @@ def _icon(cr, kind, cx, cy, s):
 
 TINTS = {"movies": (0.36, 0.52, 0.86), "series": (0.62, 0.42, 0.84),
          "youtube": (0.82, 0.30, 0.32), "discord": (0.36, 0.40, 0.90), "twitch": (0.57, 0.27, 1.0), "search": (0.28, 0.66, 0.62),
-         "settings": (0.50, 0.56, 0.66)}
+         "settings": (0.50, 0.56, 0.66), "apps": (0.40, 0.62, 0.80)}
 
 
 def _fit_cover(cr, pb, d):
@@ -195,9 +208,10 @@ class Bubble(Gtk.DrawingArea):
     """One focusable round bubble: poster (with optional progress ring) or glass action disc."""
 
     def __init__(self, shell, r, title="", sub="", kind=None, poster_url=None, progress=None,
-                 on_activate=None, seed=0, eq=None):
+                 on_activate=None, seed=0, eq=None, app=None):
         super().__init__()
         self.now = eq
+        self.app, self.app_icon = app, None      # a desktop app: its icon on a tinted disc, the name below
         self.shell, self.r = shell, r
         self.title, self.sub, self.kind = title, sub, kind
         self.progress = progress
@@ -224,8 +238,16 @@ class Bubble(Gtk.DrawingArea):
         if poster_url:
             d = round(2 * r * (1 + SWELL))
             load_any(poster_url, d, d, self.set_poster)
+        elif app and not kind and app.get("icon"):
+            screens.load_app_icon(app, round(2 * r * (1 + SWELL)), self.set_app_icon)
 
     # ---- state
+    def set_app_icon(self, pb):
+        if pb is not None:
+            self.app_icon, self.body = pb, None
+            self.queue_draw()
+        return False
+
     def set_poster(self, pb):
         if pb is not None:
             self.poster, self.body = pb, None
@@ -305,6 +327,8 @@ class Bubble(Gtk.DrawingArea):
             cr.paint()
         else:
             tr, tg, tb = TINTS.get(self.kind, (0.5, 0.55, 0.65))
+            if self.app and not self.kind and self.app_icon is not None:
+                tr, tg, tb = screens.app_tint(self.app_icon, (tr, tg, tb))
             g = cairo.LinearGradient(0, 0, d, d)
             g.add_color_stop_rgba(0, tr, tg, tb, 0.62)
             g.add_color_stop_rgba(1, tr * 0.45, tg * 0.45, tb * 0.55, 0.78)
@@ -315,7 +339,9 @@ class Bubble(Gtk.DrawingArea):
             hi.add_color_stop_rgba(1, 1, 1, 1, 0)
             cr.set_source(hi)
             cr.paint()
-            if self.kind:
+            if self.app and not self.kind:
+                self.draw_app_face(cr, d)
+            elif self.kind:
                 _icon(cr, self.kind, d / 2, d / 2 - d * 0.1, d * 0.2)
                 cr.set_source_rgba(1, 1, 1, 0.95)
                 lay = Pango.Layout.new(self.get_pango_context())
@@ -335,6 +361,29 @@ class Bubble(Gtk.DrawingArea):
         cr.set_line_width(1.5)
         cr.stroke()
         return surf
+
+    def draw_app_face(self, cr, d):
+        """A desktop app on the disc: its icon (or, until it loads / when it has none, the first letter)."""
+        if self.app_icon is not None:
+            side = d * 0.58
+            k = side / max(self.app_icon.get_width(), self.app_icon.get_height())
+            cr.save()
+            cr.translate((d - self.app_icon.get_width() * k) / 2, (d - self.app_icon.get_height() * k) / 2)
+            cr.scale(k, k)
+            Gdk.cairo_set_source_pixbuf(cr, self.app_icon, 0, 0)
+            cr.paint()
+            cr.restore()
+            return
+        lay = Pango.Layout.new(self.get_pango_context())
+        fd = Pango.FontDescription("Inter, Noto Sans, Sans")
+        fd.set_absolute_size(round(d * 0.40) * Pango.SCALE)
+        fd.set_weight(Pango.Weight.LIGHT)
+        lay.set_font_description(fd)
+        lay.set_text((self.app.get("name") or "?")[:1].upper(), -1)
+        tw, th = lay.get_pixel_size()
+        cr.set_source_rgba(1, 1, 1, 0.85)
+        cr.move_to((d - tw) / 2, (d - th) / 2)
+        PangoCairo.show_layout(cr, lay)
 
     def on_draw(self, _w, cr):
         if cairo is None:
@@ -395,7 +444,7 @@ class Bubble(Gtk.DrawingArea):
         # label under poster bubbles
         if self.label_h and self.title:
             ty = self.side - 4 * s + 2
-            w = 2 * self.r * 1.1
+            w = 2 * self.r * (1.5 if self.app else 1.1)
             a = 0.62 + 0.38 * f
             h = self.text(cr, self.title, round(21 * s), Pango.Weight.SEMIBOLD, (self.side - w) / 2, ty, w,
                           (1, 1, 1, a))
@@ -533,7 +582,8 @@ class BubbleRow(RowBase):
 
     def __init__(self, shell, specs, height, seed=1, base=1.0, spread=0.18, max_r=None, width_frac=0.8):
         super().__init__(shell, height)
-        label = shell.px(54) if any(sp.get("poster_url") is not None for sp in specs) else 0
+        label = shell.px(54) if any(sp.get("poster_url") is not None or (sp.get("app") and not sp.get("kind"))
+                                    for sp in specs) else 0
         lay = cluster_layout(len(specs), shell.sw, height - label, seed=seed, base=base, spread=spread,
                              max_r=max_r, width_frac=width_frac)
         for i, (spec, p) in enumerate(zip(specs, lay)):

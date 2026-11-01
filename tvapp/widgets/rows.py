@@ -5,12 +5,12 @@ from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
+from gi.repository import Gtk, Pango
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import screens  # noqa: E402
 from . import Widget, register  # noqa: E402
-from .bubbles import BubbleRow  # noqa: E402
+from .bubbles import BubbleRow, RowBase  # noqa: E402
 from . import network  # noqa: E402
 
 MAX_CONTINUE = 5
@@ -82,9 +82,13 @@ class RowWidget(Widget):
         self.host.set_visible(bool(items))
         self.host.set_size_request(-1, h if items else 0)
         if self.row and (focus_first or had is not None):
-            idx = 0 if focus_first else min(had, len(self.row.bubbles) - 1)
+            idx = 0 if focus_first else self.focus_target(had, items)
             target = self.row.bubbles[idx]
             GLib_idle(target.grab_focus)
+
+    def focus_target(self, had, items):
+        """Index to focus after a rebuild that had focus on tile `had`."""
+        return min(had, len(self.row.bubbles) - 1)
 
     def focus_items(self):
         return self.row.focus_items() if self.row else []
@@ -145,22 +149,162 @@ class ContinueWidget(RowWidget):
             self.row.update_now(state)
 
 
+# ---------------------------------------------------------------- the Apps row
+
+FIXED_TILES = (("All apps", "apps", "apps"), ("Search", "search", "search"), ("Settings", "settings", "settings"))
+# Built-in tiles shown while there is no apps module at all, so Home is never an empty row
+FALLBACK = (("Movies", "movies", "screen"), ("Series", "series", "screen"), ("YouTube", "youtube", "app"),
+            ("Twitch", "twitch", "screen"), ("Discord", "discord", "app"))
+
+
+def fallback_apps():
+    return [{"id": i, "name": n, "kind": k, "favorite": True, "icon": None, "builtin_kind": i} for n, i, k in FALLBACK]
+
+
+def apps_row_specs(favorites):
+    """The Apps row in order: the favorites (apps.home_apps()), then All apps, Search and Settings.
+    -> [{"key", "title", "kind", "app"}]; "app" is the apps.py item for a favorite (None for a fixed tile)."""
+    out = [{"key": it["id"], "title": it.get("name") or it["id"], "kind": it.get("builtin_kind"), "app": it}
+           for it in favorites]
+    out += [{"key": "fixed:" + kind, "title": title, "kind": kind, "app": None} for title, kind, _t in FIXED_TILES]
+    return out
+
+
+class AppNode(network.RoundNode):
+    """A network-style action node that can carry a desktop app's icon (or its first letter) instead of a glyph."""
+
+    def __init__(self, shell, r, title="", kind=None, on_activate=None, seed=0, shape="hexagon", app=None):
+        super().__init__(shell, r, title, kind, on_activate, seed, shape)
+        self.app, self.icon, self.tint = app, None, None
+        if app and not kind and app.get("icon"):
+            screens.load_app_icon(app, round(r * 1.2), self.set_icon)
+
+    def set_icon(self, pb):
+        if pb is not None and network.cairo:
+            side = self.r * 1.05
+            k = side / max(pb.get_width(), pb.get_height())
+            w, h = max(1, round(pb.get_width() * k)), max(1, round(pb.get_height() * k))
+            surf = network.cairo.ImageSurface(network.cairo.FORMAT_ARGB32, w, h)
+            cr = network.cairo.Context(surf)
+            cr.scale(w / pb.get_width(), h / pb.get_height())
+            network.Gdk.cairo_set_source_pixbuf(cr, pb, 0, 0)
+            cr.paint()
+            surf.flush()
+            self.icon, self.tint = surf, screens.app_tint(pb, (0.8, 0.85, 1.0))
+            self.queue_draw()
+        return False
+
+    def draw_body(self, cr, base, f, sc):
+        if not self.app or self.kind:
+            return super().draw_body(cr, base, f, sc)
+        r = self.r
+        cairo = network.cairo
+        cr.set_line_join(cairo.LINE_JOIN_ROUND)
+        self.glow(cr, f, lambda c, g: network.poly_path(c, network.poly_points(self.shape, r + g)))
+        network.poly_path(cr, network.poly_points(self.shape, r))
+        cr.save()
+        cr.clip_preserve()
+        network.paint_frost(cr, base, self, self.photo)
+        tr, tg, tb = self.tint or (0.8, 0.85, 1.0)
+        cr.set_source_rgba(1, 1, 1, 0.10 + 0.05 * f)
+        cr.paint()
+        g = cairo.RadialGradient(-r * 0.3, -r * 0.4, 0, -r * 0.3, -r * 0.4, r * 1.3)
+        g.add_color_stop_rgba(0, tr, tg, tb, 0.30)
+        g.add_color_stop_rgba(1, tr, tg, tb, 0.05)
+        cr.set_source(g)
+        cr.paint()
+        cr.restore()
+        network.poly_path(cr, network.poly_points(self.shape, r - 0.6))
+        cr.set_source_rgba(1, 1, 1, 0.24 + 0.7 * f)
+        cr.set_line_width(1)
+        cr.stroke()
+        if self.icon is not None:
+            cr.set_source_surface(self.icon, -self.icon.get_width() / 2, -self.icon.get_height() / 2)
+            cr.paint()
+        else:
+            self.text(cr, (self.app.get("name") or "?")[:1].upper(), round(r * 0.9), Pango.Weight.LIGHT,
+                      -r * 0.6, -r * 0.62, r * 1.2, (1, 1, 1, 0.85))
+        self.text(cr, self.title, 17, Pango.Weight.SEMIBOLD, -r * 1.4, r + 8, r * 2.8, (1, 1, 1, 0.78 + 0.22 * f))
+
+
+class AppNodeRow(RowBase):
+    """The Apps row in the network style: small glass nodes in an irregular strip. It widens with the tile count so
+    nine tiles keep the spacing seven had."""
+
+    def __init__(self, shell, specs, height, seed=1, shape="hexagon"):
+        super().__init__(shell, height)
+        n = len(specs)
+        width_frac = min(0.8, 0.55 + 0.08 * max(0, n - 7))
+        d = 2 * round(56 * shell.scale)
+        lay = network.row_layout([(d, d)] * n, shell.sw, height - shell.px(34), seed=seed, width_frac=width_frac,
+                                 spread=0.1, gap_scale=2.6)
+        for i, (spec, p) in enumerate(zip(specs, lay)):
+            node = AppNode(shell, d // 2, title=spec["title"], kind=spec.get("kind"), on_activate=spec["on_activate"],
+                           seed=seed * 17 + i, shape=shape, app=spec.get("app"))
+            self.add_node(node, round(p["cx"] - node.cx), round(p["cy"] - node.cy))
+
+
 @register
 class AppsWidget(RowWidget):
+    """Home's apps row: the favorites (apps.home_apps(), at most six, oldest first), then the fixed tiles All apps,
+    Search and Settings. It rebuilds when apps_rev moves, keeping focus on the same tile."""
     id = "apps"
     top, height = 0.70, 0.235
     seed = 11
     max_r, width_frac, spread = 66, 0.5, 0.2
     round_nodes = True
 
+    def __init__(self, shell, config=None):
+        super().__init__(shell, config)
+        self.rev = None
+        self.keys, self.prev_keys = [], []
+        self.apps = []
+
+    def favorites(self):
+        favs = screens.home_app_list()
+        return fallback_apps() if favs is None else favs
+
     def items(self):
         sh = self.shell
-        return [
-            {"title": "Movies", "kind": "movies", "on_activate": lambda: sh.goto_top("movies")},
-            {"title": "Series", "kind": "series", "on_activate": lambda: sh.goto_top("series")},
-            {"title": "YouTube", "kind": "youtube", "on_activate": lambda: sh.open_app("youtube")},
-            {"title": "Twitch", "kind": "twitch", "on_activate": lambda: sh.goto_top("twitch")},
-            {"title": "Discord", "kind": "discord", "on_activate": lambda: sh.open_app("discord")},
-            {"title": "Search", "kind": "search", "on_activate": lambda: sh.goto_top("search")},
-            {"title": "Settings", "kind": "settings", "on_activate": lambda: sh.goto_top("settings")},
-        ]
+        self.apps = self.favorites()
+        specs = apps_row_specs(self.apps)
+        fixed = {"apps": lambda: sh.goto_top("apps"), "search": lambda: sh.goto_top("search"),
+                 "settings": lambda: sh.goto_top("settings")}
+        out = []
+        for sp in specs:
+            sp["on_activate"] = fixed[sp["kind"]] if sp["app"] is None else (lambda it=sp["app"]: sh.open_app_item(it))
+            out.append(sp)
+        self.prev_keys, self.keys = self.keys, [sp["key"] for sp in out]
+        self.width_frac = 0.5 + 0.11 * max(0, len(out) - 7)       # bubbles: keep their size as the row grows
+        return out
+
+    def make_row(self, items, h):
+        sh = self.shell
+        if self.style == "bubbles":
+            specs = [{"title": it["title"], "on_activate": it["on_activate"],
+                      **({"kind": it["kind"]} if it.get("kind") else {"app": it["app"]})} for it in items]
+            row = BubbleRow(sh, specs, h, seed=self.seed, base=self.base, spread=self.spread,
+                            max_r=sh.px(self.max_r), width_frac=self.width_frac)
+        else:
+            row = AppNodeRow(sh, items, h, seed=self.seed, shape=self.config.get("node_shape", "hexagon"))
+        for node, it in zip(row.bubbles, items):
+            node.menu_item = it["app"]                    # the Menu key's target (fixed tiles have none)
+        return row
+
+    def focus_target(self, had, items):
+        """After a rebuild: stay on the same tile; if it is gone, on the one now at its place."""
+        old = self.prev_keys[had] if had < len(self.prev_keys) else None
+        return self.keys.index(old) if old in self.keys else min(had, len(items) - 1)
+
+    def set_rev(self, rev):
+        if rev is None or rev == self.rev:
+            return
+        first = self.rev is None
+        self.rev = rev
+        if not first:
+            self.rebuild()
+
+    def on_enter(self, returning):
+        """Back on Home: pick up apps installed or removed meanwhile (cheap: only when the tiles differ)."""
+        if returning and [sp["key"] for sp in apps_row_specs(self.favorites())] != self.keys:
+            self.rebuild()

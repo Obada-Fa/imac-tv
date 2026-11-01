@@ -312,11 +312,15 @@
     if (s.gui) phoneMedia.update(s);
     applyTab();
     const pb = s.playback || {}, name = (s.media && s.media.name) || pb.title;
-    const notice = s.thermal_warning ? '⚠ TV is running hot' : s.phase === 'opening' ? 'Opening…' : !s.gui ? 'Waiting for TV screen' : '';
+    const desktop = String(s.app || '').startsWith('desktop:');   // an app from the PC, not one of the TV's own
+    const notice = s.thermal_warning ? '⚠ TV is running hot' : s.phase === 'opening' ? 'Opening…' : !s.gui ? 'Waiting for TV screen' :
+      desktop && s.app_name ? 'Controlling ' + s.app_name : '';
     $('notice').textContent = notice; $('notice').hidden = !notice;
     $('notice').classList.toggle('warn', Boolean(s.thermal_warning));
     renderView(s, pb, name);
-    document.querySelectorAll('.apps button').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
+    document.querySelectorAll('.apps button[data-app]').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
+    $('apps-open').classList.toggle('selected', desktop);
+    if (s.apps_rev !== undefined && s.apps_rev !== appsRev && sheetName === 'apps') loadApps();
     const vol = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
     $('volume-label').textContent = vol; $('np-volume-label').textContent = vol;
     const light = s.brightness;
@@ -355,7 +359,8 @@
     }
     // Discord: a big touchpad by default, and the phone mic's mute within thumb reach.
     const discord = Boolean(s.discord) || s.app === 'discord', phoneAudio = s.phone_audio || {};
-    $('hive').classList.toggle('discord', discord);
+    const bigpad = discord || desktop;   // desktop apps want the pointer first, like Discord
+    $('hive').classList.toggle('discord', bigpad);
     const micMute = $('mic-mute');
     micMute.hidden = !discord;
     micMute.disabled = !phoneAudio.mic;
@@ -363,7 +368,7 @@
     micMute.setAttribute('aria-pressed', String(Boolean(phoneAudio.mic_muted)));
     micMute.textContent = !phoneAudio.mic ? 'Phone mic not connected' :
       phoneAudio.mic_muted ? 'Phone mic muted · Tap to unmute' : 'Phone mic on · Tap to mute';
-    const preferred = discord ? 'pointer' : 'dpad';
+    const preferred = bigpad ? 'pointer' : 'dpad';
     const remembered = sessionStorage.getItem('mode-' + (discord ? 'discord' : s.app));
     if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
@@ -687,7 +692,7 @@
       const result = await api('/api/commands', {action, params});
       message('');
       
-      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'play_twitch', 'skip_segment', 'upnext', 'still_watching', 'playback_suggestion', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
+      if (['update_check', 'update_install', 'select', 'home', 'back', 'open_search', 'seek', 'subtitle', 'audio', 'play', 'set_paused', 'youtube_media', 'youtube_mode', 'play_twitch', 'app_open', 'skip_segment', 'upnext', 'still_watching', 'playback_suggestion', 'restart_app', 'recover', 'timer', 'poweroff', 'brightness', 'screen', 'fullscreen'].includes(action)) refresh();
       return result;
     } catch (err) {
       message(err.message);
@@ -708,10 +713,11 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
+    if (name === 'apps') { renderAppsSheet(); return; }
     if (name === 'type') {
       content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
       $('text-form').onsubmit = e => {
@@ -728,7 +734,7 @@
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
       $('off-cancel').onclick = closeSheet;
     } else {
-      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div class="sheet-row"><button id="quick-subtitles" type="button">Subtitles</button></div><div class="sheet-row"><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
+      content.innerHTML = `<label>Turn off after</label><div class="sheet-row"><button data-minutes="15">15m</button><button data-minutes="30">30m</button><button data-minutes="60">1h</button><button data-minutes="90">1h 30m</button></div><p id="timer-status">No timer set</p><div class="sheet-row"><button data-minutes="0">Cancel timer</button></div><label>Playback</label><div class="sheet-row"><button id="quick-subtitles" type="button">Subtitles</button></div><div class="sheet-row"><button data-action="menu">Menu</button><button data-action="left">Rewind</button><button data-action="right">Forward</button></div><div class="sheet-row"><button id="turn-off" class="danger">Turn off iMac</button></div>`;
       $('turn-off').onclick = () => openSheet('off');
       $('quick-subtitles').onclick = () => openSheet('subs');
       content.querySelectorAll('[data-minutes]').forEach(b => b.onclick = () => {
@@ -888,7 +894,7 @@
   $('seek').addEventListener('change', () => {
     fire('seek', {seconds: Number($('seek').value)}); draggingSeek = false;
   });
-  document.querySelectorAll('.apps button').forEach(b => b.onclick = () => fire('select', {app: b.dataset.app}));
+  document.querySelectorAll('.apps button[data-app]').forEach(b => b.onclick = () => fire('select', {app: b.dataset.app}));
 
   // One event path per press. A physical keyboard click has detail=0.
   const held = new Map();
@@ -1788,6 +1794,88 @@
     message('Opening ' + login + ' on the TV…');
     send('play_twitch', {login, title: title || ''}).catch(() => {});
   }
+
+  // ---- Apps sheet: the PC's installed apps; a star puts one on TV Home (Home holds max_favorites) ----
+  let appsData = [], appsMax = 6, appsRev = null, appsQuery = '', appsLoaded = false, appsToken = 0;
+  async function loadApps() {
+    const token = ++appsToken;
+    try {
+      const r = await api('/api/apps');
+      if (token !== appsToken) return;
+      appsData = r.apps || []; appsMax = r.max_favorites || 6; appsLoaded = true;
+      if (state && state.apps_rev !== undefined) appsRev = state.apps_rev;
+      if (sheetName === 'apps') drawApps();
+    } catch (e) {
+      appsLoaded = false;
+      if (sheetName === 'apps') { $('apps-empty').hidden = false; $('apps-empty').textContent = e.message; }
+    }
+  }
+  function renderAppsSheet() {
+    const content = $('sheet-content');
+    content.innerHTML = `<div class="tsheet appsheet"><h2>Apps</h2><form class="findbox" id="apps-find" autocomplete="off"><input type="search" id="apps-q" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search this PC's apps" aria-label="Search apps"></form><h3 id="apps-fav-head">Favorites <small id="apps-count"></small></h3><div id="apps-fav" class="glass rows"></div><h3 id="apps-all-head">All apps</h3><div id="apps-all" class="glass rows"></div><p id="apps-empty" class="muted" hidden></p></div>`;
+    const q = $('apps-q');
+    q.value = appsQuery;
+    q.oninput = () => { appsQuery = q.value; drawApps(); };
+    $('apps-find').onsubmit = e => { e.preventDefault(); q.blur(); };
+    if (appsLoaded) drawApps(); else { $('apps-empty').hidden = false; $('apps-empty').textContent = 'Loading apps…'; }
+    loadApps();
+  }
+  function appRowFor(a) {
+    const row = document.createElement('div'), main = document.createElement('button'), star = document.createElement('button');
+    row.className = 'row approw'; main.type = star.type = 'button'; main.className = 'appmain'; star.className = 'star';
+    main.disabled = star.disabled = !online;
+    const ico = document.createElement('span'); ico.className = 'appico';
+    const letter = () => { ico.replaceChildren(); ico.classList.add('blank'); ico.textContent = (a.name || '?').trim().charAt(0).toUpperCase(); };
+    if (a.icon) {
+      const img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = a.icon;
+      img.onerror = letter; ico.append(img);
+    } else letter();
+    const name = document.createElement('span'); name.className = 'appname'; name.textContent = a.name;
+    main.append(ico, name);
+    main.onclick = () => {
+      message('Opening ' + a.name + ' on the TV…');
+      send('app_open', {id: a.id}).then(() => { closeSheet(); showTab('remote'); }).catch(() => {});
+    };
+    star.setAttribute('aria-pressed', String(Boolean(a.favorite)));
+    star.setAttribute('aria-label', a.favorite ? `Remove ${a.name} from Home` : `Add ${a.name} to Home`);
+    star.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.5 5.2 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></svg>';
+    star.classList.toggle('on', Boolean(a.favorite));
+    star.onclick = () => toggleFavorite(a);
+    row.append(main, star);
+    return row;
+  }
+  function drawApps() {
+    if (sheetName !== 'apps' || !$('apps-fav')) return;
+    const q = appsQuery.trim().toLowerCase();
+    const match = a => !q || a.name.toLowerCase().includes(q);
+    const favs = appsData.filter(a => a.favorite), shown = appsData.filter(match);
+    const favShown = shown.filter(a => a.favorite), rest = shown.filter(a => !a.favorite);
+    $('apps-count').textContent = `${favs.length} of ${appsMax} on Home`;
+    $('apps-fav').replaceChildren(...favShown.map(appRowFor));
+    if (!favs.length && !q) {   // a hint where the favorites will be
+      const hint = document.createElement('div'); hint.className = 'row static'; hint.textContent = "Star an app to put it on the TV's Home";
+      hint.style.color = 'var(--ink3)'; $('apps-fav').replaceChildren(hint);
+    }
+    $('apps-fav').hidden = !$('apps-fav').children.length;
+    $('apps-fav-head').hidden = $('apps-fav').hidden;
+    $('apps-all').replaceChildren(...rest.map(appRowFor));
+    $('apps-all').hidden = !rest.length; $('apps-all-head').hidden = !rest.length;
+    $('apps-empty').hidden = Boolean(shown.length);
+    if (!shown.length) $('apps-empty').textContent = q ? 'No apps match' : 'No apps found on this PC';
+  }
+  async function toggleFavorite(a) {
+    const want = !a.favorite;
+    a.favorite = want; appsData.sort(appOrder); drawApps();   // immediate; the TV's answer replaces it
+    try {
+      const r = await send('app_favorite', {id: a.id, favorite: want});
+      appsData = (r && r.apps) || appsData; if (r && r.max_favorites) appsMax = r.max_favorites;
+    } catch (e) {
+      a.favorite = !want;   // refused, e.g. "Home is full": send() already showed why
+    }
+    appsData.sort(appOrder); drawApps();
+  }
+  const appOrder = (x, y) => (y.favorite - x.favorite) || (x.favorite ? 0 : x.name.localeCompare(y.name, undefined, {sensitivity: 'base'}));
+  $('apps-open').onclick = () => openSheet('apps');
 
   // ---- Movies / Series panes: search scoped to that kind ----
   document.querySelectorAll('.pane[data-type]').forEach(pane => {

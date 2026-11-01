@@ -923,6 +923,292 @@ class TwitchScreen(RailsScreen):
             self.rails[0 if self.game else 1].reload()
 
 
+# ---------------------------------------------------------------- apps (the PC's installed apps; favorites sit on Home)
+
+def _apps():
+    """The apps module, or None where it can't load (nothing on Home then falls back to the built-in tiles)."""
+    try:
+        import apps
+        return apps
+    except Exception as exc:
+        print("apps:", exc)
+        return None
+
+
+def app_list():
+    """Every launchable app, favorites first (apps.list_apps()); [] when the scan fails."""
+    mod = _apps()
+    try:
+        return list(mod.list_apps()) if mod else []
+    except Exception as exc:
+        print("apps list:", exc)
+        return []
+
+
+def home_app_list():
+    """The favorites that become Home tiles (apps.home_apps()), or None when there is no apps module."""
+    mod = _apps()
+    if mod is None:
+        return None
+    try:
+        return list(mod.home_apps())
+    except Exception as exc:
+        print("apps home:", exc)
+        return None
+
+
+_app_icons = {}
+
+
+def load_app_icon(item, size, cb):
+    """Desktop app icon as a size x size pixbuf, once per (id, size); cb(pb or None) runs on the GTK loop."""
+    key = (item.get("id"), size)
+    if key in _app_icons:
+        pb = _app_icons[key]
+        GLib.idle_add(lambda: cb(pb or None) and False)
+        return
+
+    def job():
+        pb = None
+        try:
+            mod = _apps()
+            path = mod.icon_file(item["id"]) if mod else None
+            if path:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
+        except Exception:
+            pb = None
+        _app_icons[key] = pb or False
+        GLib.idle_add(lambda: cb(pb) and False)
+    _art_pool.submit(job)
+
+
+def app_tint(pb, default=(0.5, 0.58, 0.72)):
+    """A soft tint for an app's tile from its icon's average colour (neutral blue-grey for grey icons)."""
+    try:
+        px = pb.scale_simple(1, 1, GdkPixbuf.InterpType.BILINEAR).get_pixels()
+        r, g, b = (px[i] / 255 for i in range(3))
+    except Exception:
+        return default
+    top = max(r, g, b)
+    if top < 0.05 or top - min(r, g, b) < 0.08:
+        return default
+    k = 0.8 / top
+    return r * k, g * k, b * k
+
+
+def app_tile(item, w, h, icon=None):
+    """An app's card art: a tinted dark-glass tile with its glyph (built-ins) or icon (or its first letter) centred."""
+    from widgets.bubbles import _icon, TINTS
+    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+    cr = cairo.Context(surf)
+    kind = item.get("builtin_kind")
+    tr, tg, tb = TINTS.get(kind) if kind in TINTS else (app_tint(icon) if icon is not None else (0.5, 0.58, 0.72))
+    base = cairo.LinearGradient(0, 0, w, h)
+    base.add_color_stop_rgb(0, 0.08 + tr * 0.22, 0.10 + tg * 0.22, 0.14 + tb * 0.22)
+    base.add_color_stop_rgb(1, 0.03 + tr * 0.08, 0.04 + tg * 0.08, 0.07 + tb * 0.08)
+    cr.set_source(base)
+    cr.paint()
+    hi = cairo.RadialGradient(w * 0.3, h * 0.2, 0, w * 0.3, h * 0.2, w * 0.7)
+    hi.add_color_stop_rgba(0, tr, tg, tb, 0.30)
+    hi.add_color_stop_rgba(1, tr, tg, tb, 0)
+    cr.set_source(hi)
+    cr.paint()
+    if kind:
+        _icon(cr, kind, w / 2, h / 2, h * 0.30)
+    elif icon is not None:
+        side = h * 0.62
+        k = side / max(icon.get_width(), icon.get_height())
+        cr.save()
+        cr.translate((w - icon.get_width() * k) / 2, (h - icon.get_height() * k) / 2)
+        cr.scale(k, k)
+        Gdk.cairo_set_source_pixbuf(cr, icon, 0, 0)
+        cr.paint()
+        cr.restore()
+    else:
+        import gi
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import PangoCairo
+        lay = PangoCairo.create_layout(cr)
+        fd = Pango.FontDescription("Inter, Noto Sans, Sans")
+        fd.set_absolute_size(round(h * 0.42) * Pango.SCALE)
+        fd.set_weight(Pango.Weight.LIGHT)
+        lay.set_font_description(fd)
+        lay.set_text((item.get("name") or "?")[:1].upper(), -1)
+        tw, th = lay.get_pixel_size()
+        cr.set_source_rgba(1, 1, 1, 0.8)
+        cr.move_to((w - tw) / 2, (h - th) / 2)
+        PangoCairo.show_layout(cr, lay)
+    surf.flush()
+    return Gdk.pixbuf_get_from_surface(surf, 0, 0, w, h)
+
+
+APP_ART = (236, 140)        # a card's tile at 1080p
+MAX_FAVORITES = 6
+
+
+class AppCard(chrome.PosterCard):
+    """One app on the Apps screen: its tile (icon on tinted glass) with the name beneath. Menu opens its sheet."""
+
+    def __init__(self, shell, item, on_activate):
+        w, h = (shell.px(v) for v in APP_ART)
+        super().__init__(shell, chrome.look(shell), {"name": item.get("name") or "", "subtitle": ""}, "app", w, h,
+                         lambda: on_activate(item))
+        self.app_item = item
+        self.set_pixbuf(app_tile(item, w, h))
+        if item.get("icon") and not item.get("builtin_kind"):
+            load_app_icon(item, h, self.set_icon)
+
+    def set_icon(self, pb):
+        if pb is not None and not self.dead:
+            self.set_pixbuf(app_tile(self.app_item, self.aw, self.ah, pb))
+        return False
+
+
+class AppsScreen(Screen):
+    """Apps: the favorites that sit on Home, then every other app on the PC. OK opens an app, Menu opens its sheet
+    (Open, Add to / Remove from Home)."""
+    header = True
+    sname = "apps"
+
+    def __init__(self, shell):
+        super().__init__(shell)
+        px = shell.px
+        self.items, self.rev, self.token = None, None, 0
+        self.fav_cards, self.rows = [], []
+        page = self.glass_page()
+        self.backdrop.avoid = self.title_band
+        page.set_margin_top(px(118))
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.EXTERNAL)
+        scroll.set_shadow_type(Gtk.ShadowType.NONE)
+        self.scroll = scroll
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=px(4))
+        self.box.set_margin_start(px(52))
+        self.box.set_margin_end(px(52))
+        self.box.set_margin_bottom(px(200))
+        scroll.add(self.box)
+        page.pack_start(scroll, True, True, 0)
+
+    # ---- content
+    def per_row(self):
+        card = self.shell.px(APP_ART[0]) + 2 * self.shell.px(14)
+        return max(1, (self.shell.sw - 2 * self.shell.px(52)) // card)
+
+    def load(self):
+        """Read the app list off the GTK thread, then (re)build."""
+        self.token += 1
+        tok = self.token
+
+        def work():
+            items = app_list()
+            GLib.idle_add(lambda: self.populate(items, tok) and False)
+        _data_pool.submit(work)
+
+    def populate(self, items, tok=None):
+        """Rebuild the sections from `items` (favorites first), keeping focus on the same app if it is still here."""
+        if tok is not None and tok != self.token:
+            return False
+        focus = self.shell.get_focus()
+        keep = getattr(focus, "app_item", None) if focus is not None and focus.is_ancestor(self) else None
+        keep_pos = next((i for i, c in enumerate(self.cards()) if c is focus), None)
+        first = self.items is None
+        self.items = list(items)
+        for c in self.box.get_children():
+            self.box.remove(c)
+            c.destroy()
+        s = self.shell
+        favs = [i for i in self.items if i.get("favorite")]
+        rest = [i for i in self.items if not i.get("favorite")]
+        self.fav_cards, self.rows = [], []
+        look = chrome.look(s)
+
+        def section(title):
+            t = chrome.RailTitle(s, look, title)
+            t.set_margin_top(s.px(10))
+            self.box.pack_start(t, False, False, 0)
+
+        def row(cards):
+            hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+            for c in cards:
+                hb.pack_start(c, False, False, 0)
+            self.box.pack_start(hb, False, False, 0)
+
+        if not self.items:
+            note = text_label("No apps found on this PC", "section-title")
+            note.set_margin_top(s.px(60))
+            note.set_margin_start(s.px(16))
+            self.box.pack_start(note, False, False, 0)
+        else:
+            section(f"On Home  ·  {len(favs)} of {MAX_FAVORITES}")
+            if favs:
+                self.fav_cards = [AppCard(s, i, s.open_app_item) for i in favs]
+                row(self.fav_cards)
+            else:
+                hint = text_label("Nothing on Home yet. Highlight an app below and press Menu to add it.", "section-note")
+                hint.set_margin_start(s.px(40))
+                hint.set_margin_top(s.px(8))
+                hint.set_margin_bottom(s.px(14))
+                self.box.pack_start(hint, False, False, 0)
+            if rest:
+                section("All apps")
+                n = self.per_row()
+                for k in range(0, len(rest), n):
+                    cards = [AppCard(s, i, s.open_app_item) for i in rest[k:k + n]]
+                    self.rows.append(cards)
+                    row(cards)
+        self.box.show_all()
+        cards = self.cards()
+        target = next((c for c in cards if keep and c.app_item["id"] == keep["id"]), None)
+        if target is None and keep_pos is not None and cards:
+            target = cards[min(keep_pos, len(cards) - 1)]
+        if target is None and first and cards:
+            target = cards[0]                   # the list arrived after the screen opened: start on the first app
+        if target is not None:
+            target.grab_focus()
+            self.reveal(target)
+        s.ensure_focus()
+        return False
+
+    def cards(self):
+        return self.fav_cards + [c for r in self.rows for c in r]
+
+    def set_rev(self, rev):
+        """New apps_rev from the state poll: reload when it moved (a star toggled here or on the phone)."""
+        if rev is None or rev == self.rev:
+            return
+        first = self.rev is None
+        self.rev = rev
+        if not first:
+            self.load()
+
+    # ---- Screen API
+    def focus_groups(self):
+        return [g for g in ([self.fav_cards] + self.rows) if g]
+
+    def first_focus(self, flat):
+        groups = self.focus_groups()
+        return groups[0][0] if groups else None
+
+    def on_enter(self, returning):
+        self.snapshot()
+        self.load()
+
+    def scroll_top(self):
+        self.scroll.get_vadjustment().set_value(0)
+
+    def reveal(self, widget):
+        pos = widget.translate_coordinates(self.box, 0, 0)
+        if not pos:
+            return
+        adj = self.scroll.get_vadjustment()
+        m, h = self.shell.px(40), widget.get_allocated_height()
+        cur, page = adj.get_value(), adj.get_page_size()
+        if pos[1] < cur + m:
+            animate(adj, max(0, pos[1] - m), 220)
+        elif pos[1] + h > cur + page - m:
+            animate(adj, pos[1] + h - page + m, 220)
+
+
 SEARCH_SCOPES = {None: ("movie", "series", "twitch"), "movie": ("movie",), "series": ("series",), "twitch": ("twitch",)}
 SEARCH_SCOPE_LABEL = {None: "movies, series and Twitch", "movie": "Movies", "series": "Series", "twitch": "Twitch"}
 

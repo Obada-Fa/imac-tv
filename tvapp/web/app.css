@@ -382,3 +382,26 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .app-actions button{min-height:38px;padding:0 12px;font-size:13px;border-color:var(--hair-soft);background:var(--glass)}
 .app-actions .danger{color:#ffb4b4}
 .app-actions button:disabled{opacity:.4}
+
+/* ---- Apps sheet: rows are glass lists like Twitch's; the star is a hexagon-friendly toggle ---- */
+.apps button#apps-open{width:36px;padding:0;display:flex;align-items:center;justify-content:center}
+.apps #apps-open svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
+.appsheet .findbox{background:linear-gradient(rgba(17,24,39,.98) 78%,rgba(17,24,39,0));margin:0;padding:18px 0 12px;top:-18px}
+.appsheet .findbox input{background:#0a101b}
+.appsheet h3{margin-top:14px}
+.appsheet h3 small{margin-left:auto;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:none;color:var(--ink3)}
+.appsheet h3 small:empty{display:none}
+.approw{padding:0;gap:0;content-visibility:auto;contain-intrinsic-size:auto 56px}
+.approw .appmain{flex:1;min-width:0;display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 4px 8px 12px;border:1px solid transparent;border-radius:12px 0 0 12px;background:none;text-align:left;color:var(--ink);font-size:15px}
+.approw .appmain:active{border-color:var(--hair-hot);background:var(--glass-press);box-shadow:var(--glow)}
+.appico{flex:none;width:36px;height:36px;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06)}
+.appico img{width:100%;height:100%;object-fit:contain;display:block}
+.appico.blank{background:radial-gradient(circle at 30% 25%,rgba(var(--accent-rgb),.34),rgba(var(--accent-rgb),.08));border:1px solid var(--hair-soft);font-size:16px;font-weight:300;color:#fff}
+.appname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.approw .star{flex:none;width:52px;min-height:56px;border:1px solid transparent;border-radius:0 12px 12px 0;background:none;color:var(--ink3);display:flex;align-items:center;justify-content:center}
+.approw .star svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}
+.approw .star.on{color:var(--accent)}.approw .star.on svg{fill:rgba(var(--accent-rgb),.38);filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.5))}
+.approw .star:active{border-color:var(--hair-hot);background:var(--glass-press)}
+.approw button:disabled{opacity:.42}
+.approw+.approw::before{pointer-events:none}
+.apps button[data-app]{padding:0 9px}   /* the Apps icon joined the nav: keep it clear of the clock */

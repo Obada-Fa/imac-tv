@@ -28,6 +28,7 @@ if str(BASE) not in sys.path:
     sys.path.insert(0, str(BASE))
 import settings_model
 import updater
+import apps
 import backgrounds
 import nowplaying
 import phonemic
@@ -68,6 +69,11 @@ def resolve_app_command(app):
         if opt_bin.is_file() and os.access(opt_bin, os.X_OK):
             return [str(opt_bin)]
         return ["flatpak", "run", "rocks.shy.VacuumTube"]
+    if app.startswith("desktop:"):
+        argv = apps.launch_argv(app)
+        if not argv:
+            raise ValueError("Unknown app")
+        return argv
     return APPS.get(app, (app, [app]))[1]
 
 
@@ -123,6 +129,8 @@ def window_for(app):
         return next((w for w in windows() if any(k in w["class"] or k in w["title"].lower() for k in ("vacuumtube", "rocks.shy.vacuumtube", "youtube"))), None)
     if app == "discord":
         return next((w for w in windows() if "discord" in w["class"].lower() or "discord" in w["title"].lower()), None)
+    if app.startswith("desktop:"):
+        return next((w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "iMac TV"), None)
     if app == "player":
         return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
     return None
@@ -423,7 +431,7 @@ class Controller:
         self.selection_path = DATA / "selection.json"
         selection = self._read_json(self.selection_path, {})
         self.app = selection.get("app", "home") if selection.get("boot_id") == BOOT_ID else "home"
-        if self.app not in (*APPS, "home"):  # also maps retired "stremio"/"vlc" selections
+        if self.app not in (*APPS, "home") and not apps.lookup(self.app):  # also maps retired "stremio"/"vlc" selections
             self.app = "home"
         self.phase = "ready"
         self.error = ""
@@ -757,11 +765,12 @@ class Controller:
             self._show_home()
 
     def select(self, app):
-        if app != "home" and app not in APPS:
+        if app != "home" and app not in APPS and not apps.lookup(app):
             raise ValueError("Unknown app")
         trace(f"select {app} start")
         self._end_playback()
         with self.lock:
+            leaving = self.app if app == "home" and str(self.app).startswith("desktop:") else None
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
@@ -780,10 +789,21 @@ class Controller:
             trace("ui_request written")
             self._show_home()
             trace("show_home done")
+            if leaving:
+                self._minimize_app(leaving)
             threading.Thread(target=self._dismiss_youtube, args=(generation,), daemon=True).start()
         else:
             threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
         return {"app": app, "phase": self.phase}
+
+    def _minimize_app(self, app):
+        """A desktop app stays running behind Home, minimized so it stops painting (never closed from here)."""
+        try:
+            win = window_for(app)
+            if win:
+                minimize(win)
+        except Exception:
+            LOG.exception("Could not minimize %s", app)
 
     def _dismiss_youtube(self, generation):
         """After Home is up: the track playing behind it now is the one the user left."""
@@ -1753,7 +1773,9 @@ class Controller:
             if current_media.get("type") != "series" or not (phase == "buffering" or player["active"]):
                 nxt = None
             current_media["next"] = nxt
+        app_name = (apps.lookup(app) or {}).get("name") if app.startswith("desktop:") else None
         return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
+                "apps_rev": apps.apps_rev(), **({"app_name": app_name} if app_name else {}),
                 "playback_suggestion": self._health_view(),
                 "gui": gui, "volume": percent, "muted": muted,
                 "audio_warning": self.audio_warning,
@@ -1778,14 +1800,17 @@ class Controller:
     def close_app(self, app, restart=False):
         """Close (and optionally reopen) one of sysinfo.MANAGED; for stuck instances. Runs in the
         background: a polite window close, flatpak kill, then SIGTERM and SIGKILL for what is left."""
-        if app not in sysinfo.MANAGED:
+        desktop = isinstance(app, str) and app.startswith("desktop:") and apps.lookup(app)
+        if app not in sysinfo.MANAGED and not desktop:
             raise ValueError("Unknown app")
         if restart and app not in APPS:
             raise ValueError("This app can't be restarted from here")
 
         def work():
             try:
-                if app == "player":
+                if desktop:
+                    self._close_desktop(app)
+                elif app == "player":
                     self._end_playback()
                     self._stop_proc()
                 else:
@@ -1794,7 +1819,7 @@ class Controller:
                         command(["wmctrl", "-i", "-c", win["id"]], check=False)
                     if app in self.APP_FLATPAKS:
                         command(["flatpak", "kill", self.APP_FLATPAKS[app]], timeout=5, check=False)
-                for sig, wait in ((signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
+                for sig, wait in () if desktop else ((signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
                     pids = SYSTEM.pids(app)
                     if not pids:
                         break
@@ -1818,6 +1843,37 @@ class Controller:
                 LOG.warning("Closing %s failed: %s", app, exc)
         threading.Thread(target=work, daemon=True).start()
         return {"ok": True}
+
+    def _close_desktop(self, app):
+        """Close a desktop app: a polite window close first, then SIGTERM and SIGKILL for the window's own process."""
+        for sig, wait in ((None, 3.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
+            wins = [w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "iMac TV"]
+            if not wins:
+                return
+            for win in wins:
+                if sig is None:
+                    command(["wmctrl", "-i", "-c", win["id"]], check=False)
+                else:
+                    try:
+                        if int(win["pid"]) > 1:     # 0 = the window sets no _NET_WM_PID: never signal a group
+                            os.kill(int(win["pid"]), sig)
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
+            deadline = time.monotonic() + wait
+            while time.monotonic() < deadline and any(apps.matches_window(app, w["class"]) for w in windows()):
+                time.sleep(0.2)
+
+    def open_app(self, params):
+        """Open an item from apps.list_apps(): a TV screen over Home, or an app/desktop entry through select."""
+        found = apps.item(params.get("id"))
+        if not found:
+            raise ValueError("Unknown app")
+        if found["kind"] != "screen":
+            return self.select(found["id"])
+        if self.app != "home" or playback()["active"]:
+            self.stop_playback("home") if playback()["active"] else self.select("home")
+        self._ui_request(found["id"])
+        return {"app": found["id"], "phase": self.phase}
 
     def phone_audio(self):
         mic = PHONE_MIC.active
@@ -2044,6 +2100,13 @@ class Controller:
                     raise RuntimeError("No next episode")
                 return self.play_media({"type": "series", "id": target["id"],
                                         "season": nxt["season"], "episode": nxt["episode"]})
+            if action == "apps_list":
+                return {"apps": apps.list_apps(), "max_favorites": apps.MAX_FAVORITES}
+            if action == "app_favorite":
+                return {"apps": apps.set_favorite(params.get("id"), params.get("favorite")),
+                        "max_favorites": apps.MAX_FAVORITES}
+            if action == "app_open":
+                return self.open_app(params)
             if action == "app_close":
                 return self.close_app(params.get("app"), restart=False)
             if action == "app_restart":
@@ -2250,7 +2313,7 @@ class Controller:
             if action == "back":
                 action = "Escape"
             keymap = {"left": "Left", "right": "Right", "up": "Up", "down": "Down",
-                      "ok": "Return", "play": "space", "enter": "Return", "delete": "BackSpace",
+                      "ok": "Return", "menu": "Menu", "play": "space", "enter": "Return", "delete": "BackSpace",
                       "escape": "Escape"}
             if action in keymap or action in ("BackSpace", "Escape"):
                 self._focus_target()
@@ -2307,6 +2370,23 @@ CONTROL = None
 
 
 SYSTEM = sysinfo.Sampler()
+
+
+def running_desktop_apps(sample):
+    """The System panel's app list plus the desktop apps that have a window now, so the phone can Close them too."""
+    try:
+        wins = windows()
+        extra = []
+        for item in apps.list_apps():
+            if item["kind"] != "desktop":
+                continue
+            mine = [w for w in wins if apps.matches_window(item["id"], w["class"]) and w["title"] != "iMac TV"]
+            if mine:
+                extra.append({"key": item["id"], "title": item["name"], "running": True,
+                              "pids": [int(w["pid"]) for w in mine if w["pid"].isdigit() and int(w["pid"]) > 1], "memory": 0, "cpu": 0.0})
+        return dict(sample, apps=list(sample["apps"]) + extra) if extra else sample
+    except Exception:
+        return sample
 PHONE_MIC = phonemic.PhoneMic()
 PHONE_SPEAKER = phonespeaker.PhoneSpeaker()
 
@@ -2375,10 +2455,36 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
             self._note_presence()
-            self.respond(200, SYSTEM.sample())
+            self.respond(200, running_desktop_apps(SYSTEM.sample()))
             return
         if parsed.path == "/api/speaker":
             self.phone_speaker(parsed)
+            return
+        if parsed.path == "/api/apps":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            self._note_presence()
+            self.respond(200, {"apps": apps.list_apps(), "max_favorites": apps.MAX_FAVORITES})
+            return
+        if parsed.path == "/api/apps/icon":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            path = apps.icon_file((parse_qs(parsed.query).get("id") or [""])[0])
+            try:
+                body = Path(path).read_bytes() if path else None
+            except OSError:
+                body = None
+            if not body:
+                self.respond(404, {"error": "No icon"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if parsed.path == "/api/twitch":
             if not self.authorised(parsed.query):

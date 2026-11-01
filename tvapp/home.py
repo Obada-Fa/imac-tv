@@ -19,9 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
-                     BufferingOverlay, Toast, BACK_KEYS as _BACK, ARROWS)
+                     BufferingOverlay, Toast, AppsScreen, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
+MENU_KEYS = ("Menu", "m", "M")          # the remote's Menu key (the phone sends "Menu"); "m" on a keyboard
 VITALS_KEYS = ("Info", "XF86Info")      # a remote's Info key (keymap-dependent); "i" works too outside text fields
 from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
@@ -291,7 +292,7 @@ class Home(Gtk.Window):
         self.last_qr_text = ""
         self.trigger_network_refresh()
         self.push(self.top_screen("home"))
-        if top in ("movies", "series", "search", "settings"):
+        if top in ("movies", "series", "search", "settings", "apps"):
             self.push(self.top_screen(top))
         self.set_default_size(w, h)               # after the old, larger screens are gone (they'd clamp it)
         self.resize(w, h)
@@ -401,7 +402,7 @@ class Home(Gtk.Window):
     # ---- screens / back stack
     def top_screen(self, name):
         if name not in self.tops:
-            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen,
+            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen, "apps": AppsScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
                                "series": lambda s: BrowseScreen(s, "series")}[name](self)
         return self.tops[name]
@@ -463,6 +464,55 @@ class Home(Gtk.Window):
     def open_app(self, app):
         self.toast("Opening " + app.title() + "…", 3)
         threading.Thread(target=lambda: cmd("select", {"app": app}), daemon=True).start()
+
+    def open_app_item(self, item):
+        """OK on an app tile: TV screens open here, everything else through the controller (apps.py item ids)."""
+        if item.get("kind") == "screen":
+            self.goto_top(item["id"])
+            return
+        self.toast("Opening " + (item.get("name") or "app") + "…", 3)
+        threading.Thread(target=lambda: cmd("app_open", {"id": item["id"]}, timeout=8), daemon=True).start()
+
+    def set_app_favorite(self, item, favorite):
+        """Star / unstar `item` (it is on Home exactly when it is a favorite); the tiles follow apps_rev."""
+        def run():
+            res = cmd("app_favorite", {"id": item["id"], "favorite": favorite}, timeout=6)
+            err = None
+            if res is None:
+                err = "Can't reach the TV controller"
+            elif isinstance(res, dict) and (res.get("error") or res.get("ok") is False):
+                err = str(res.get("error") or "Couldn't change Home")
+            GLib.idle_add(self.toast, err or ("Added to Home" if favorite else "Removed from Home"), 4)
+            self.last_state_poll = 0
+        threading.Thread(target=run, daemon=True).start()
+
+    def open_app_menu(self, item):
+        """The sheet behind the Menu key on an app tile: Open, and Add to / Remove from Home."""
+        p = self.px
+        fav = bool(item.get("favorite"))
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=p(14))
+        box.get_style_context().add_class("ah-sheet")
+        title = text_label(item.get("name") or "App", "ah-dtitle")
+        sub = text_label("On your Home screen" if fav else "Not on your Home screen", "ah-dsub")
+        for w in (title, sub):
+            w.set_halign(Gtk.Align.CENTER)
+            box.pack_start(w, False, False, 0)
+        open_b = pairing_ui._glass_button("Open")
+        toggle = pairing_ui._glass_button("Remove from Home" if fav else "Add to Home", True)
+        for b in (open_b, toggle):
+            b.set_size_request(p(420), -1)
+            b.set_halign(Gtk.Align.CENTER)
+        box.pack_start(open_b, False, False, p(10))
+        box.pack_start(toggle, False, False, 0)
+
+        def choose(fn):
+            def go(*_):
+                self.close_sheet("app_menu")
+                fn()
+            return go
+        open_b.connect("clicked", choose(lambda: self.open_app_item(item)))
+        toggle.connect("clicked", choose(lambda: self.set_app_favorite(item, not fav)))
+        self.open_sheet("app_menu", box, [[open_b], [toggle]], default=toggle)
 
     def notify_pair(self):
         for fn in list(self.pair_listeners):
@@ -642,6 +692,11 @@ class Home(Gtk.Window):
         if key in VITALS_KEYS or (key in ("i", "I") and not in_entry):
             self.peek_vitals()
             return True
+        if key in MENU_KEYS and not in_entry:
+            item = getattr(focus, "menu_item", None) or getattr(focus, "app_item", None)
+            if item:
+                self.open_app_menu(item)
+                return True
         if hasattr(screen, "handle_key") and screen.handle_key(key):
             return True
         if key in BACK_KEYS:
@@ -718,7 +773,7 @@ class Home(Gtk.Window):
                 self.tops["search"].set_query(req["query"])
         elif name == "details" and isinstance(req.get("media"), dict) and req["media"].get("id"):
             self.show_media(req["media"])
-        elif name in ("home", "movies", "series", "settings"):
+        elif name in ("home", "movies", "series", "settings", "twitch", "apps"):
             self.goto_top(name)
         else:
             return
@@ -852,7 +907,17 @@ class Home(Gtk.Window):
         self.prev_app = app
         self.state_seen = True
         self.update_playback_prompt(state.get("playback_suggestion"))
+        self.sync_apps(state.get("apps_rev"))
         return False
+
+    def sync_apps(self, rev):
+        """The favorites changed (here or on the phone): Home's tiles and the Apps screen reload."""
+        home = self.tops.get("home")
+        if home is not None and hasattr(home, "set_apps_rev"):
+            home.set_apps_rev(rev)
+        apps = self.tops.get("apps")
+        if apps is not None:
+            apps.set_rev(rev)
 
     def update_playback_prompt(self, prompt):
         token = prompt.get("id") if prompt else None

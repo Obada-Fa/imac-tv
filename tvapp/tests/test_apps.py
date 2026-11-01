@@ -1,0 +1,200 @@
+import json
+import os
+import sys
+from pathlib import Path
+import tempfile
+import unittest
+from unittest import mock
+import zlib
+import struct
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import apps
+
+DESKTOP = """[Desktop Entry]
+Type=Application
+Name=%s
+Exec=%s
+Icon=%s
+%s"""
+
+
+def png(path, size=8):
+    raw = b"".join(b"\x00" + b"\xff\x00\x00\xff" * size for _ in range(size))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+class AppsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.data, self.apps, self.apps2, self.icons = root / "data", root / "a", root / "b", root / "icons"
+        for d in (self.data, self.apps, self.apps2, self.icons):
+            d.mkdir()
+        env = {"IMACTV_DATA_DIR": str(self.data), "IMACTV_APPS_DIRS": f"{self.apps}:{self.apps2}",
+               "IMACTV_ICON_DIRS": str(self.icons)}
+        patcher = mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+        apps.refresh()
+
+    def write(self, name, title, exec_="true", extra="", icon="", folder=None):
+        (folder or self.apps).joinpath(name + ".desktop").write_text(DESKTOP % (title, exec_, icon, extra))
+        apps.refresh()
+
+    def ids(self, items=None):
+        return [i["id"] for i in (items if items is not None else apps.list_apps())]
+
+    def test_scan_filtering(self):
+        self.write("good", "Good")
+        self.write("hidden", "Hidden", extra="NoDisplay=true")
+        self.write("gone", "Gone", extra="Hidden=true")
+        self.write("term", "Term", extra="Terminal=true")
+        self.write("tryexec", "Try", extra="TryExec=/nonexistent/binary")
+        (self.apps / "link.desktop").write_text("[Desktop Entry]\nType=Link\nName=Link\nExec=true\n")
+        (self.apps / "dir.desktop").write_text("[Desktop Entry]\nType=Directory\nName=Dir\n")
+        self.assertIn("desktop:good", self.ids())
+        for bad in ("hidden", "gone", "term", "tryexec", "link", "dir"):
+            self.assertNotIn("desktop:" + bad, self.ids(), bad)
+
+    def test_duplicate_id_earlier_directory_wins(self):
+        self.write("same", "First", folder=self.apps)
+        self.write("same", "Second", folder=self.apps2)
+        names = {i["id"]: i["name"] for i in apps.list_apps()}
+        self.assertEqual(names["desktop:same"], "First")
+
+    def test_sorting_and_item_shape(self):
+        self.write("b", "banana")
+        self.write("a", "Apple")
+        items = apps.list_apps()
+        rest = [i["name"] for i in items if not i["favorite"] and i["kind"] == "desktop"]
+        self.assertEqual(rest, ["Apple", "banana"])
+        desktop = next(i for i in items if i["id"] == "desktop:a")
+        self.assertEqual(set(desktop), {"id", "name", "kind", "favorite", "icon", "builtin_kind"})
+        self.assertEqual(desktop["icon"], "/api/apps/icon?id=desktop%3Aa")
+        self.assertIsNone(desktop["builtin_kind"])
+        movies = next(i for i in items if i["id"] == "movies")
+        self.assertEqual((movies["kind"], movies["builtin_kind"], movies["icon"]), ("screen", "movies", None))
+
+    def test_default_favorites_skip_unavailable(self):
+        self.write("rustdesk", "RustDesk")      # brave is missing
+        self.assertEqual(self.ids(apps.home_apps()), ["movies", "series", "youtube", "twitch", "desktop:rustdesk"])
+        self.write("brave-browser", "Brave")
+        self.assertEqual(self.ids(apps.home_apps()), apps.DEFAULT_FAVORITES)
+        self.assertEqual(self.ids()[:6], apps.DEFAULT_FAVORITES)
+        self.assertNotIn("discord", self.ids(apps.home_apps()))
+
+    def test_builtin_apps_only_when_available(self):
+        with mock.patch.dict(os.environ, {"IMACTV_APPS_BUILTINS": "discord"}):
+            ids = self.ids()
+        self.assertIn("discord", ids)
+        self.assertNotIn("youtube", ids)
+
+    def test_favorite_limit_and_message(self):
+        for n in range(3):
+            self.write(f"x{n}", f"X{n}")
+        self.write("rustdesk", "RustDesk")
+        self.write("brave-browser", "Brave")
+        self.assertEqual(len(apps.home_apps()), 6)
+        with self.assertRaisesRegex(ValueError, "Home is full: remove a favorite first"):
+            apps.set_favorite("desktop:x0", True)
+        apps.set_favorite("movies", False)
+        result = apps.set_favorite("desktop:x0", True)
+        self.assertEqual(self.ids(result)[5], "desktop:x0")
+        self.assertEqual(len(apps.home_apps()), 6)
+
+    def test_oldest_first_and_idempotent(self):
+        self.write("x", "X")
+        apps.set_favorite("movies", False)
+        apps.set_favorite("desktop:x", True)
+        rev = apps.apps_rev()
+        apps.set_favorite("desktop:x", True)      # already there: no change
+        self.assertEqual(apps.apps_rev(), rev)
+        self.assertEqual(self.ids(apps.home_apps())[-1], "desktop:x")
+        self.assertTrue(all(i["favorite"] for i in apps.home_apps()))
+
+    def test_unknown_id_refused(self):
+        for bad in ("desktop:nope", "", None, "../etc/passwd", 5):
+            with self.assertRaises(ValueError):
+                apps.set_favorite(bad, True)
+        with self.assertRaises(ValueError):
+            apps.set_favorite("movies", "yes")
+        self.assertFalse((self.data / "home.json").exists())
+        self.assertIsNone(apps.lookup("desktop:nope"))
+        self.assertIsNone(apps.launch_argv("../x"))
+
+    def test_home_json_keys_preserved_and_rev_bumps(self):
+        (self.data / "home.json").write_text(json.dumps({"style": "bubbles", "ambient": {"idle": 99}, "visualizer": "x"}))
+        self.write("x", "X")
+        self.assertEqual(apps.apps_rev(), 0)
+        apps.set_favorite("desktop:x", True)
+        saved = json.loads((self.data / "home.json").read_text())
+        self.assertEqual((saved["style"], saved["ambient"], saved["visualizer"]), ("bubbles", {"idle": 99}, "x"))
+        self.assertEqual(saved["favorites"][-1], "desktop:x")
+        self.assertEqual(apps.apps_rev(), 1)
+        apps.set_favorite("desktop:x", False)
+        self.assertEqual(apps.apps_rev(), 2)
+        self.assertEqual(json.loads((self.data / "home.json").read_text())["style"], "bubbles")
+        self.assertEqual([p.name for p in self.data.iterdir() if p.name.endswith(".tmp")], [])
+
+    def test_unavailable_favorites_stay_stored(self):
+        (self.data / "home.json").write_text(json.dumps({"favorites": ["desktop:gone", "movies"]}))
+        self.assertEqual(self.ids(apps.home_apps()), ["movies"])
+        self.write("x", "X")
+        apps.set_favorite("desktop:x", True)
+        self.assertEqual(json.loads((self.data / "home.json").read_text())["favorites"], ["desktop:gone", "movies", "desktop:x"])
+
+    def test_empty_favorites_is_respected(self):
+        (self.data / "home.json").write_text(json.dumps({"favorites": []}))
+        self.assertEqual(apps.home_apps(), [])
+
+    def test_exec_parsing(self):
+        self.assertEqual(apps.exec_argv('brave --incognito %U'), ["brave", "--incognito"])
+        self.assertEqual(apps.exec_argv('"/opt/My App/run" --name "a b" %f %F %i %c'), ["/opt/My App/run", "--name", "a b"])
+        self.assertEqual(apps.exec_argv("env FOO=bar app 100%%"), ["env", "FOO=bar", "app", "100%"])
+        self.assertEqual(apps.exec_argv("flatpak run --branch=stable --file-forwarding org.x.App @@u %U @@"),
+                         ["flatpak", "run", "--branch=stable", "--file-forwarding", "org.x.App"])
+        self.assertEqual(apps.exec_argv("unterminated 'quote"), [])
+        self.write("shell", "Shell", exec_="sh -c 'echo; rm -rf /' %u")
+        self.assertEqual(apps.launch_argv("desktop:shell"), ["sh", "-c", "echo; rm -rf /"])
+
+    def test_window_hints_and_matching(self):
+        self.write("brave-browser", "Brave", exec_="/usr/bin/brave-browser-stable %U", extra="StartupWMClass=Brave-browser")
+        self.write("org.rustdesk.RustDesk", "RustDesk", exec_="flatpak run org.rustdesk.RustDesk")
+        self.assertTrue(apps.matches_window("desktop:brave-browser", "brave-browser.brave-browser"))
+        self.assertTrue(apps.matches_window("desktop:brave-browser", "Brave-browser.Brave-browser"))
+        self.assertTrue(apps.matches_window("desktop:org.rustdesk.RustDesk", "rustdesk.rustdesk"))
+        self.assertFalse(apps.matches_window("desktop:brave-browser", "firefox.firefox"))
+        self.assertNotIn("flatpak", apps.window_hints("desktop:org.rustdesk.RustDesk"))
+        self.assertEqual(apps.window_hints("desktop:nope"), [])
+
+    def test_icon_from_absolute_path_and_theme(self):
+        png(self.icons / "abs.png")
+        self.write("abs", "Abs", icon=str(self.icons / "abs.png"))
+        out = apps.icon_file("desktop:abs")
+        self.assertTrue(out and Path(out).read_bytes().startswith(b"\x89PNG"))
+        theme = self.icons / "hicolor" / "128x128" / "apps"
+        theme.mkdir(parents=True)
+        png(theme / "themed.png")
+        small = self.icons / "hicolor" / "16x16" / "apps"
+        small.mkdir(parents=True)
+        png(small / "themed.png", 2)
+        self.write("themed", "Themed", icon="themed")
+        self.assertEqual(Path(apps._find_icon("themed")).parent, theme)
+        self.assertTrue(Path(apps.icon_file("desktop:themed")).is_file())
+        self.assertEqual(apps.icon_file("desktop:themed"), apps.icon_file("desktop:themed"))
+
+    def test_icon_never_raises(self):
+        self.write("noicon", "No")
+        self.write("missing", "Missing", icon="does-not-exist")
+        for bad in ("desktop:noicon", "desktop:missing", "desktop:zzz", "movies", None, 3):
+            self.assertIsNone(apps.icon_file(bad))
+
+
+if __name__ == "__main__":
+    unittest.main()
