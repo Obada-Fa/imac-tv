@@ -39,7 +39,7 @@ class IslandMotionTests(unittest.TestCase):
 
 class RoutingTests(unittest.TestCase):
     def shell(self, screen):
-        return SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock())
+        return SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=None)
 
     def test_ambient_home_gets_only_the_hairline(self):
         screen = SimpleNamespace(volume_line=mock.Mock(), idle=SimpleNamespace(ambient=True))
@@ -57,15 +57,33 @@ class RoutingTests(unittest.TestCase):
         awake.volume_line.show_level.assert_not_called()
 
 
+class OverAppTests(unittest.TestCase):
+    def test_over_an_app_the_island_gets_its_own_window(self):
+        screen = SimpleNamespace(volume_line=mock.Mock(), idle=SimpleNamespace(ambient=True))
+        shell = SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=mock.Mock())
+        home.Home.show_volume(shell, 60, False, True)
+        shell.volume_overlay.show_level.assert_called_once_with(60, False)
+        screen.volume_line.show_level.assert_not_called()
+        shell.volume_pill.show_level.assert_not_called()
+
+    def test_back_on_home_the_overlay_goes_away(self):
+        shell = SimpleNamespace(current=lambda: SimpleNamespace(), volume_pill=mock.Mock(), volume_overlay=mock.Mock())
+        home.Home.show_volume(shell, 60, False)
+        shell.volume_overlay.dismiss.assert_called_once()
+        shell.volume_pill.show_level.assert_called_once_with(60, False)
+
+
 class EventTests(unittest.TestCase):
     def test_server_writes_the_level_for_home(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder, "volume_event.json")
-            controller = SimpleNamespace(volume_path=path, _save_json=server.Controller._save_json)
-            with mock.patch.object(server, "mpv", side_effect=OSError):
-                server.Controller._volume_osd(controller, 35, True)
+            controller = SimpleNamespace(volume_path=path, _save_json=server.Controller._save_json, app="home")
+            server.Controller._volume_osd(controller, 35, True)
             event = json.loads(path.read_text())
-            self.assertEqual((event["percent"], event["muted"]), (35, True))
+            self.assertEqual((event["percent"], event["muted"], event["over"]), (35, True, False))
+            controller.app = "youtube"
+            server.Controller._volume_osd(controller, 35, False)
+            self.assertTrue(json.loads(path.read_text())["over"])
 
     def test_home_ignores_an_old_or_repeated_event(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(home, "DATA", Path(folder)):
@@ -77,7 +95,7 @@ class EventTests(unittest.TestCase):
             path.write_text(json.dumps({"percent": 20, "muted": False, "ts": time.time()}))
             home.Home.volume_file_changed(shell)
             home.Home.volume_file_changed(shell)
-            shell.show_volume.assert_called_once_with(20, False)
+            shell.show_volume.assert_called_once_with(20, False, False)
 
 
 if __name__ == "__main__":

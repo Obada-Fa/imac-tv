@@ -707,14 +707,11 @@ class Controller:
             return None, None
 
     def _volume_osd(self, percent, muted=False):
-        """Show the level on the TV: Home draws its own indicator, and mpv its OSD bar while a movie plays."""
+        """Have Home show the level on the TV, above whatever app is in front."""
         try:
-            self._save_json(self.volume_path, {"percent": percent, "muted": bool(muted), "ts": time.time()})
+            self._save_json(self.volume_path, {"percent": percent, "muted": bool(muted), "ts": time.time(),
+                                               "over": self.app != "home"})
         except OSError:
-            pass
-        try:
-            mpv("show-text", player.volume_osd(percent, muted), 1500)
-        except (OSError, RuntimeError, ValueError, TimeoutError):
             pass
 
     def _notify_update(self):

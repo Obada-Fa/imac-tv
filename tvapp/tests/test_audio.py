@@ -46,8 +46,6 @@ class AudioTests(unittest.TestCase):
     def test_volume_helpers(self):
         self.assertEqual(player.sink_volume("Volume: front-left: 42000 /  64% / -11.9 dB"), 64)
         self.assertIsNone(player.sink_volume(""))
-        self.assertIn("50%", player.volume_osd(50))
-        self.assertEqual(player.volume_osd(50, True), "Muted")
         self.assertIn("--volume=100", player.mpv_argv("u", title="T", subs=[]))
 
     def test_config_default(self):
@@ -69,7 +67,7 @@ class AudioTests(unittest.TestCase):
             c = server.Controller()
             self.assertEqual(c.action("volume", {"direction": 1}), {"volume": 55})
             self.assertIn(["pactl", "set-sink-volume", "@DEFAULT_SINK@", "55%"], calls)
-            self.assertEqual(mpv.call_args[0][0], "show-text")
+            mpv.assert_not_called()                 # Home's island shows the level, not mpv's own text
             self.assertTrue(all(a[0] != "osd-msg-bar" for a, _ in mpv.call_args_list))
             c.action("mute", {})
             self.assertIn(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"], calls)

@@ -196,6 +196,7 @@ class Home(Gtk.Window):
         root.add_overlay(self.toaster)
         self.volume_pill = volume_hud.VolumePill(self)
         root.add_overlay(self.volume_pill)
+        self.volume_overlay = None      # the island above other apps; made the first time it is needed
         self.volume_seen = 0.0
         self.volume_monitor = Gio.File.new_for_path(str(DATA / "volume_event.json")).monitor_file(Gio.FileMonitorFlags.NONE, None)
         self.volume_monitor.connect("changed", self.volume_file_changed)
@@ -750,17 +751,25 @@ class Home(Gtk.Window):
         if ts == self.volume_seen or abs(time.time() - ts) > 3:
             return
         self.volume_seen = ts
-        self.show_volume(percent, muted)
+        self.show_volume(percent, muted, bool(event.get("over")))
 
-    def show_volume(self, percent, muted):
-        """Ambient Home keeps it to a hairline under the clock; everywhere else gets the pill."""
+    def show_volume(self, percent, muted, over=False):
+        """Over another app the island gets its own window. On Home and Settings it joins the frosted glass;
+        ambient Home keeps it to a hairline under the clock."""
         screen = self.current()
         line = getattr(screen, "volume_line", None)
-        if line and screen.idle.ambient:
+        if over:
+            self.volume_pill.dismiss()
+            if not self.volume_overlay:
+                self.volume_overlay = volume_hud.VolumeOverlay(self)
+            self.volume_overlay.show_level(percent, muted)
+        elif line and screen.idle.ambient:
             self.volume_pill.dismiss()
             line.show_level(percent, muted)
         else:
             self.volume_pill.show_level(percent, muted)
+        if not over and self.volume_overlay:
+            self.volume_overlay.dismiss()
 
     def check_ui_request(self):
         path = DATA / "ui_request.json"

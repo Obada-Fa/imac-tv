@@ -30,16 +30,6 @@ def audio_warning(sinks_text, default_sink):
     return None
 
 
-def volume_osd(percent, muted=False, width=20):
-    """Text bar for mpv's show-text."""
-    if percent is None:
-        return "Volume unavailable"
-    if muted:
-        return "Muted"
-    filled = round(max(0, min(100, percent)) * width / 100)
-    return f"Volume {'█' * filled}{'░' * (width - filled)} {percent}%"
-
-
 def _rounded_rect(w, h, r):
     """ASS drawing of a rounded rectangle at the origin."""
     k = r * 0.45  # distance from a corner to its Bezier control points

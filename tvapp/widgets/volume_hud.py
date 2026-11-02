@@ -9,7 +9,7 @@ import cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk, Pango, PangoCairo  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
 from widgets import network  # noqa: E402
 
@@ -109,10 +109,9 @@ class VolumePill(VolumeIndicator):
 
     WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, 16, 28
 
-    def __init__(self, shell):
-        self.shell, self.px = shell, shell.px
-        px = shell.px
-        super().__init__(round(px(self.WIDTH) * 1.14) + 2 * px(self.SHOULDER), round(px(self.HEIGHT) * 1.14))
+    def __init__(self, shell, frosted=True):
+        self.shell, self.px, self.frosted = shell, shell.px, frosted
+        super().__init__(*self.room())
         self.set_halign(Gtk.Align.CENTER)
         self.set_valign(Gtk.Align.START)
         self.set_can_focus(False)
@@ -120,9 +119,16 @@ class VolumePill(VolumeIndicator):
         self.size = self.size_from = 0.0    # 0 = tucked into the edge, 1 = fully open
         self.started = 0.0
         self.bar = 0.0
+        self.on_hidden = None
+
+    def room(self):
+        """Space for the widest island, with its overshoot; px changes when the TV's resolution does."""
+        px = self.px
+        return round(px(self.WIDTH) * 1.14) + 2 * px(self.SHOULDER), round(px(self.HEIGHT) * 1.14)
 
     def show_level(self, percent, muted=False):
         self.percent, self.muted = percent, bool(muted)
+        self.set_size_request(*self.room())
         if self.phase != "open":
             if self.phase == "closed":
                 self.bar = filled(percent, muted)
@@ -172,6 +178,8 @@ class VolumePill(VolumeIndicator):
         self.stop_timers()
         self.phase, self.size = "closed", 0.0
         self.hide()
+        if self.on_hidden:
+            self.on_hidden()
 
     def outline(self, cr, cx, width, height):
         """Flat along the screen edge, flaring into it at the shoulders, rounded below. The path stays open
@@ -197,7 +205,7 @@ class VolumePill(VolumeIndicator):
         self.outline(cr, left + width / 2, width, height)
         cr.save()
         cr.clip_preserve()
-        photo = getattr(self.shell, "photo_canvas", None)
+        photo = getattr(self.shell, "photo_canvas", None) if self.frosted else None
         network.paint_frost(cr, base, self, photo)
         if getattr(photo, "transparency", True):
             cr.set_source_rgba(0.015, 0.025, 0.05, 0.34)
@@ -242,6 +250,54 @@ class VolumePill(VolumeIndicator):
                 cr.new_sub_path()
                 cr.arc(cx - size * 0.1, y, size * reach, -0.8, 0.8)
                 cr.stroke()
+
+
+class VolumeOverlay(Gtk.Window):
+    """The island over YouTube, movies and other apps, when the Home window is behind them: a see-through window
+    on the top screen edge that takes no focus or clicks, and exists on screen only while the island shows.
+    A window can't see through to blur another app's picture, so here the glass is tinted, not frosted."""
+
+    def __init__(self, shell):
+        super().__init__(type=Gtk.WindowType.POPUP)
+        self.shell = shell
+        self.set_app_paintable(True)
+        self.set_accept_focus(False)
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        visual = self.get_screen().get_rgba_visual()
+        if visual:
+            self.set_visual(visual)
+        self.connect("draw", self.clear)
+        self.connect("realize", lambda *_: self.get_window().input_shape_combine_region(cairo.Region(), 0, 0))
+        self.pill = VolumePill(shell, frosted=False)
+        self.pill.on_hidden = self.hide
+        self.add(self.pill)
+
+    @staticmethod
+    def clear(_w, cr):
+        cr.set_operator(cairo.OPERATOR_CLEAR)
+        cr.paint()
+        cr.set_operator(cairo.OPERATOR_OVER)
+        return False
+
+    def show_level(self, percent, muted=False):
+        width, height = self.pill.room()
+        self.resize(width, height)
+        x, y, full = self.placement()
+        self.move(x + (full - width) // 2, y)
+        self.pill.show_level(percent, muted)
+        self.show()
+        self.get_window().raise_()
+
+    def placement(self):
+        """(x, y, width) of the monitor the TV app is on."""
+        display = Gdk.Display.get_default()
+        window = self.shell.get_window()
+        monitor = (display.get_monitor_at_window(window) if window else None) or display.get_primary_monitor() or display.get_monitor(0)
+        area = monitor.get_geometry()
+        return area.x, area.y, area.width
+
+    def dismiss(self):
+        self.pill.dismiss()
 
 
 class AmbientVolumeLine(VolumeIndicator):
