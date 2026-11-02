@@ -686,7 +686,7 @@ class LifecycleTests(unittest.TestCase):
             c.select("home")
         mini.assert_not_called()
         with mock.patch.object(server, "window_for", return_value=yt), mock.patch.object(server, "activate") as act, \
-                mock.patch.object(server.time, "sleep"):
+                mock.patch.object(server.time, "sleep"), mock.patch.object(server.youtube_volume, "reachable", return_value=True):
             c.generation += 1
             c._launch("youtube", c.generation)
         act.assert_called_once_with(yt)
