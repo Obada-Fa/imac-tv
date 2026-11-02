@@ -11,12 +11,13 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
+from widgets import network  # noqa: E402
+
 HOLD_MS = 1600
 FADE_MS = 66            # 15 fps, the TV's animation budget
 FADE_STEP = 0.25
 ISLAND_MS = 33          # the island's spring needs 30 fps, for half a second, in a small part of the screen
 OPEN_S, CLOSE_S, BUMP_S = 0.5, 0.24, 0.22
-COLLAPSED = 120
 
 
 def filled(percent, muted):
@@ -35,11 +36,6 @@ def closing(start, t):
     """The island's size while it tucks away: slow at first, then quickly into the edge."""
     e = min(1.0, t / CLOSE_S)
     return start * (1 - e * e * (3 - 2 * e))
-
-
-def content_alpha(size):
-    """The contents appear only once the island has room for them."""
-    return max(0.0, min(1.0, (size - 0.6) / 0.35))
 
 
 class VolumeIndicator(Gtk.DrawingArea):
@@ -103,14 +99,15 @@ class VolumeIndicator(Gtk.DrawingArea):
 
 
 class VolumePill(VolumeIndicator):
-    """Home and Settings: a black island joined to the top edge of the screen. It springs out of the edge,
+    """Home and Settings: a frosted glass island joined to the top edge of the screen. It springs out of the edge,
     its bar glides between levels, and it tucks back in. The timer only runs during those moments."""
 
     WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, 16, 28
 
-    def __init__(self, px):
-        self.px = px
-        super().__init__(round(px(self.WIDTH) * 1.1) + 2 * px(self.SHOULDER), round(px(self.HEIGHT) * 1.08))
+    def __init__(self, shell):
+        self.shell, self.px = shell, shell.px
+        px = shell.px
+        super().__init__(round(px(self.WIDTH) * 1.14) + 2 * px(self.SHOULDER), round(px(self.HEIGHT) * 1.14))
         self.set_halign(Gtk.Align.CENTER)
         self.set_valign(Gtk.Align.START)
         self.set_can_focus(False)
@@ -176,52 +173,59 @@ class VolumePill(VolumeIndicator):
         self.hide()
 
     def outline(self, cr, cx, width, height):
-        """Flat along the screen edge, flaring into it at the shoulders, rounded below."""
+        """Flat along the screen edge, flaring into it at the shoulders, rounded below. The path stays open
+        along the edge, so a stroke only follows the part that is on screen."""
         left, right = cx - width / 2, cx + width / 2
-        s = min(height / 2, self.px(self.SHOULDER))
-        r = min(height - s, width / 2, self.px(self.CORNER))
+        s, r = self.px(self.SHOULDER), self.px(self.CORNER)
         cr.new_path()
-        cr.move_to(left - s, 0)
-        cr.line_to(right + s, 0)
         cr.arc_negative(right + s, s, s, -math.pi / 2, -math.pi)
         cr.arc(right - r, height - r, r, 0, math.pi / 2)
         cr.arc(left + r, height - r, r, math.pi / 2, math.pi)
         cr.arc_negative(left - s, s, s, 0, -math.pi / 2)
-        cr.close_path()
 
     def on_draw(self, _w, cr):
         px, cx = self.px, self.get_allocated_width() / 2
-        if self.size <= 0:
+        if self.size <= 0.01:
             return False
-        bump = 0.0
+        scale = self.size
         since = time.monotonic() - self.bump_at
         if since < BUMP_S:
-            bump = 0.02 * math.sin(math.pi * since / BUMP_S)
-        full, tall = px(self.WIDTH), px(self.HEIGHT)
-        width = (px(COLLAPSED) + (full - px(COLLAPSED)) * self.size) * (1 + bump)
-        height = tall * (1 + (self.size - 1) * 0.5 if self.size > 1 else self.size)
-        self.outline(cr, cx, width, height)
-        cr.set_source_rgb(0, 0, 0)
-        cr.fill()
-        alpha = content_alpha(self.size)
-        if alpha <= 0:
-            return False
+            scale *= 1 + 0.02 * math.sin(math.pi * since / BUMP_S)
+        base = cr.get_matrix()
+        cr.translate(cx, 0)                 # the whole island, contents too, grows out of the screen edge
+        cr.scale(scale, scale)
+        cr.translate(-cx, 0)
+        full, height = px(self.WIDTH), px(self.HEIGHT)
+        self.outline(cr, cx, full, height)
+        cr.save()
+        cr.clip_preserve()
+        photo = getattr(self.shell, "photo_canvas", None)
+        network.paint_frost(cr, base, self, photo)
+        if getattr(photo, "transparency", True):
+            cr.set_source_rgba(0.015, 0.025, 0.05, 0.34)
+            cr.paint()
+        cr.set_source_rgba(1, 1, 1, 0.07)
+        cr.paint()
+        cr.restore()
+        cr.set_source_rgba(1, 1, 1, 0.22)
+        cr.set_line_width(1)
+        cr.stroke()
         y = height / 2
         start = cx - full / 2
-        self.speaker(cr, start + px(26), y, px(12), alpha)
+        self.speaker(cr, start + px(26), y, px(12), 1.0)
         left, right = start + px(68), start + full - px(108)
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
         cr.set_line_width(px(6))
-        cr.set_source_rgba(1, 1, 1, 0.22 * alpha)
+        cr.set_source_rgba(1, 1, 1, 0.26)
         cr.move_to(left, y)
         cr.line_to(right, y)
         cr.stroke()
         if self.bar > 0:
-            cr.set_source_rgba(1, 1, 1, alpha)
+            cr.set_source_rgb(1, 1, 1)
             cr.move_to(left, y)
             cr.line_to(left + (right - left) * self.bar, y)
             cr.stroke()
-        self.text(cr, "Muted" if self.muted else str(self.percent), "Inter Semi-Bold %d" % px(17), right + px(16), y, alpha)
+        self.text(cr, "Muted" if self.muted else str(self.percent), "Inter Semi-Bold %d" % px(17), right + px(16), y, 1.0)
         return False
 
     def speaker(self, cr, x, y, size, alpha):

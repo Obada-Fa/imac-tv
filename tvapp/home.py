@@ -194,7 +194,7 @@ class Home(Gtk.Window):
         root.add_overlay(self.buffering)
         self.toaster = Toast(self)
         root.add_overlay(self.toaster)
-        self.volume_pill = volume_hud.VolumePill(self.px)
+        self.volume_pill = volume_hud.VolumePill(self)
         root.add_overlay(self.volume_pill)
         self.volume_seen = 0.0
         self.volume_monitor = Gio.File.new_for_path(str(DATA / "volume_event.json")).monitor_file(Gio.FileMonitorFlags.NONE, None)

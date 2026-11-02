@@ -32,10 +32,6 @@ class IslandMotionTests(unittest.TestCase):
         self.assertEqual(volume_hud.closing(0.7, 0), 0.7)
         self.assertEqual(volume_hud.closing(0.7, volume_hud.CLOSE_S), 0.0)
 
-    def test_contents_wait_for_room(self):
-        self.assertEqual(volume_hud.content_alpha(0.5), 0.0)
-        self.assertEqual(volume_hud.content_alpha(1.0), 1.0)
-
 
 class RoutingTests(unittest.TestCase):
     def shell(self, screen):
