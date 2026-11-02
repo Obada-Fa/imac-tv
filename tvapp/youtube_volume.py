@@ -6,6 +6,7 @@ and hide VacuumTube's volume bar. The player still reads back what it set, so it
 
 import json
 import os
+from pathlib import Path
 import urllib.request
 
 import browser
@@ -32,6 +33,30 @@ LOCK_LEVEL = """(() => {
   document.documentElement.appendChild(style);
   return true;
 })()"""
+
+
+def ensure_flag(home=None):
+    """VacuumTube also reads switches from flags.txt, so the port is open however it gets started."""
+    home = Path(home) if home else Path.home()
+    for folder in (home / ".config/VacuumTube", home / ".var/app/rocks.shy.VacuumTube/config/VacuumTube"):
+        path = folder / "flags.txt"
+        try:
+            if not folder.is_dir():
+                continue
+            text = path.read_text() if path.exists() else ""
+            if "remote-debugging-port" not in text:
+                path.write_text((text.rstrip() + " " + FLAG).strip() + "\n")
+        except OSError:
+            continue
+
+
+def reachable(timeout=0.5):
+    """Whether a running YouTube has the port open; one started by an older version doesn't."""
+    try:
+        with _opener.open(f"http://127.0.0.1:{PORT}/json/version", timeout=timeout):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def enforce(timeout=0.5):

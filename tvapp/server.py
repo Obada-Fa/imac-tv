@@ -724,6 +724,7 @@ class Controller:
 
     def _watch(self):
         self.updater.capture_running()
+        youtube_volume.ensure_flag()
         threading.Thread(target=self._check_audio, daemon=True).start()
         while True:
             time.sleep(2)
@@ -772,12 +773,28 @@ class Controller:
         finally:
             self.home_lock.release()
 
+    def _replace_unlocked_youtube(self, win):
+        """A YouTube started without the debugging port keeps its own volume: close it so it starts again with it."""
+        if youtube_volume.reachable():
+            return win
+        LOG.info("YouTube is running without the volume lock; restarting it")
+        command(["wmctrl", "-i", "-c", win["id"]], check=False)
+        for _ in range(25):
+            time.sleep(0.2)
+            if not window_for("youtube"):
+                return None
+        LOG.warning("YouTube did not close, so its own volume stays active")
+        return win
+
     def _launch(self, app, generation):
         try:
             win = window_for(app)
+            if app == "youtube" and win:
+                win = self._replace_unlocked_youtube(win)
             if not win:
                 app_cmd = resolve_app_command(app)
                 if app == "youtube":
+                    youtube_volume.ensure_flag()
                     pin_youtube_volume()
                 subprocess.Popen(app_cmd, env=DISPLAY_ENV, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

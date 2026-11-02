@@ -73,6 +73,32 @@ class OverAppTests(unittest.TestCase):
         shell.volume_pill.show_level.assert_called_once_with(60, False)
 
 
+class YoutubeLockTests(unittest.TestCase):
+    def test_flag_is_added_once_and_keeps_other_flags(self):
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder, ".config/VacuumTube")
+            config.mkdir(parents=True)
+            (config / "flags.txt").write_text("--disable-gpu\n")
+            server.youtube_volume.ensure_flag(folder)
+            server.youtube_volume.ensure_flag(folder)
+            self.assertEqual((config / "flags.txt").read_text(), "--disable-gpu " + server.youtube_volume.FLAG + "\n")
+            self.assertFalse(Path(folder, ".var").exists())     # an install that isn't there stays untouched
+
+    def test_running_youtube_without_the_port_is_replaced(self):
+        controller = SimpleNamespace()
+        with mock.patch.object(server.youtube_volume, "reachable", return_value=False), \
+                mock.patch.object(server, "command") as command, mock.patch.object(server.time, "sleep"), \
+                mock.patch.object(server, "window_for", return_value=None):
+            self.assertIsNone(server.Controller._replace_unlocked_youtube(controller, {"id": "0x1"}))
+        command.assert_called_once()
+
+    def test_running_youtube_with_the_port_is_left_alone(self):
+        with mock.patch.object(server.youtube_volume, "reachable", return_value=True), \
+                mock.patch.object(server, "command") as command:
+            self.assertEqual(server.Controller._replace_unlocked_youtube(SimpleNamespace(), {"id": "0x1"}), {"id": "0x1"})
+        command.assert_not_called()
+
+
 class EventTests(unittest.TestCase):
     def test_server_writes_the_level_for_home(self):
         with tempfile.TemporaryDirectory() as folder:
