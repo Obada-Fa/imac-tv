@@ -105,7 +105,7 @@ class VolumeIndicator(Gtk.DrawingArea):
 
 class VolumePill(VolumeIndicator):
     """Home and Settings: a frosted glass island joined to the top edge of the screen. It springs out of the edge,
-    its width shows the level and glides between levels, and it tucks back in. The timer only runs during those moments."""
+    its left end stays put and its width shows the level, gliding between levels, and it tucks back in. The timer only runs during those moments."""
 
     WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, 16, 28
 
@@ -189,11 +189,12 @@ class VolumePill(VolumeIndicator):
         if self.size <= 0.01:
             return False
         base = cr.get_matrix()
-        cr.translate(cx, 0)                 # the whole island, contents too, grows out of the screen edge
+        left = cx - px(self.WIDTH) / 2      # the left end never moves: louder only reaches further right
+        cr.translate(left, 0)               # the whole island, contents too, grows out of the screen edge
         cr.scale(self.size, self.size)
-        cr.translate(-cx, 0)
+        cr.translate(-left, 0)
         width, height = px(self.WIDTH) * island_width(self.bar), px(self.HEIGHT)
-        self.outline(cr, cx, width, height)
+        self.outline(cr, left + width / 2, width, height)
         cr.save()
         cr.clip_preserve()
         photo = getattr(self.shell, "photo_canvas", None)
@@ -208,10 +209,10 @@ class VolumePill(VolumeIndicator):
         cr.set_line_width(1)
         cr.stroke()
         y = height / 2
-        self.speaker(cr, cx - width / 2 + px(28), y, px(12), 1.0)   # this inset centres it in the silent island
+        self.speaker(cr, left + px(28), y, px(12), 1.0)   # this inset centres it in the silent island
         alpha = max(0.0, min(1.0, (self.bar - 0.01) / 0.03))
         if alpha > 0:
-            self.text(cr, str(self.percent), "Inter Semi-Bold %d" % px(17), cx + width / 2 - px(24), y, alpha, end=True)
+            self.text(cr, str(self.percent), "Inter Semi-Bold %d" % px(17), left + width - px(24), y, alpha, end=True)
         return False
 
     def speaker(self, cr, x, y, size, alpha):
