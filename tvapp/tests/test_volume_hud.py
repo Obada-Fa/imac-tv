@@ -21,6 +21,10 @@ class FillTests(unittest.TestCase):
 
 
 class IslandMotionTests(unittest.TestCase):
+    def test_island_width_follows_the_level(self):
+        for percent, muted, share in ((70, True, 0.2), (0, False, 0.2), (20, False, 0.36), (100, False, 1.0)):
+            self.assertAlmostEqual(volume_hud.island_width(volume_hud.filled(percent, muted)), share)
+
     def test_spring_overshoots_then_settles_open(self):
         sizes = [volume_hud.opening(0.0, n / 30) for n in range(16)]
         self.assertEqual(sizes[0], 0.0)

@@ -17,12 +17,17 @@ HOLD_MS = 1600
 FADE_MS = 66            # 15 fps, the TV's animation budget
 FADE_STEP = 0.25
 ISLAND_MS = 33          # the island's spring needs 30 fps, for half a second, in a small part of the screen
-OPEN_S, CLOSE_S, BUMP_S = 0.5, 0.24, 0.22
+OPEN_S, CLOSE_S = 0.5, 0.24
 
 
 def filled(percent, muted):
     """Bar fill 0..1; a muted bar is empty whatever the level behind it."""
     return 0.0 if muted else max(0, min(100, percent)) / 100
+
+
+def island_width(level):
+    """The island's width as a share of its full width: 20% when silent, 100% at full volume."""
+    return 0.2 + 0.8 * level
 
 
 def opening(start, t):
@@ -83,24 +88,24 @@ class VolumeIndicator(Gtk.DrawingArea):
         self.stop_timers()
         self.hide()
 
-    def text(self, cr, text, font, x, y, alpha):
-        """One line of text, vertically centred on y; returns its width."""
+    def text(self, cr, text, font, x, y, alpha, end=False):
+        """One line of text, vertically centred on y, starting at x (or ending there, with end)."""
         layout = PangoCairo.create_layout(cr)
         layout.set_font_description(Pango.FontDescription(font))
         layout.set_text(text, -1)
         width, height = layout.get_pixel_size()
+        x = x - width if end else x
         cr.move_to(x + 1, y - height / 2 + 1)
         cr.set_source_rgba(0, 0, 0, 0.5 * alpha)
         PangoCairo.show_layout(cr, layout)
         cr.move_to(x, y - height / 2)
         cr.set_source_rgba(1, 1, 1, alpha)
         PangoCairo.show_layout(cr, layout)
-        return width
 
 
 class VolumePill(VolumeIndicator):
     """Home and Settings: a frosted glass island joined to the top edge of the screen. It springs out of the edge,
-    its bar glides between levels, and it tucks back in. The timer only runs during those moments."""
+    its width shows the level and glides between levels, and it tucks back in. The timer only runs during those moments."""
 
     WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, 16, 28
 
@@ -113,19 +118,16 @@ class VolumePill(VolumeIndicator):
         self.set_can_focus(False)
         self.phase = "closed"
         self.size = self.size_from = 0.0    # 0 = tucked into the edge, 1 = fully open
-        self.started = self.bump_at = 0.0
+        self.started = 0.0
         self.bar = 0.0
 
     def show_level(self, percent, muted=False):
-        changed = (percent, bool(muted)) != (self.percent, self.muted)
         self.percent, self.muted = percent, bool(muted)
         if self.phase != "open":
             if self.phase == "closed":
                 self.bar = filled(percent, muted)
             self.begin("open")
             self.show()
-        elif changed:
-            self.bump_at = time.monotonic()
         if self.level_timer:
             GLib.source_remove(self.level_timer)
         self.level_timer = GLib.timeout_add(HOLD_MS, self.begin_close)
@@ -146,8 +148,7 @@ class VolumePill(VolumeIndicator):
         self.queue_draw()
 
     def animate(self):
-        now = time.monotonic()
-        t = now - self.started
+        t = time.monotonic() - self.started
         target = filled(self.percent, self.muted)
         self.bar += (target - self.bar) * 0.4
         if abs(target - self.bar) < 0.002:
@@ -161,7 +162,7 @@ class VolumePill(VolumeIndicator):
         else:
             self.size = opening(self.size_from, t)
         self.queue_draw()
-        if self.phase == "open" and t >= OPEN_S and self.bar == target and now - self.bump_at >= BUMP_S:
+        if self.phase == "open" and t >= OPEN_S and self.bar == target:
             self.size = 1.0
             self.fade_timer = 0
             return False
@@ -187,16 +188,12 @@ class VolumePill(VolumeIndicator):
         px, cx = self.px, self.get_allocated_width() / 2
         if self.size <= 0.01:
             return False
-        scale = self.size
-        since = time.monotonic() - self.bump_at
-        if since < BUMP_S:
-            scale *= 1 + 0.02 * math.sin(math.pi * since / BUMP_S)
         base = cr.get_matrix()
         cr.translate(cx, 0)                 # the whole island, contents too, grows out of the screen edge
-        cr.scale(scale, scale)
+        cr.scale(self.size, self.size)
         cr.translate(-cx, 0)
-        full, height = px(self.WIDTH), px(self.HEIGHT)
-        self.outline(cr, cx, full, height)
+        width, height = px(self.WIDTH) * island_width(self.bar), px(self.HEIGHT)
+        self.outline(cr, cx, width, height)
         cr.save()
         cr.clip_preserve()
         photo = getattr(self.shell, "photo_canvas", None)
@@ -211,21 +208,10 @@ class VolumePill(VolumeIndicator):
         cr.set_line_width(1)
         cr.stroke()
         y = height / 2
-        start = cx - full / 2
-        self.speaker(cr, start + px(26), y, px(12), 1.0)
-        left, right = start + px(68), start + full - px(108)
-        cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_width(px(6))
-        cr.set_source_rgba(1, 1, 1, 0.26)
-        cr.move_to(left, y)
-        cr.line_to(right, y)
-        cr.stroke()
-        if self.bar > 0:
-            cr.set_source_rgb(1, 1, 1)
-            cr.move_to(left, y)
-            cr.line_to(left + (right - left) * self.bar, y)
-            cr.stroke()
-        self.text(cr, "Muted" if self.muted else str(self.percent), "Inter Semi-Bold %d" % px(17), right + px(16), y, 1.0)
+        self.speaker(cr, cx - width / 2 + px(28), y, px(12), 1.0)   # this inset centres it in the silent island
+        alpha = max(0.0, min(1.0, (self.bar - 0.01) / 0.03))
+        if alpha > 0:
+            self.text(cr, str(self.percent), "Inter Semi-Bold %d" % px(17), cx + width / 2 - px(24), y, alpha, end=True)
         return False
 
     def speaker(self, cr, x, y, size, alpha):
