@@ -105,10 +105,19 @@ def view(window_title, timeout=0.4):
 
 def _page_command(tab_id, method, params, timeout=2, port=None):
     """One command over the tab's DevTools WebSocket; returns its "result"."""
+    sock, rest = _open_page(tab_id, timeout, port)
+    with sock:
+        sock.sendall(_ws_frame(json.dumps({"id": 1, "method": method, "params": params}).encode()))
+        return json.loads(_ws_read(rest, sock)).get("result") or {}
+
+
+def _open_page(tab_id, timeout=2, port=None):
+    """A connected DevTools WebSocket to the tab, and whatever already came after the handshake."""
     if not isinstance(tab_id, str) or not _TAB_ID.match(tab_id):
         raise ValueError("Unknown tab")
     port = port or PORT
-    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+    sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
         key = base64.b64encode(os.urandom(16)).decode()
         sock.sendall((f"GET /devtools/page/{tab_id} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
                       f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
@@ -120,8 +129,10 @@ def _page_command(tab_id, method, params, timeout=2, port=None):
             reply += chunk
         if b" 101 " not in reply.split(b"\r\n", 1)[0]:
             raise OSError("The tab refused the connection")
-        sock.sendall(_ws_frame(json.dumps({"id": 1, "method": method, "params": params}).encode()))
-        return json.loads(_ws_read(reply.split(b"\r\n\r\n", 1)[1], sock)).get("result") or {}
+    except BaseException:
+        sock.close()
+        raise
+    return sock, reply.split(b"\r\n\r\n", 1)[1]
 
 
 def navigate(tab_id, url):

@@ -180,25 +180,6 @@ def fullscreen_state(window_id):
     return "_NET_WM_STATE_FULLSCREEN" in state
 
 
-def pin_youtube_volume(home=None):
-    """VacuumTube keeps its own saved player volume. Reset it to 100 so only the system volume sets the level.
-
-    Call this only before launching: a running VacuumTube overwrites the file from memory."""
-    home = Path(home) if home else Path.home()
-    for folder in (home / ".config/VacuumTube", home / ".var/app/rocks.shy.VacuumTube/config/VacuumTube"):
-        path = folder / "config.json"
-        try:
-            config = json.loads(path.read_text())
-            if not isinstance(config, dict) or config.get("volume", 100) == 100:
-                continue
-            config["volume"] = 100
-            temp = path.with_name("config.json.imactv-tmp")
-            temp.write_text(json.dumps(config, indent=4))
-            temp.replace(path)
-        except (OSError, ValueError):
-            continue
-
-
 def backlight_device():
     """The panel backlight node, preferring the built-in eDP display."""
     try:
@@ -484,6 +465,7 @@ class Controller:
         self.cache_ready = False
         self.ui_path = DATA / "ui_request.json"
         self.volume_path = DATA / "volume_event.json"
+        self.youtube_link = youtube_volume.Link(self._youtube_volume_asked, self._system_volume)
         self._browser_cache = (0.0, None)
         self.media_path = DATA / "last_media.json"
         self.media = self._read_json(self.media_path, None)
@@ -714,6 +696,15 @@ class Controller:
         except OSError:
             pass
 
+    def _youtube_volume_asked(self, change):
+        """The phone's YouTube app changed the volume: change the system volume instead and show it on the TV."""
+        if "level" in change:
+            command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{change['level']}%"])
+        if "muted" in change:
+            command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1" if change["muted"] else "0"])
+        percent, muted = self._system_volume()
+        self._volume_osd(percent, bool(muted))
+
     def _notify_update(self):
         try:
             command(["notify-send", "--app-name=iMac TV", "--icon=software-update-available",
@@ -795,7 +786,6 @@ class Controller:
                 app_cmd = resolve_app_command(app)
                 if app == "youtube":
                     youtube_volume.ensure_flag()
-                    pin_youtube_volume()
                 subprocess.Popen(app_cmd, env=DISPLAY_ENV, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  start_new_session=True)
@@ -919,6 +909,7 @@ class Controller:
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
         try:
             youtube_volume.enforce()
+            self.youtube_link.ensure()
             with self.lock:
                 generation = self.generation
             state = self.youtube_now()
@@ -2145,12 +2136,13 @@ class Controller:
                 direction = params.get("direction")
                 if direction not in (-1, 1):
                     raise ValueError("Invalid volume direction")
-                volume, _muted = self._system_volume()
+                volume, muted = self._system_volume()
                 if volume is None:
                     raise RuntimeError("Audio output is unavailable")
                 volume = max(0, min(100, volume + direction * 5))
                 command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{volume}%"])
                 self._volume_osd(volume)
+                self.youtube_link.push(volume, muted)
                 return {"volume": volume}
             if action == "next_episode":
                 with self.lock:
@@ -2187,6 +2179,7 @@ class Controller:
                 command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
                 percent, muted = self._system_volume()
                 self._volume_osd(percent, bool(muted))
+                self.youtube_link.push(percent, muted)
                 return {"ok": True}
             if action == "brightness":
                 return self.set_brightness(params.get("level"))
