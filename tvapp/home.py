@@ -13,7 +13,7 @@ import time
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
@@ -28,7 +28,7 @@ from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
-from widgets import chrome, glass  # noqa: E402
+from widgets import chrome, glass, volume_hud  # noqa: E402
 from widgets.browser_menu import BrowserMenu  # noqa: E402
 from widgets.playback import PlaybackSuggestion
 from theme import theme_css
@@ -194,6 +194,11 @@ class Home(Gtk.Window):
         root.add_overlay(self.buffering)
         self.toaster = Toast(self)
         root.add_overlay(self.toaster)
+        self.volume_pill = volume_hud.VolumePill(self.px)
+        root.add_overlay(self.volume_pill)
+        self.volume_seen = 0.0
+        self.volume_monitor = Gio.File.new_for_path(str(DATA / "volume_event.json")).monitor_file(Gio.FileMonitorFlags.NONE, None)
+        self.volume_monitor.connect("changed", self.volume_file_changed)
 
         # mouse / the phone's Pointer mode: clicks and hover reach the drawn (windowless) controls by hit test
         self.pointer = glass.Pointer(self, root=self.pointer_root, on_click=self.pointer_clicked,
@@ -734,6 +739,28 @@ class Home(Gtk.Window):
             self.ui_monitor.connect("changed", lambda *_: self.check_ui_request())
         except Exception as exc:
             print("ui_request monitor:", exc)
+
+    def volume_file_changed(self, *_args):
+        """The controller changed the volume: show it right away, not at the next tick."""
+        try:
+            event = json.loads((DATA / "volume_event.json").read_text())
+            percent, muted, ts = int(event["percent"]), bool(event["muted"]), float(event["ts"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return
+        if ts == self.volume_seen or abs(time.time() - ts) > 3:
+            return
+        self.volume_seen = ts
+        self.show_volume(percent, muted)
+
+    def show_volume(self, percent, muted):
+        """Ambient Home keeps it to a hairline under the clock; everywhere else gets the pill."""
+        screen = self.current()
+        line = getattr(screen, "volume_line", None)
+        if line and screen.idle.ambient:
+            self.volume_pill.dismiss()
+            line.show_level(percent, muted)
+        else:
+            self.volume_pill.show_level(percent, muted)
 
     def check_ui_request(self):
         path = DATA / "ui_request.json"

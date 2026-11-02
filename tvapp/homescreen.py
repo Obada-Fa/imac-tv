@@ -24,7 +24,7 @@ import screens
 from screens import Screen, text_label, cover_pixbuf
 import backgrounds
 import widgets
-from widgets import network, shapes, contours
+from widgets import network, shapes, contours, volume_hud
 import perflog
 
 PERF = perflog.from_env()       # IMACTV_PERF_LOG=path: per-frame timings (None, and free, when unset)
@@ -618,6 +618,9 @@ class AmbientHomeScreen(Screen):
                 self.chrome_widgets.append(w.widget)
             self.due[w.id] = 0.0
 
+        self.volume_line = volume_hud.AmbientVolumeLine(px)
+        left.pack_start(self.volume_line, False, False, 0)
+        left.reorder_child(self.volume_line, 1)     # directly under the clock
         overlay.add_overlay(right)      # after the rows: the pairing drop-down floats above the tiles
         cap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         cap.set_halign(Gtk.Align.START)
@@ -684,6 +687,7 @@ class AmbientHomeScreen(Screen):
         """Register user input; True when it only woke the screen from ambient mode (swallow the key)."""
         woke = self.idle.touch(time.monotonic())
         if woke:
+            self.volume_line.reserve(False)
             self.canvas.ambient = False
             self.canvas.queue_draw()
             self.update_bottom_label()
@@ -695,6 +699,7 @@ class AmbientHomeScreen(Screen):
         return woke
 
     def enter_ambient(self):
+        self.volume_line.reserve(True)
         self.canvas.ambient = True
         self.canvas.queue_draw()
         self.update_bottom_label()

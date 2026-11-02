@@ -88,7 +88,8 @@ class AmbientMusicTests(unittest.TestCase):
         screen = SimpleNamespace(idle=mock.Mock(), canvas=mock.Mock(ambient=True),
                                  items=[], audio=audio, shaped=True, dust_amt=1.0,
                                  morph=mock.Mock(), start_shape_timer=mock.Mock(),
-                                 start_anim=mock.Mock(), update_bottom_label=mock.Mock())
+                                 start_anim=mock.Mock(), update_bottom_label=mock.Mock(),
+                                 volume_line=mock.Mock())
         screen.idle.touch.return_value = True
         screen.stop_audio = mock.Mock(side_effect=lambda: setattr(screen, "audio", None))
         screen.wake_shapes = lambda: homescreen.AmbientHomeScreen.wake_shapes(screen)

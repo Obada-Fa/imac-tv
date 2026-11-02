@@ -483,6 +483,7 @@ class Controller:
         self.prefetch = None
         self.cache_ready = False
         self.ui_path = DATA / "ui_request.json"
+        self.volume_path = DATA / "volume_event.json"
         self._browser_cache = (0.0, None)
         self.media_path = DATA / "last_media.json"
         self.media = self._read_json(self.media_path, None)
@@ -706,7 +707,11 @@ class Controller:
             return None, None
 
     def _volume_osd(self, percent, muted=False):
-        """Show our own volume bar on the TV through the mpv OSD (only while mpv plays)."""
+        """Show the level on the TV: Home draws its own indicator, and mpv its OSD bar while a movie plays."""
+        try:
+            self._save_json(self.volume_path, {"percent": percent, "muted": bool(muted), "ts": time.time()})
+        except OSError:
+            pass
         try:
             mpv("show-text", player.volume_osd(percent, muted), 1500)
         except (OSError, RuntimeError, ValueError, TimeoutError):

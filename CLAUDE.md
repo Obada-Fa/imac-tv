@@ -30,6 +30,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
 - **Brave as a TV app:** `tvapp/browser.py` launches a natively installed Brave in kiosk mode on its own profile (`~/.local/share/imactv/brave-tv`; logins and extensions need setting up there once) with a local debugging port. `widgets/browser_menu.py` is the TV menu. The phone's Remote tab switches to a browser layout while it runs: address bar, page buttons, a full touchpad with a one-finger scroll edge, and a Browser sheet (tabs, zoom, Shields, Menu on TV). Not verified on the real TV (Mutter stacking, CPU).
 - **YouTube behind Home:** the window is minimized so the video stops rendering; audio is auto-resumed if minimizing paused it.
 - **YouTube volume:** `tvapp/youtube_volume.py` locks the video element at full level over a local debugging port (9334), so only the system volume counts. Not verified in real VacuumTube.
+- **Volume on the TV:** the server writes `volume_event.json`; Home watches it and shows `widgets/volume_hud.py`: a black island on the top screen edge over Home and Settings, a hairline under the clock in ambient.
 - **Not yet verified on the real TV:**
   - VacuumTube's MPRIS controls
   - the YouTube volume lock, including on the Flatpak build
