@@ -48,7 +48,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     (ROOT / "build").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ui-preview-", dir=ROOT / "build") as scratch, ExitStack() as stack:
-        stack.enter_context(mock.patch.dict(os.environ, {"IMACTV_DATA_DIR": scratch}))
+        stack.enter_context(mock.patch.dict(os.environ, {"IMACTV_DATA_DIR": scratch, "IMACTV_APPS_BUILTINS": "youtube,discord"}))
         import home
         import homescreen
         import screens
@@ -71,6 +71,7 @@ def main():
                       description="A new journey begins. Find your next favourite story.")
                  for i, name in enumerate(("Beyond the horizon", "A quiet place", "The long way home",
                                            "Into the blue", "After midnight", "Wild earth"))]
+        items[0].update(type="series", subtitle="S2 E4 · 23m left", progress=0.63)
         stack.enter_context(mock.patch.object(screens, "continue_items", return_value=items[:3]))
         outputs = [{"name": "eDP-1", "connected": True, "primary": True, "current": {"mode": "1920x1080", "rate": 60},
                     "preferred": {"mode": "1920x1080", "rate": 60},
@@ -90,15 +91,20 @@ def main():
                 self.tops, self.sheet, self.pair_listeners = {}, None, []
                 self.net = {"connected": True, "type": "wifi", "ssid": "Preview Wi-Fi", "ip": "192.0.2.1", "signal": 80}
                 self.code, self.remote = "123456", {"connected": True, "count": 1}
+                self.prev_app = "home"
                 self.avoid_rect = None
                 self.page = None
-                for name in ("toast", "show_pairing", "trigger_network_refresh", "goto_top", "open_app", "open_details", "show_power"):
+                for name in ("toast", "show_pairing", "trigger_network_refresh", "goto_top", "open_app", "open_app_item", "open_details", "show_power", "confirm_off", "open_search", "push"):
                     setattr(self, name, lambda *a, **kw: None)
                 self.open_sheet = lambda *a, **kw: home.Home.open_sheet(self, *a, **kw)
                 self.close_sheet = lambda *a, **kw: home.Home.close_sheet(self, *a, **kw)
                 self.focus_screen = lambda *a: None
                 self.root = Gtk.Overlay()
                 self.add(self.root)
+                self.header = home.Home.make_header(self)
+                self.header.set_halign(Gtk.Align.FILL)
+                self.header.set_valign(Gtk.Align.START)
+                self.root.add_overlay(self.header)
 
             def current(self):
                 return self.page
@@ -108,6 +114,7 @@ def main():
 
         def capture(shell, name, focus=None):
             shell.show_all()
+            shell.header.set_visible(bool(getattr(shell.page, "header", False)))
             if focus:
                 focus.grab_focus()
             loop = GLib.MainLoop()
@@ -136,9 +143,47 @@ def main():
             clock = next(w for w in page.items if w.id == "clock")
             clock.time_lbl.set_text("20:30")
             clock.date_lbl.set_text("Tuesday 27 October")
-            capture(shell, "home", page.first_focus([]))
+            capture(shell, "home-network", page.first_focus([]))
+            shell.remote = {"connected": False, "count": 0}
+            next(w for w in page.items if w.id == "pairing").render()
+            capture(shell, "home-pairing", page.first_focus([]))
             page.dispose()
             shell.destroy()
+
+            shell = Shell(height)
+            with mock.patch.object(homescreen.widgets, "load_config", side_effect=lambda data: dict(homescreen.widgets.DEFAULT_CONFIG, style="bubbles")):
+                page = homescreen.AmbientHomeScreen(shell)
+            shell.page = page
+            shell.root.add(page)
+            page.canvas.show_surface(bg, blur, animate=False)
+            page.canvas.extra = None
+            capture(shell, "home-bubbles", page.first_focus([]))
+            page.dispose()
+            shell.destroy()
+
+            sample_apps = [dict(id="desktop:brave-browser", name="Web Browser", kind="desktop", favorite=False,
+                                icon=None, builtin_kind=None, description="Browse the web with Brave"),
+                           dict(id="desktop:rustdesk", name="Remote Desktop", kind="desktop", favorite=False,
+                                icon=None, builtin_kind=None, description="Connect with RustDesk"),
+                           dict(id="calculator", name="Calculator", kind="screen", favorite=False,
+                                icon=None, builtin_kind="calculator", description="Calculate using your remote")]
+            for name, cls in (("others", screens.AppsScreen), ("shortcuts", screens.ShortcutsScreen),
+                              ("calculator", screens.CalculatorScreen), ("system", screens.SystemScreen)):
+                shell = Shell(height)
+                page = cls(shell)
+                shell.page = page
+                shell.root.add(page)
+                if isinstance(page, screens.AppsScreen):
+                    data = sample_apps
+                    if name == "shortcuts":
+                        data = [dict(id=i, name=n, kind=k, favorite=True, icon=None, builtin_kind=i)
+                                for i, n, k in (("movies", "Movies", "screen"), ("series", "Series", "screen"),
+                                                ("youtube", "YouTube", "app"), ("twitch", "Twitch", "screen"))] + sample_apps
+                    page.populate(data)
+                if name == "system":
+                    page.set_brightness_info({"available": True, "level": 70}, page.request_token)
+                capture(shell, name, page.first_focus([w for group in page.focus_groups() for w in group]))
+                shell.destroy()
 
             shell = Shell(height)
             page = settings.SettingsScreen(shell)
@@ -207,7 +252,7 @@ def main():
         paths = sorted((ROOT / "tvapp").glob("*.py")) + sorted((ROOT / "tvapp/widgets").glob("*.py"))
         manifest = {"generated_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-                    "method": "Actual GTK widgets on private Xvfb; sample data; default appearance; no shell header",
+                    "method": "Actual GTK widgets on private Xvfb; sample data; network and bubbles; content screens include shell header",
                     "source_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths},
                     "captures": captures}
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

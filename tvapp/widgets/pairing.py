@@ -367,23 +367,29 @@ class PairingWidget(Widget):
         self.drop_title = text_label("Scan to connect your phone", "ah-kicker")
         panel.set_size_request(p(320), -1)
         self.qr = QRTile(shell, p(5), qr_style(shell))
+        self.address_lbl = text_label("", "ah-net")
+        self.address_lbl.set_halign(Gtk.Align.CENTER)
         self.code_lbl = text_label("--- ---", "ah-code")
         self.code_lbl.set_halign(Gtk.Align.CENTER)
         self.drop_title.set_halign(Gtk.Align.CENTER)
-        for w in (self.drop_title, self.qr, self.code_lbl):
+        for w in (self.drop_title, self.qr, self.address_lbl, self.code_lbl):
             panel.pack_start(w, False, False, 0)
         self.panel = panel
         self.rev.add(panel)
         self.rev.set_reveal_child(False)
+        # Home exposes pairing through System; retain the automatic first-use QR.
+        card.set_no_show_all(True)
+        card.hide()
         outer.pack_start(card, False, False, 0)
         outer.pack_start(self.rev, False, False, 0)
         self.outer = outer
+        outer.set_no_show_all(True)
         shell.pair_listeners.append(self.render)
         self.render()
         return outer
 
     def focus_items(self):
-        return [self.pair_btn, self.power_btn]
+        return []
 
     def link_point(self, photo):
         """Centre of the status line in canvas coordinates + whether it holds focus (the line is the network node)."""
@@ -415,6 +421,7 @@ class PairingWidget(Widget):
         net, code = sh.net or {}, sh.code or "------"
         ip = net.get("ip", "127.0.0.1")
         self.net_lbl.set_text(f"{net_line(net)}  ·  {ip}")
+        self.address_lbl.set_text(f"http://{ip}:8765")
         self.code_lbl.set_text(fmt_code(code))
         url = f"http://{ip}:8765/?pair={code}"
         if url != self.last_url:
@@ -422,6 +429,11 @@ class PairingWidget(Widget):
             self.qr.set_text(url)
         connected = remote_connected(sh.remote, paired_phones)
         want = (not connected) and sh.prev_app in (None, "home") and sh.net is not None
+        if want:
+            self.rev.show_all()
+            self.outer.show()
+        else:
+            self.outer.hide()
         if want != self.panel_on:
             self.panel_on = want
             self.fade(want)

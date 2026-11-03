@@ -320,7 +320,11 @@
     renderView(s, pb, name);
     document.querySelectorAll('.apps button[data-app]').forEach(b => b.classList.toggle('selected', b.dataset.app === s.app));
     $('apps-open').classList.toggle('selected', desktop);
-    if (s.apps_rev !== undefined && s.apps_rev !== appsRev && sheetName === 'apps') loadApps();
+    if (s.apps_rev !== undefined && s.apps_rev !== appsRev) {
+      appsRev = s.apps_rev;
+      if (sheetName === 'others') loadOthers();
+      if (tab === 'settings' && shortcutsLoaded) loadShortcuts();
+    }
     const vol = s.volume == null ? 'Volume' : `${s.muted ? 'Muted · ' : ''}${s.volume}%`;
     $('volume-label').textContent = vol; $('np-volume-label').textContent = vol;
     const light = s.brightness;
@@ -748,11 +752,11 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', apps: 'Apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'Others', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
-    if (name === 'apps') { renderAppsSheet(); return; }
+    if (name === 'others') { renderOthersSheet(); return; }
     if (name === 'web') { renderWebSheet(); return; }
     if (name === 'output') { renderOutputSheet(); return; }
     if (name === 'type') {
@@ -1252,6 +1256,7 @@
     if (tab === 'search' && online && !twitchLoaded) loadTwitch();
     if (tab === 'settings' && online) {
       loadSettings();
+      if (!shortcutsLoaded) loadShortcuts();
       if (settingsWasHidden) requestAnimationFrame(() => document.querySelector('#settings-tabs [aria-selected=true]')?.scrollIntoView({block: 'nearest', inline: 'nearest'}));
     } else stopTrialPoll();
   }
@@ -1266,9 +1271,12 @@
   // A tap on Movies/Series also puts the matching screen on the TV (fire-and-forget; the server ignores it while something is playing).
   const tvScreen = {movie: 'movies', series: 'series'};
   tabbar.querySelectorAll('button').forEach(b => b.onclick = () => {
-    
     const changed = b.dataset.tab !== tab;
     showTab(b.dataset.tab);
+    if (b.dataset.tab === 'search') {
+      $('find-input').focus();   // the tap opens the phone keyboard; polling never steals focus
+      fire('open_search');
+    }
     if (changed && tvScreen[b.dataset.tab]) {
       try { Promise.resolve(send('show', {screen: tvScreen[b.dataset.tab]})).catch(() => {}); } catch (e) {}
     }
@@ -1334,6 +1342,7 @@
     skyFromSettings();
     renderBackground();
     renderFields();
+    renderHomeShortcuts();
     for (const [key, , , , , network] of setState.fields || []) {
       const control = $("setting-" + key);
       if (network && control) control.disabled = !online || setState.values.style === "bubbles";
@@ -1963,87 +1972,141 @@
     send('play_twitch', {login, title: title || ''}).catch(() => {});
   }
 
-  // ---- Apps sheet: the PC's installed apps; a star puts one on TV Home (Home holds max_favorites) ----
-  let appsData = [], appsMax = 6, appsRev = null, appsQuery = '', appsLoaded = false, appsToken = 0;
-  async function loadApps() {
-    const token = ++appsToken;
+  // ---- Curated shortcuts: Others launches utilities; Settings pins shortcuts to TV Home. ----
+  let othersData = [], shortcutsData = [], appsMax = 6, appsRev = null;
+  let othersLoaded = false, shortcutsLoaded = false, othersToken = 0, shortcutsToken = 0, pinBusy = false, shortcutsError = '';
+  async function scopedApps(scope) {
+    return api('/api/apps?scope=' + encodeURIComponent(scope));
+  }
+  async function loadOthers() {
+    const token = ++othersToken;
     try {
-      const r = await api('/api/apps');
-      if (token !== appsToken) return;
-      appsData = r.apps || []; appsMax = r.max_favorites || 6; appsLoaded = true;
+      const r = await scopedApps('others');
+      if (token !== othersToken) return;
+      othersData = r.apps || []; appsMax = r.max_favorites || 6; othersLoaded = true;
       if (state && state.apps_rev !== undefined) appsRev = state.apps_rev;
-      if (sheetName === 'apps') drawApps();
+      if (sheetName === 'others') drawOthers();
     } catch (e) {
-      appsLoaded = false;
-      if (sheetName === 'apps') { $('apps-empty').hidden = false; $('apps-empty').textContent = e.message; }
+      othersLoaded = false;
+      const empty = $('others-empty');
+      if (sheetName === 'others' && empty) { empty.hidden = false; empty.textContent = e.message; }
     }
   }
-  function renderAppsSheet() {
-    const content = $('sheet-content');
-    content.innerHTML = `<div class="tsheet appsheet"><h2>Apps</h2><form class="findbox" id="apps-find" autocomplete="off"><input type="search" id="apps-q" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search this PC's apps" aria-label="Search apps"></form><h3 id="apps-fav-head">Favorites <small id="apps-count"></small></h3><div id="apps-fav" class="glass rows"></div><h3 id="apps-all-head">All apps</h3><div id="apps-all" class="glass rows"></div><p id="apps-empty" class="muted" hidden></p></div>`;
-    const q = $('apps-q');
-    q.value = appsQuery;
-    q.oninput = () => { appsQuery = q.value; drawApps(); };
-    $('apps-find').onsubmit = e => { e.preventDefault(); q.blur(); };
-    if (appsLoaded) drawApps(); else { $('apps-empty').hidden = false; $('apps-empty').textContent = 'Loading apps…'; }
-    loadApps();
+  async function loadShortcuts() {
+    const token = ++shortcutsToken;
+    try {
+      const r = await scopedApps('shortcuts');
+      if (token !== shortcutsToken) return;
+      shortcutsData = r.apps || []; appsMax = r.max_favorites || 6; shortcutsLoaded = true;
+      shortcutsError = '';
+      if (state && state.apps_rev !== undefined) appsRev = state.apps_rev;
+      renderHomeShortcuts();
+    } catch (e) {
+      shortcutsLoaded = false;
+      shortcutsError = e.message;
+      const note = $('home-shortcuts-note');
+      if (note) { note.hidden = false; note.textContent = shortcutsError; }
+    }
   }
-  function appRowFor(a) {
-    const row = document.createElement('div'), main = document.createElement('button'), star = document.createElement('button');
-    row.className = 'row approw'; main.type = star.type = 'button'; main.className = 'appmain'; star.className = 'star';
-    main.disabled = star.disabled = !online;
-    const ico = document.createElement('span'); ico.className = 'appico';
-    const letter = () => { ico.replaceChildren(); ico.classList.add('blank'); ico.textContent = (a.name || '?').trim().charAt(0).toUpperCase(); };
+  function fillShortcutIcon(ico, a) {
     if (a.icon) {
       const img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; img.src = a.icon;
-      img.onerror = letter; ico.append(img);
-    } else letter();
-    const name = document.createElement('span'); name.className = 'appname'; name.textContent = a.name;
-    main.append(ico, name);
+      img.onerror = () => { ico.replaceChildren(); ico.classList.add('blank'); ico.textContent = (a.name || '?').trim().charAt(0).toUpperCase(); };
+      ico.append(img);
+    } else if (a.id === 'calculator') {
+      ico.innerHTML = '<svg class="builtin-app-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M8 7h8M8 11h2M14 11h2M8 15h2M14 15h2M8 18h2M14 18h2"/></svg>';
+    } else {
+      ico.classList.add('blank'); ico.textContent = (a.name || '?').trim().charAt(0).toUpperCase();
+    }
+  }
+  function renderOthersSheet() {
+    const content = $('sheet-content');
+    content.innerHTML = `<div class="tsheet appsheet"><h2>Others</h2><p class="meta">Useful tools for your TV.</p><div id="others-list" class="glass rows"></div><p id="others-empty" class="muted" hidden></p></div>`;
+    if (othersLoaded) drawOthers();
+    else { $('others-empty').hidden = false; $('others-empty').textContent = 'Loading utilities…'; }
+    loadOthers();
+  }
+  function utilityRow(a) {
+    const row = document.createElement('div'), main = document.createElement('button');
+    row.className = 'row approw utility-row'; main.type = 'button'; main.className = 'appmain'; main.disabled = !online;
+    const ico = document.createElement('span'); ico.className = 'appico';
+    fillShortcutIcon(ico, a);
+    const copy = document.createElement('span'); copy.className = 'utility-copy';
+    copy.append(el('span', 'appname', a.name), el('small', '', a.description || ''));
+    main.append(ico, copy);
     main.onclick = () => {
       message('Opening ' + a.name + ' on the TV…');
       send('app_open', {id: a.id}).then(() => { closeSheet(); showTab('remote'); }).catch(() => {});
     };
-    star.setAttribute('aria-pressed', String(Boolean(a.favorite)));
-    star.setAttribute('aria-label', a.favorite ? `Remove ${a.name} from Home` : `Add ${a.name} to Home`);
-    star.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.5 5.2 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></svg>';
-    star.classList.toggle('on', Boolean(a.favorite));
-    star.onclick = () => toggleFavorite(a);
-    row.append(main, star);
+    row.append(main);
     return row;
   }
-  function drawApps() {
-    if (sheetName !== 'apps' || !$('apps-fav')) return;
-    const q = appsQuery.trim().toLowerCase();
-    const match = a => !q || a.name.toLowerCase().includes(q);
-    const favs = appsData.filter(a => a.favorite), shown = appsData.filter(match);
-    const favShown = shown.filter(a => a.favorite), rest = shown.filter(a => !a.favorite);
-    $('apps-count').textContent = `${favs.length} of ${appsMax} on Home`;
-    $('apps-fav').replaceChildren(...favShown.map(appRowFor));
-    if (!favs.length && !q) {   // a hint where the favorites will be
-      const hint = document.createElement('div'); hint.className = 'row static'; hint.textContent = "Star an app to put it on the TV's Home";
-      hint.style.color = 'var(--ink3)'; $('apps-fav').replaceChildren(hint);
-    }
-    $('apps-fav').hidden = !$('apps-fav').children.length;
-    $('apps-fav-head').hidden = $('apps-fav').hidden;
-    $('apps-all').replaceChildren(...rest.map(appRowFor));
-    $('apps-all').hidden = !rest.length; $('apps-all-head').hidden = !rest.length;
-    $('apps-empty').hidden = Boolean(shown.length);
-    if (!shown.length) $('apps-empty').textContent = q ? 'No apps match' : 'No apps found on this PC';
+  function drawOthers() {
+    if (sheetName !== 'others' || !$('others-list')) return;
+    const list = $('others-list'), empty = $('others-empty');
+    list.replaceChildren(...othersData.map(utilityRow));
+    empty.hidden = Boolean(othersData.length);
+    if (!othersData.length) empty.textContent = othersLoaded ? 'No other utilities are available.' : 'Loading utilities…';
   }
-  async function toggleFavorite(a) {
-    const want = !a.favorite;
-    a.favorite = want; appsData.sort(appOrder); drawApps();   // immediate; the TV's answer replaces it
+  async function refreshShortcutScopes() {
+    // app_favorite returns the legacy full catalog. Ignore it and reload only
+    // the two scoped views whose membership changed.
+    await Promise.all([loadShortcuts(), loadOthers()]);
+  }
+  async function togglePin(a) {
+    if (pinBusy) return;
+    pinBusy = true;
+    const want = !a.favorite, before = a.favorite;
+    a.favorite = want;
+    renderHomeShortcuts();
     try {
-      const r = await send('app_favorite', {id: a.id, favorite: want});
-      appsData = (r && r.apps) || appsData; if (r && r.max_favorites) appsMax = r.max_favorites;
+      await send('app_favorite', {id: a.id, favorite: want});
+      await refreshShortcutScopes();
     } catch (e) {
-      a.favorite = !want;   // refused, e.g. "Home is full": send() already showed why
-    }
-    appsData.sort(appOrder); drawApps();
+      a.favorite = before;
+      renderHomeShortcuts();
+    } finally { pinBusy = false; renderHomeShortcuts(); }
   }
-  const appOrder = (x, y) => (y.favorite - x.favorite) || (x.favorite ? 0 : x.name.localeCompare(y.name, undefined, {sensitivity: 'base'}));
-  $('apps-open').onclick = () => openSheet('apps');
+  function shortcutRow(a) {
+    const row = document.createElement('div'), main = document.createElement('button'), pin = document.createElement('button');
+    row.className = 'row approw'; main.type = pin.type = 'button'; main.className = 'appmain'; pin.className = 'star';
+    main.disabled = !online; pin.disabled = !online || (!a.favorite && shortcutsData.filter(item => item.favorite).length >= appsMax) || pinBusy;
+    const ico = document.createElement('span'); ico.className = 'appico';
+    fillShortcutIcon(ico, a);
+    const copy = document.createElement('span'); copy.className = 'utility-copy';
+    copy.append(el('span', 'appname', a.name), el('small', '', a.description || ''));
+    main.append(ico, copy);
+    main.onclick = () => { send('app_open', {id: a.id}).then(() => showTab('remote')).catch(() => {}); };
+    pin.setAttribute('role', 'switch'); pin.setAttribute('aria-checked', String(Boolean(a.favorite)));
+    pin.setAttribute('aria-label', a.favorite ? `Remove ${a.name} from Home` : `Add ${a.name} to Home`);
+    pin.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.5 5.2 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></svg>';
+    pin.classList.toggle('on', Boolean(a.favorite)); pin.onclick = () => togglePin(a);
+    row.append(main, pin);
+    return row;
+  }
+  function renderHomeShortcuts() {
+    const container = $('fields-appearance');
+    if (!container) return;
+    let card = $('home-shortcuts');
+    if (!card) {
+      container.append(el('h3', '', 'Home shortcuts'));
+      card = el('div', 'glass rows'); card.id = 'home-shortcuts'; container.append(card);
+      const note = el('p', 'note'); note.id = 'home-shortcuts-note'; container.append(note);
+    }
+    card.replaceChildren();
+    const favorites = shortcutsData.filter(a => a.favorite).length;
+    card.append(el('div', 'row static', `${favorites} of ${appsMax} pinned`));
+    if (!shortcutsLoaded) {
+      card.append(el('div', 'row static', shortcutsError ? 'Shortcuts could not be loaded' : 'Loading shortcuts…'));
+      const note = $('home-shortcuts-note');
+      note.hidden = !shortcutsError; note.textContent = shortcutsError;
+      return;
+    }
+    for (const a of shortcutsData) card.append(shortcutRow(a));
+    const note = $('home-shortcuts-note');
+    note.hidden = true; note.textContent = '';
+  }
+  $('apps-open').onclick = () => openSheet('others');
 
   // ---- Movies / Series panes: search scoped to that kind ----
   document.querySelectorAll('.pane[data-type]').forEach(pane => {

@@ -28,18 +28,28 @@ SAMPLE_APPS = ["Brave", "RustDesk", "Firefox", "Files", "Terminal", "VLC media p
 
 
 def sample_apps(count):
-    # Built-in tiles first, then fake PC apps; every third has no icon and every seventh has a broken one
-    items = [{"id": "movies", "name": "Movies", "kind": "screen", "builtin_kind": "movies"},
-             {"id": "twitch", "name": "Twitch", "kind": "screen", "builtin_kind": "twitch"},
-             {"id": "youtube", "name": "YouTube", "kind": "app", "builtin_kind": "youtube"}]
+    # Stable TV shortcuts plus inert sample PC entries for the legacy full-list view.
+    items = [
+        {"id": "movies", "name": "Movies", "kind": "screen", "builtin_kind": "movies"},
+        {"id": "series", "name": "Series", "kind": "screen", "builtin_kind": "series"},
+        {"id": "youtube", "name": "YouTube", "kind": "app", "builtin_kind": "youtube"},
+        {"id": "twitch", "name": "Twitch", "kind": "screen", "builtin_kind": "twitch"},
+        {"id": "desktop:brave-browser", "name": "Web Browser", "kind": "desktop", "builtin_kind": None,
+         "description": "Browse the web with Brave"},
+        {"id": "desktop:org.rustdesk.RustDesk", "name": "Remote Desktop", "kind": "desktop", "builtin_kind": None,
+         "description": "Connect with RustDesk"},
+        {"id": "calculator", "name": "Calculator", "kind": "screen", "builtin_kind": "calculator",
+         "description": "Calculate using your remote"},
+    ]
     for i in range(count):
         base = SAMPLE_APPS[i % len(SAMPLE_APPS)]
         name = base if i < len(SAMPLE_APPS) else f"{base} {i}"
         slug = f"{base.lower().replace(' ', '-')}-{i}"
         items.append({"id": f"desktop:{slug}", "name": name, "kind": "desktop", "builtin_kind": None})
-    for i, a in enumerate(items):
-        a["favorite"] = a["id"] in ("movies", "youtube") or a["id"] == "desktop:brave-0"
-        a["icon"] = None if i % 3 == 2 else "/api/apps/icon?id=" + a["id"].replace(":", "%3A")
+    defaults = {"movies", "series", "youtube", "twitch"}
+    for i, app in enumerate(items):
+        app["favorite"] = app["id"] in defaults
+        app["icon"] = None if i % 3 == 2 else "/api/apps/icon?id=" + app["id"].replace(":", "%3A")
     return items
 
 
@@ -81,7 +91,11 @@ class Preview(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/apps":
-            self.json(self.apps_payload())
+            scope = (parse_qs(urlsplit(self.path).query).get("scope") or [""])[0]
+            if scope not in ("", "home", "others", "shortcuts"):
+                self.json({"error": "Unknown apps scope"}, 400)
+                return
+            self.json(self.apps_payload(scope))
         elif path == "/api/apps/icon":
             ident = (parse_qs(urlsplit(self.path).query).get("id") or [""])[0]
             if ident.startswith("desktop:") and hash(ident) % 7 == 0:
@@ -140,8 +154,26 @@ class Preview(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
-    def apps_payload(self):
-        return {"apps": sorted(self.apps, key=lambda a: (not a["favorite"], a["name"].lower() if not a["favorite"] else "")),
+    def apps_payload(self, scope=""):
+        favorites = [a for a in self.apps if a["favorite"]]
+        utility_ids = ["desktop:brave-browser", "desktop:org.rustdesk.RustDesk", "calculator"]
+        default_ids = ["movies", "series", "youtube", "twitch"]
+        if scope == "home":
+            items = favorites
+        elif scope == "others":
+            ids = [ident for ident in utility_ids if any(a["id"] == ident and not a["favorite"] for a in self.apps)]
+            by_id = {a["id"]: a for a in self.apps}
+            items = [by_id[ident] for ident in ids]
+        elif scope == "shortcuts":
+            ordered_ids = [a["id"] for a in favorites]
+            ordered_ids.extend(ident for ident in default_ids + utility_ids if ident not in ordered_ids)
+            by_id = {a["id"]: a for a in self.apps}
+            items = [by_id[ident] for ident in ordered_ids if ident in by_id]
+        else:  # preserve the older full installed-app list for compatibility checks
+            items = self.apps
+        if scope == "":
+            items = sorted(items, key=lambda a: (not a["favorite"], a["name"].lower() if not a["favorite"] else ""))
+        return {"apps": items,
                 "max_favorites": self.max_favorites}
 
     def do_POST(self):

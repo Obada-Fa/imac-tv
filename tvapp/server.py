@@ -2601,7 +2601,13 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
             self._note_presence()
-            self.respond(200, {"apps": apps.list_apps(), "max_favorites": apps.MAX_FAVORITES})
+            scope = (parse_qs(parsed.query).get("scope") or [""])[0]
+            catalogs = {"": apps.list_apps, "home": apps.home_apps,
+                        "others": apps.others_apps, "shortcuts": apps.shortcut_candidates}
+            if scope not in catalogs:
+                self.respond(400, {"error": "Unknown apps scope"})
+                return
+            self.respond(200, {"apps": catalogs[scope](), "max_favorites": apps.MAX_FAVORITES})
             return
         if parsed.path == "/api/apps/icon":
             if not self.authorised(parsed.query):

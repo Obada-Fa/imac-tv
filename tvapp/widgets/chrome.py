@@ -1065,13 +1065,13 @@ class NetLabel(Gtk.DrawingArea):
 class HeaderClock(Gtk.DrawingArea):
     """Home's clock, small: the time in a light weight after a quiet date."""
 
-    def __init__(self, shell, look_):
+    def __init__(self, shell, look_, compact=False):
         super().__init__()
-        self.shell, self.look = shell, look_
+        self.shell, self.look, self.compact = shell, look_, compact
         self.text = TextCache(self)
         self.date, self.time = "", ""
         self.set_has_window(False)
-        self.set_size_request(shell.px(250), shell.px(84))
+        self.set_size_request(shell.px(90 if compact else 250), shell.px(84))
         self.connect("draw", self.on_draw)
 
     def set_now(self, now):
@@ -1086,6 +1086,12 @@ class HeaderClock(Gtk.DrawingArea):
     def on_draw(self, _w, cr):
         p = self.shell.px
         w, h = self.get_allocated_width(), self.get_allocated_height()
+        if self.compact:
+            tl = self.text.layout(self.time, p(30), Pango.Weight.LIGHT, 4000)
+            tw, th = tl.get_pixel_size()
+            self.text.draw(cr, self.time, p(30), Pango.Weight.LIGHT, (w - tw) / 2, p(36) - th / 2,
+                           tw + 2, (1, 1, 1, 0.95), halo=0.45)
+            return False
         tl = self.text.layout(self.time, p(36), Pango.Weight.LIGHT, 4000)
         tw, th = tl.get_pixel_size()
         dl = self.text.layout(self.date, p(19), Pango.Weight.NORMAL, 4000)

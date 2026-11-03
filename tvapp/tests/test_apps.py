@@ -82,12 +82,33 @@ class AppsTests(unittest.TestCase):
         self.assertEqual((movies["kind"], movies["builtin_kind"], movies["icon"]), ("screen", "movies", None))
 
     def test_default_favorites_skip_unavailable(self):
-        self.write("rustdesk", "RustDesk")      # brave is missing
-        self.assertEqual(self.ids(apps.home_apps()), ["movies", "series", "youtube", "twitch", "desktop:rustdesk"])
+        self.write("rustdesk", "RustDesk")
         self.write("brave-browser", "Brave")
         self.assertEqual(self.ids(apps.home_apps()), apps.DEFAULT_FAVORITES)
-        self.assertEqual(self.ids()[:6], apps.DEFAULT_FAVORITES)
-        self.assertNotIn("discord", self.ids(apps.home_apps()))
+        self.assertEqual(self.ids()[:4], apps.DEFAULT_FAVORITES)
+
+    def test_scoped_catalog_and_saved_pins(self):
+        self.write("brave-browser", "Brave", exec_="brave-browser")
+        self.write("org.rustdesk.RustDesk", "RustDesk")
+        self.write("other", "Other")
+        (self.data / "home.json").write_text(json.dumps({"favorites": ["desktop:other", "desktop:gone", "movies"]}))
+        self.assertEqual(self.ids(apps.home_apps()), ["desktop:other", "movies"])
+        self.assertEqual(self.ids(apps.others_apps()), ["desktop:brave-browser", "desktop:org.rustdesk.RustDesk", "calculator"])
+        self.assertNotIn("desktop:other", self.ids(apps.others_apps()))
+        candidates = self.ids(apps.shortcut_candidates())
+        self.assertEqual(candidates[:2], ["desktop:other", "movies"])
+        self.assertEqual(json.loads((self.data / "home.json").read_text())["favorites"], ["desktop:other", "desktop:gone", "movies"])
+        self.assertEqual(apps.item("calculator")["kind"], "screen")
+        utilities = apps.others_apps()
+        self.assertEqual([i["name"] for i in utilities], ["Web Browser", "Remote Desktop", "Calculator"])
+        self.assertTrue(all(i.get("description") for i in utilities))
+        self.assertEqual(apps.item("desktop:brave-browser")["name"], "Brave")
+
+    def test_scoped_does_not_parse_unrelated_entries(self):
+        self.write("unrelated", "Unrelated")
+        with mock.patch.object(apps, "_entry", wraps=apps._entry) as entry:
+            apps.shortcut_candidates()
+            self.assertFalse(any(c.args[1] == "unrelated" for c in entry.call_args_list))
 
     def test_builtin_apps_only_when_available(self):
         with mock.patch.dict(os.environ, {"IMACTV_APPS_BUILTINS": "discord"}):
@@ -100,6 +121,8 @@ class AppsTests(unittest.TestCase):
             self.write(f"x{n}", f"X{n}")
         self.write("rustdesk", "RustDesk")
         self.write("brave-browser", "Brave")
+        apps.set_favorite("desktop:brave-browser", True)
+        apps.set_favorite("desktop:rustdesk", True)
         self.assertEqual(len(apps.home_apps()), 6)
         with self.assertRaisesRegex(ValueError, "Home is full: remove a favorite first"):
             apps.set_favorite("desktop:x0", True)
@@ -153,6 +176,21 @@ class AppsTests(unittest.TestCase):
         (self.data / "home.json").write_text(json.dumps({"favorites": []}))
         self.assertEqual(apps.home_apps(), [])
 
+    def test_scoped_api_dispatch_and_legacy_payload(self):
+        import server
+        handler = mock.Mock()
+        handler.authorised.return_value = True
+        for query, name in (("", "list_apps"), ("?scope=home", "home_apps"),
+                            ("?scope=others", "others_apps"), ("?scope=shortcuts", "shortcut_candidates")):
+            handler.path = "/api/apps" + query
+            with mock.patch.object(apps, name, return_value=[{"id": name}]) as catalog:
+                server.Handler.do_GET(handler)
+            catalog.assert_called_once_with()
+            handler.respond.assert_called_with(200, {"apps": [{"id": name}], "max_favorites": apps.MAX_FAVORITES})
+        handler.path = "/api/apps?scope=bogus"
+        server.Handler.do_GET(handler)
+        handler.respond.assert_called_with(400, {"error": "Unknown apps scope"})
+
     def test_exec_parsing(self):
         self.assertEqual(apps.exec_argv('brave --incognito %U'), ["brave", "--incognito"])
         self.assertEqual(apps.exec_argv('"/opt/My App/run" --name "a b" %f %F %i %c'), ["/opt/My App/run", "--name", "a b"])
@@ -191,6 +229,24 @@ class AppsTests(unittest.TestCase):
         self.assertEqual(Path(apps._find_icon("themed")).parent, theme)
         self.assertTrue(Path(apps.icon_file("desktop:themed")).is_file())
         self.assertEqual(apps.icon_file("desktop:themed"), apps.icon_file("desktop:themed"))
+
+    def test_icon_source_cache_ttl_negative_and_refresh(self):
+        self.write("icon", "Icon", icon="missing")
+        with mock.patch.object(apps, "_find_icon", wraps=apps._find_icon) as find:
+            self.assertIsNone(apps.icon_file("desktop:icon"))
+            self.assertIsNone(apps.icon_file("desktop:icon"))
+            self.assertEqual(find.call_count, 1)
+            png(self.icons / "missing.png")
+            apps.refresh()
+            first = apps.icon_file("desktop:icon")
+            self.assertTrue(first)
+            self.assertEqual(apps.icon_file("desktop:icon"), first)
+            self.assertEqual(find.call_count, 2)
+            with mock.patch.object(apps.time, "monotonic", return_value=10**10):
+                self.assertEqual(apps.icon_file("desktop:icon"), first)
+            self.assertEqual(find.call_count, 3)
+            os.utime(self.icons / "missing.png", ns=(1, 1))
+            self.assertNotEqual(apps.icon_file("desktop:icon"), first)
 
     def test_icon_never_raises(self):
         self.write("noicon", "No")

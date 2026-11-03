@@ -34,9 +34,12 @@ class ClockWidget(Widget):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.time_lbl = text_label("", "ah-time")
         self.date_lbl = text_label("", "ah-date")
+        self.date_lbl.set_no_show_all(True)
+        self.date_lbl.hide()
         box.pack_start(self.time_lbl, False, False, 0)
         box.pack_start(self.date_lbl, False, False, 0)
         self.box = box
+        self.time_lbl.get_style_context().add_class("ah-time-small")
         self._last = None
         self.refresh()
         return box
@@ -50,5 +53,5 @@ class ClockWidget(Widget):
 
     def on_ambient(self, on):
         ctx = self.time_lbl.get_style_context()
-        (ctx.add_class if on else ctx.remove_class)("ah-time-small")
-        self.date_lbl.set_visible(not on)
+        (ctx.remove_class if on else ctx.add_class)("ah-time-small")
+        self.date_lbl.set_visible(on)

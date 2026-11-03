@@ -396,8 +396,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 /* ---- Apps sheet: rows are glass lists like Twitch's; the star is a hexagon-friendly toggle ---- */
 .apps button#apps-open{width:36px;padding:0;display:flex;align-items:center;justify-content:center}
 .apps #apps-open svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linejoin:round}
-.appsheet .findbox{background:linear-gradient(rgba(17,24,39,.98) 78%,rgba(17,24,39,0));margin:0;padding:18px 0 12px;top:-18px}
-.appsheet .findbox input{background:#0a101b}
 .appsheet h3{margin-top:14px}
 .appsheet h3 small{margin-left:auto;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:none;color:var(--ink3)}
 .appsheet h3 small:empty{display:none}
@@ -406,8 +404,13 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .approw .appmain:active{border-color:var(--hair-hot);background:var(--glass-press);box-shadow:var(--glow)}
 .appico{flex:none;width:36px;height:36px;border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06)}
 .appico img{width:100%;height:100%;object-fit:contain;display:block}
+.appico .builtin-app-icon{width:23px;height:23px;fill:none;stroke:var(--ink2);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 .appico.blank{background:radial-gradient(circle at 30% 25%,rgba(var(--accent-rgb),.34),rgba(var(--accent-rgb),.08));border:1px solid var(--hair-soft);font-size:16px;font-weight:300;color:#fff}
 .appname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.utility-row .appmain{border-radius:12px}
+.utility-copy{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.utility-copy .appname{flex:none}
+.utility-copy small{font-size:11px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .approw .star{flex:none;width:52px;min-height:56px;border:1px solid transparent;border-radius:0 12px 12px 0;background:none;color:var(--ink3);display:flex;align-items:center;justify-content:center}
 .approw .star svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}
 .approw .star.on{color:var(--accent)}.approw .star.on svg{fill:rgba(var(--accent-rgb),.38);filter:drop-shadow(0 0 6px rgba(var(--accent-rgb),.5))}

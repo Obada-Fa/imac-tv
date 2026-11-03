@@ -957,16 +957,62 @@ def home_app_list():
         return None
 
 
-_app_icons = {}
+def others_app_list():
+    mod = _apps()
+    try:
+        return list(mod.others_apps()) if mod else []
+    except Exception as exc:
+        print("other apps:", exc)
+        return []
+
+
+# Calls and completion run on the GTK thread. Bound both retained results and queued work;
+# multiple cards waiting on the same icon share one request.
+_app_icons = OrderedDict()
+_app_icon_waiters = {}
+_app_icon_slots = threading.BoundedSemaphore(64)
+_APP_ICON_CACHE_LIMIT = 128
 
 
 def load_app_icon(item, size, cb):
-    """Desktop app icon as a size x size pixbuf, once per (id, size); cb(pb or None) runs on the GTK loop."""
+    """Load an app icon once per key; callbacks run on the GTK loop."""
     key = (item.get("id"), size)
+    try:
+        callback = weakref.WeakMethod(cb)
+    except TypeError:
+        callback = lambda: cb
+
+    def deliver(ref, pb):
+        fn = ref()
+        if fn is not None:
+            try:
+                fn(pb or None)
+            except Exception as exc:
+                print("app icon callback:", exc)
+        return False
+
     if key in _app_icons:
         pb = _app_icons[key]
-        GLib.idle_add(lambda: cb(pb or None) and False)
+        _app_icons.move_to_end(key)
+        GLib.idle_add(deliver, callback, pb)
         return
+    if key in _app_icon_waiters:
+        _app_icon_waiters[key].append(callback)
+        return
+    if not _app_icon_slots.acquire(blocking=False):
+        GLib.idle_add(deliver, callback, None)
+        return
+    _app_icon_waiters[key] = [callback]
+
+    def finish(pb):
+        _app_icon_slots.release()
+        _app_icons[key] = pb or False
+        _app_icons.move_to_end(key)
+        while len(_app_icons) > _APP_ICON_CACHE_LIMIT:
+            _app_icons.popitem(last=False)
+        for ref in _app_icon_waiters.pop(key, []):
+            deliver(ref, pb)
+        return False
 
     def job():
         pb = None
@@ -976,10 +1022,13 @@ def load_app_icon(item, size, cb):
             if path:
                 pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(path, size, size, True)
         except Exception:
-            pb = None
-        _app_icons[key] = pb or False
-        GLib.idle_add(lambda: cb(pb) and False)
-    _art_pool.submit(job)
+            pass
+        GLib.idle_add(finish, pb)
+    try:
+        _art_pool.submit(job)
+    except Exception:
+        # The executor may already be shutting down; do not retain the slot or waiters.
+        finish(None)
 
 
 def app_tint(pb, default=(0.5, 0.58, 0.72)):
@@ -1013,8 +1062,10 @@ def app_tile(item, w, h, icon=None):
     hi.add_color_stop_rgba(1, tr, tg, tb, 0)
     cr.set_source(hi)
     cr.paint()
-    if kind:
-        _icon(cr, kind, w / 2, h / 2, h * 0.30)
+    app_id = (item.get("id") or "").lower()
+    fallback = "browser" if "brave" in app_id else ("remote" if "rustdesk" in app_id else None)
+    if icon is None and (kind or fallback):
+        _icon(cr, kind or fallback, w / 2, h / 2, h * 0.30)
     elif icon is not None:
         side = h * 0.62
         k = side / max(icon.get_width(), icon.get_height())
@@ -1049,9 +1100,10 @@ MAX_FAVORITES = 6
 class AppCard(chrome.PosterCard):
     """One app on the Apps screen: its tile (icon on tinted glass) with the name beneath. Menu opens its sheet."""
 
-    def __init__(self, shell, item, on_activate):
+    def __init__(self, shell, item, on_activate, subtitle=None):
         w, h = (shell.px(v) for v in APP_ART)
-        super().__init__(shell, chrome.look(shell), {"name": item.get("name") or "", "subtitle": ""}, "app", w, h,
+        sub = item.get("description") or "" if subtitle is None else subtitle
+        super().__init__(shell, chrome.look(shell), {"name": item.get("name") or "", "subtitle": sub}, "app", w, h,
                          lambda: on_activate(item))
         self.app_item = item
         self.set_pixbuf(app_tile(item, w, h))
@@ -1065,8 +1117,7 @@ class AppCard(chrome.PosterCard):
 
 
 class AppsScreen(Screen):
-    """Apps: the favorites that sit on Home, then every other app on the PC. OK opens an app, Menu opens its sheet
-    (Open, Add to / Remove from Home)."""
+    """Curated Others screen; ShortcutsScreen reuses it to manage Home pins."""
     header = True
     sname = "apps"
 
@@ -1100,7 +1151,11 @@ class AppsScreen(Screen):
         tok = self.token
 
         def work():
-            items = app_list()
+            mod = _apps()
+            try:
+                items = (mod.shortcut_candidates() if self.sname == "shortcuts" else mod.others_apps()) if mod else []
+            except Exception:
+                items = []
             GLib.idle_add(lambda: self.populate(items, tok) and False)
         _data_pool.submit(work)
 
@@ -1109,7 +1164,9 @@ class AppsScreen(Screen):
         if tok is not None and tok != self.token:
             return False
         focus = self.shell.get_focus()
-        keep = getattr(focus, "app_item", None) if focus is not None and focus.is_ancestor(self) else None
+        if focus is None or not focus.is_ancestor(self):
+            focus = self.last_focus
+        keep = getattr(focus, "app_item", None) if focus is not None else None
         keep_pos = next((i for i, c in enumerate(self.cards()) if c is focus), None)
         first = self.items is None
         self.items = list(items)
@@ -1134,28 +1191,23 @@ class AppsScreen(Screen):
             self.box.pack_start(hb, False, False, 0)
 
         if not self.items:
-            note = text_label("No apps found on this PC", "section-title")
+            note = text_label("No apps available", "section-title")
             note.set_margin_top(s.px(60))
-            note.set_margin_start(s.px(16))
             self.box.pack_start(note, False, False, 0)
         else:
-            section(f"On Home  ·  {len(favs)} of {MAX_FAVORITES}")
-            if favs:
-                self.fav_cards = [AppCard(s, i, s.open_app_item) for i in favs]
-                row(self.fav_cards)
-            else:
-                hint = text_label("Nothing on Home yet. Highlight an app below and press Menu to add it.", "section-note")
-                hint.set_margin_start(s.px(40))
-                hint.set_margin_top(s.px(8))
-                hint.set_margin_bottom(s.px(14))
+            section("Home shortcuts" if self.sname == "shortcuts" else "Others")
+            if self.sname == "shortcuts":
+                hint = text_label("Select a shortcut to add it to or remove it from Home", "section-note")
                 self.box.pack_start(hint, False, False, 0)
-            if rest:
-                section("All apps")
-                n = self.per_row()
-                for k in range(0, len(rest), n):
-                    cards = [AppCard(s, i, s.open_app_item) for i in rest[k:k + n]]
-                    self.rows.append(cards)
-                    row(cards)
+            n = self.per_row()
+            for k in range(0, len(self.items), n):
+                activate = (lambda item: s.set_app_favorite(item, not item.get("favorite"))) if self.sname == "shortcuts" else s.open_app_item
+                cards = [AppCard(s, i, activate,
+                                 ("On Home · OK to remove" if i.get("favorite") else "OK to add to Home")
+                                 if self.sname == "shortcuts" else None)
+                         for i in self.items[k:k + n]]
+                self.rows.append(cards)
+                row(cards)
         self.box.show_all()
         cards = self.cards()
         target = next((c for c in cards if keep and c.app_item["id"] == keep["id"]), None)
@@ -1164,9 +1216,12 @@ class AppsScreen(Screen):
         if target is None and first and cards:
             target = cards[0]                   # the list arrived after the screen opened: start on the first app
         if target is not None:
-            target.grab_focus()
-            self.reveal(target)
-        s.ensure_focus()
+            self.last_focus = target
+            if s.current() is self:
+                target.grab_focus()
+                self.reveal(target)
+        if s.current() is self:
+            s.ensure_focus()
         return False
 
     def cards(self):
@@ -1216,6 +1271,203 @@ SEARCH_SCOPE_LABEL = {None: "movies, series and Twitch", "movie": "Movies", "ser
 def search_kinds(scope):
     """Kinds a SearchScreen scoped to `scope` searches (None = all of them)."""
     return SEARCH_SCOPES.get(scope, SEARCH_SCOPES[None])
+
+
+
+class ShortcutsScreen(AppsScreen):
+    sname = "shortcuts"
+
+
+class Calculator:
+    """Four-function calculator with explicit operations and bounded decimal input."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.display, self.left, self.op, self.fresh = "0", None, None, True
+
+    def press(self, key):
+        from decimal import Decimal, DecimalException, localcontext
+        if key == "C":
+            self.reset()
+        elif key in "0123456789" and len(key) == 1:
+            if self.display == "Error" or self.fresh:
+                self.display, self.fresh = key, False
+            elif len(self.display) < 18:
+                self.display = key if self.display == "0" else self.display + key
+        elif key == ".":
+            if self.display == "Error" or self.fresh:
+                self.display, self.fresh = "0.", False
+            elif "." not in self.display:
+                self.display += "."
+        elif key in ("+", "−", "×", "÷", "=") and self.display != "Error":
+            try:
+                value = Decimal(self.display)
+                if self.op and not self.fresh:
+                    with localcontext() as ctx:
+                        ctx.prec = 16
+                        value = {"+": lambda: self.left + value, "−": lambda: self.left - value,
+                                 "×": lambda: self.left * value, "÷": lambda: self.left / value}[self.op]()
+                    self.display = format(value, ".12g")
+                    if "." in self.display and "e" not in self.display.lower():
+                        self.display = self.display.rstrip("0").rstrip(".")
+                self.left = value if key != "=" else None
+                self.op = key if key != "=" else None
+                self.fresh = True
+            except (DecimalException, ZeroDivisionError, OverflowError):
+                self.display, self.left, self.op, self.fresh = "Error", None, None, True
+        return self.display
+
+
+class CalculatorScreen(Screen):
+    header = True
+    sname = "calculator"
+
+    def __init__(self, shell):
+        super().__init__(shell)
+        self.calc = Calculator()
+        p = shell.px
+        page = self.glass_page()
+        page.set_margin_top(p(135))
+        page.set_margin_start(p(100))
+        title = text_label("Calculator", "section-title")
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, p(10))
+        self.result = text_label("0", "ah-time-small")
+        self.result.set_halign(Gtk.Align.START)
+        page.pack_start(self.result, False, False, p(15))
+        self.groups = []
+        for line in (("7", "8", "9", "÷"), ("4", "5", "6", "×"),
+                     ("1", "2", "3", "−"), ("C", "0", ".", "+"), ("=",)):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            buttons = []
+            for key in line:
+                b = chrome.GlassButton(shell, self.backdrop, self.look, key, width=p(112), height=p(62),
+                                       on_activate=lambda k=key: self.calculate(k))
+                row.pack_start(b, False, False, 0)
+                buttons.append(b)
+            self.groups.append(buttons)
+            page.pack_start(row, False, False, 0)
+
+    def calculate(self, key):
+        self.result.set_text(self.calc.press(key))
+
+    def focus_groups(self):
+        return self.groups
+
+    def on_enter(self, returning):
+        self.snapshot()
+
+
+class SystemScreen(Screen):
+    header = True
+    sname = "system"
+
+    def __init__(self, shell):
+        super().__init__(shell)
+        p = shell.px
+        page = self.glass_page()
+        page.set_margin_top(p(130))
+        page.set_margin_start(p(90))
+        self.backdrop.avoid = lambda: [(p(70), p(110), p(900), p(510))]
+        title = text_label("System", "section-title")
+        title.set_halign(Gtk.Align.START)
+        page.pack_start(title, False, False, p(8))
+        self.groups = []
+        self.brightness_info = None
+        self.request_token = 0
+        def row(entries):
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+            buttons = []
+            for label, fn in entries:
+                b = chrome.GlassButton(shell, self.backdrop, self.look, label, width=p(250), height=p(62), on_activate=fn)
+                box.pack_start(b, False, False, 0)
+                buttons.append(b)
+            self.groups.append(buttons)
+            page.pack_start(box, False, False, 0)
+        row((("Volume −", lambda: self.command("volume", {"direction": -1})),
+             ("Volume +", lambda: self.command("volume", {"direction": 1})),
+             ("Mute", lambda: self.command("mute"))))
+        row((("Audio output", self.audio_outputs),
+             ("Brightness −", lambda: self.brightness(-10)), ("Brightness +", lambda: self.brightness(10))))
+        self.brightness_buttons = self.groups[-1][1:]
+        for b in self.brightness_buttons:
+            b.set_no_show_all(True)
+            b.hide()
+        row((("Pair phone", shell.show_pairing), ("Home shortcuts", lambda: shell.push(shell.top_screen("shortcuts")))))
+        row((("Full settings", lambda: shell.goto_top("settings")), ("Power", shell.confirm_off)))
+
+    def command(self, action, params=None):
+        def work():
+            result = cmd(action, params)
+            if not result or result.get("error"):
+                GLib.idle_add(self.shell.toast, (result or {}).get("error", "Controller unavailable"), 4)
+        threading.Thread(target=work, daemon=True).start()
+
+    def audio_outputs(self):
+        self.request_token += 1
+        token = self.request_token
+        def work():
+            result = cmd("audio_outputs") or {}
+            outputs = (result.get("result") or {}).get("outputs") or []
+            GLib.idle_add(self.show_outputs, outputs, token)
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_outputs(self, outputs, token):
+        if token != self.request_token or self.shell.current() is not self:
+            return False
+        from widgets import pairing
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self.shell.px(8))
+        box.get_style_context().add_class("ah-sheet")
+        buttons = []
+        for output in outputs:
+            b = pairing._glass_button(("✓ " if output.get("current") else "") + output.get("name", "Output"))
+            def choose(_b, output_id=output.get("id")):
+                self.shell.close_sheet("audio_outputs")
+                self.command("audio_output", {"id": output_id})
+            b.connect("clicked", choose)
+            box.pack_start(b, False, False, 0)
+            buttons.append(b)
+        if not buttons:
+            box.pack_start(text_label("No sound outputs available", "section-note"), False, False, 0)
+            close = pairing._glass_button("Close")
+            close.connect("clicked", lambda *_: self.shell.close_sheet("audio_outputs"))
+            box.pack_start(close, False, False, 0)
+            buttons.append(close)
+        self.shell.open_sheet("audio_outputs", box, [[b] for b in buttons], default=buttons[0] if buttons else None)
+        return False
+
+    def brightness(self, direction):
+        info = self.brightness_info or {}
+        if not info.get("available") or info.get("level") is None:
+            return
+        level = max(5, min(100, int(info["level"]) + direction))
+        info["level"] = level
+        self.command("brightness", {"level": level})
+
+    def set_brightness_info(self, info, token):
+        if token != self.request_token or self.shell.current() is not self:
+            return False
+        self.brightness_info = info
+        available = bool(info.get("available") and info.get("level") is not None)
+        for b in self.brightness_buttons:
+            b.set_visible(available)
+        return False
+
+    def focus_groups(self):
+        return self.groups
+
+    def on_enter(self, returning):
+        self.snapshot()
+        self.request_token += 1
+        token = self.request_token
+        self.brightness_info = None
+        for b in self.brightness_buttons:
+            b.hide()
+        def work():
+            state = local_api("/api/state") or {}
+            GLib.idle_add(self.set_brightness_info, state.get("brightness") or {}, token)
+        threading.Thread(target=work, daemon=True).start()
 
 
 class SearchScreen(Screen):

@@ -96,6 +96,36 @@ def _icon(cr, kind, cx, cy, s):
         cr.move_to(cx + s * 0.27, cy + s * 0.27)
         cr.line_to(cx + s * 0.52, cy + s * 0.52)
         cr.stroke()
+    elif kind == "calculator":
+        cr.rectangle(cx - s * 0.45, cy - s * 0.62, s * 0.9, s * 1.24)
+        cr.stroke()
+        cr.move_to(cx - s * 0.27, cy - s * 0.3)
+        cr.line_to(cx + s * 0.27, cy - s * 0.3)
+        cr.stroke()
+        for y in (0.0, 0.28):
+            for x in (-0.24, 0, 0.24):
+                cr.arc(cx + s * x, cy + s * y, s * 0.045, 0, 2 * math.pi)
+                cr.fill()
+    elif kind == "browser":
+        cr.arc(cx, cy, s * 0.58, 0, 2 * math.pi)
+        cr.stroke()
+        cr.move_to(cx - s * 0.58, cy)
+        cr.line_to(cx + s * 0.58, cy)
+        cr.stroke()
+        cr.save()
+        cr.translate(cx, cy)
+        cr.scale(0.48, 1)
+        cr.arc(0, 0, s * 0.58, 0, 2 * math.pi)
+        cr.restore()
+        cr.stroke()
+    elif kind == "remote":
+        cr.rectangle(cx - s * 0.62, cy - s * 0.45, s * 1.24, s * 0.8)
+        cr.stroke()
+        cr.move_to(cx, cy + s * 0.35)
+        cr.line_to(cx, cy + s * 0.62)
+        cr.move_to(cx - s * 0.3, cy + s * 0.62)
+        cr.line_to(cx + s * 0.3, cy + s * 0.62)
+        cr.stroke()
     elif kind == "settings":     # a gear: ring plus eight teeth
         cr.arc(cx, cy, s * 0.24, 0, 2 * math.pi)
         cr.stroke()

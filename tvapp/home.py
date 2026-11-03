@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
-                     BufferingOverlay, Toast, AppsScreen, BACK_KEYS as _BACK, ARROWS)
+                     BufferingOverlay, Toast, AppsScreen, ShortcutsScreen, CalculatorScreen, SystemScreen, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
 MENU_KEYS = ("Menu", "m", "M")          # the remote's Menu key (the phone sends "Menu"); "m" on a keyboard
@@ -378,28 +378,23 @@ class Home(Gtk.Window):
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(20))
         bar.get_style_context().add_class("header-bar")
         bar.pack_start(chrome.Wordmark(self, look), False, False, 0)
-        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(2))
         self.nav_buttons = {}
-        for label, name in (("Home", "home"), ("Movies", "movies"), ("Series", "series"), ("Search", "search"),
-                            ("Settings", "settings")):
-            b = chrome.NavTab(self, look, label, "settings" if name == "settings" else None,
-                              on_activate=lambda n=name: self.goto_top(n))
-            nav.pack_start(b, False, False, 0)
-            self.nav_buttons[name] = b
-        bar.pack_start(nav, False, False, self.px(16))
-
-        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(18))
-        right.set_valign(Gtk.Align.CENTER)
+        # These status objects are kept for existing state updates, while status
+        # and pairing controls live in System instead of the content header.
         self.wifi_label = chrome.NetLabel(self, look)
-        right.pack_start(self.wifi_label, False, False, self.px(4))
         self.conn_pill = chrome.PhoneChip(self, None, look, on_activate=lambda: self.show_pairing())
-        right.pack_start(self.conn_pill, False, False, 0)
-        self.clock = chrome.HeaderClock(self, look)
-        right.pack_start(self.clock, False, False, self.px(6))
-        self.power_btn = chrome.PowerButton(self, None, look, on_activate=lambda: self.confirm_off())
-        right.pack_start(self.power_btn, False, False, 0)
+        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(8))
+        right.set_valign(Gtk.Align.CENTER)
+        search = chrome.GlassButton(self, None, look, "Search", width=self.px(120), height=self.px(42), px=18,
+                                    on_activate=lambda: self.open_search())
+        system = chrome.GlassButton(self, None, look, "System", width=self.px(120), height=self.px(42), px=18,
+                                    on_activate=lambda: self.push(self.top_screen("system"))
+                                    if getattr(self.current(), "sname", None) != "system" else None)
+        self.clock = chrome.HeaderClock(self, look, compact=True)
+        for widget in (search, self.clock, system):
+            right.pack_start(widget, False, False, 0)
         bar.pack_end(right, False, False, 0)
-        self.header_row = list(self.nav_buttons.values()) + [self.conn_pill, self.power_btn]
+        self.header_row = [search, system]
         self.clock.set_now(datetime.datetime.now())
         return bar
 
@@ -410,7 +405,8 @@ class Home(Gtk.Window):
     # ---- screens / back stack
     def top_screen(self, name):
         if name not in self.tops:
-            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen, "apps": AppsScreen,
+            self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen, "apps": AppsScreen, "shortcuts": ShortcutsScreen,
+                               "calculator": CalculatorScreen, "system": SystemScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
                                "series": lambda s: BrowseScreen(s, "series")}[name](self)
         return self.tops[name]
@@ -476,7 +472,10 @@ class Home(Gtk.Window):
     def open_app_item(self, item):
         """OK on an app tile: TV screens open here, everything else through the controller (apps.py item ids)."""
         if item.get("kind") == "screen":
-            self.goto_top(item["id"])
+            if item["id"] == "calculator":
+                self.push(self.top_screen("calculator"))
+            else:
+                self.goto_top(item["id"])
             return
         self.toast("Opening " + (item.get("name") or "app") + "…", 3)
         threading.Thread(target=lambda: cmd("app_open", {"id": item["id"]}, timeout=8), daemon=True).start()
@@ -818,6 +817,9 @@ class Home(Gtk.Window):
                 self.tops["search"].set_query(req["query"])
         elif name == "details" and isinstance(req.get("media"), dict) and req["media"].get("id"):
             self.show_media(req["media"])
+        elif name in ("calculator", "system", "shortcuts"):
+            if getattr(self.current(), "sname", None) != name:
+                self.push(self.top_screen(name))
         elif name in ("home", "movies", "series", "settings", "twitch", "apps"):
             self.goto_top(name)
         else:
