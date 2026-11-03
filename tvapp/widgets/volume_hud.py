@@ -1,4 +1,5 @@
-"""The TV's volume indicators: a small pill over Home and Settings, and a hairline under the ambient clock.
+"""The TV's volume indicators: the island on the top screen edge (over Home and Settings, or over other apps in
+its own window), and a hairline under the ambient clock.
 
 Both are idle until the volume changes: no timer runs and nothing is redrawn while they are hidden."""
 
@@ -9,9 +10,9 @@ import cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
+from gi.repository import GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
-from widgets import network  # noqa: E402
+from widgets import island  # noqa: E402
 
 HOLD_MS = 1600
 FADE_MS = 66            # 15 fps, the TV's animation budget
@@ -107,7 +108,7 @@ class VolumePill(VolumeIndicator):
     """Home and Settings: a frosted glass island joined to the top edge of the screen. It springs out of the edge,
     its left end stays put and its width shows the level, gliding between levels, and it tucks back in. The timer only runs during those moments."""
 
-    WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, 16, 28
+    WIDTH, HEIGHT, SHOULDER, CORNER = 400, 62, island.SHOULDER, island.CORNER
 
     def __init__(self, shell, frosted=True):
         self.shell, self.px, self.frosted = shell, shell.px, frosted
@@ -119,7 +120,7 @@ class VolumePill(VolumeIndicator):
         self.size = self.size_from = 0.0    # 0 = tucked into the edge, 1 = fully open
         self.started = 0.0
         self.bar = 0.0
-        self.on_hidden = None
+        self.on_hidden = self.on_frame = self.frost = None
 
     def room(self):
         """Space for the widest island, with its overshoot; px changes when the TV's resolution does."""
@@ -151,7 +152,12 @@ class VolumePill(VolumeIndicator):
     def run(self):
         if not self.fade_timer:
             self.fade_timer = GLib.timeout_add(ISLAND_MS, self.animate)
+        self.frame()
+
+    def frame(self):
         self.queue_draw()
+        if self.on_frame:
+            self.on_frame()
 
     def animate(self):
         t = time.monotonic() - self.started
@@ -167,7 +173,7 @@ class VolumePill(VolumeIndicator):
                 return False
         else:
             self.size = opening(self.size_from, t)
-        self.queue_draw()
+        self.frame()
         if self.phase == "open" and t >= OPEN_S and self.bar == target:
             self.size = 1.0
             self.fade_timer = 0
@@ -175,47 +181,39 @@ class VolumePill(VolumeIndicator):
         return True
 
     def dismiss(self):
+        was = self.phase != "closed"
         self.stop_timers()
         self.phase, self.size = "closed", 0.0
         self.hide()
-        if self.on_hidden:
+        if was and self.on_hidden:
             self.on_hidden()
 
-    def outline(self, cr, cx, width, height):
-        """Flat along the screen edge, flaring into it at the shoulders, rounded below. The path stays open
-        along the edge, so a stroke only follows the part that is on screen."""
-        left, right = cx - width / 2, cx + width / 2
-        s, r = self.px(self.SHOULDER), self.px(self.CORNER)
-        cr.new_path()
-        cr.arc_negative(right + s, s, s, -math.pi / 2, -math.pi)
-        cr.arc(right - r, height - r, r, 0, math.pi / 2)
-        cr.arc(left + r, height - r, r, math.pi / 2, math.pi)
-        cr.arc_negative(left - s, s, s, 0, -math.pi / 2)
+    def frost_source(self):
+        """What the glass frosts: its window's picture of the app behind, or Home's photo."""
+        return self.frost if self.frost is not None else getattr(self.shell, "photo_canvas", None) if self.frosted else None
 
-    def on_draw(self, _w, cr):
+    def trace(self, cr):
+        """Grow the island out of the screen edge from its left end (louder only reaches further right) and trace
+        its outline; (left, width, height), or None while it is tucked away."""
         px, cx = self.px, self.get_allocated_width() / 2
         if self.size <= 0.01:
-            return False
-        base = cr.get_matrix()
-        left = cx - px(self.WIDTH) / 2      # the left end never moves: louder only reaches further right
+            return None
+        left = cx - px(self.WIDTH) / 2
         cr.translate(left, 0)               # the whole island, contents too, grows out of the screen edge
         cr.scale(self.size, self.size)
         cr.translate(-left, 0)
         width, height = px(self.WIDTH) * island_width(self.bar), px(self.HEIGHT)
-        self.outline(cr, left + width / 2, width, height)
-        cr.save()
-        cr.clip_preserve()
-        photo = getattr(self.shell, "photo_canvas", None) if self.frosted else None
-        network.paint_frost(cr, base, self, photo)
-        if getattr(photo, "transparency", True):
-            cr.set_source_rgba(0.015, 0.025, 0.05, 0.34)
-            cr.paint()
-        cr.set_source_rgba(1, 1, 1, 0.07)
-        cr.paint()
-        cr.restore()
-        cr.set_source_rgba(1, 1, 1, 0.22)
-        cr.set_line_width(1)
-        cr.stroke()
+        island.edge_outline(cr, left, left + width, height, px(self.SHOULDER), px(self.CORNER))
+        return left, width, height
+
+    def on_draw(self, _w, cr):
+        px = self.px
+        base = cr.get_matrix()
+        place = self.trace(cr)
+        if not place:
+            return False
+        left, width, height = place
+        island.paint_glass(cr, base, self, self.frost_source())
         y = height / 2
         self.speaker(cr, left + px(28), y, px(12), 1.0)   # this inset centres it in the silent island
         alpha = max(0.0, min(1.0, (self.bar - 0.01) / 0.03))
@@ -252,52 +250,15 @@ class VolumePill(VolumeIndicator):
                 cr.stroke()
 
 
-class VolumeOverlay(Gtk.Window):
-    """The island over YouTube, movies and other apps, when the Home window is behind them: a see-through window
-    on the top screen edge that takes no focus or clicks, and exists on screen only while the island shows.
-    A window can't see through to blur another app's picture, so here the glass is tinted, not frosted."""
+class VolumeOverlay(island.IslandWindow):
+    """The island over YouTube, movies and other apps, in its own window, frosted from the app's picture."""
 
     def __init__(self, shell):
-        super().__init__(type=Gtk.WindowType.POPUP)
-        self.shell = shell
-        self.set_app_paintable(True)
-        self.set_accept_focus(False)
-        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
-        visual = self.get_screen().get_rgba_visual()
-        if visual:
-            self.set_visual(visual)
-        self.connect("draw", self.clear)
-        self.connect("realize", lambda *_: self.get_window().input_shape_combine_region(cairo.Region(), 0, 0))
-        self.pill = VolumePill(shell, frosted=False)
-        self.pill.on_hidden = self.hide
-        self.add(self.pill)
-
-    @staticmethod
-    def clear(_w, cr):
-        cr.set_operator(cairo.OPERATOR_CLEAR)
-        cr.paint()
-        cr.set_operator(cairo.OPERATOR_OVER)
-        return False
+        super().__init__(shell, VolumePill(shell, frosted=False))
+        self.pill = self.island
 
     def show_level(self, percent, muted=False):
-        width, height = self.pill.room()
-        self.resize(width, height)
-        x, y, full = self.placement()
-        self.move(x + (full - width) // 2, y)
-        self.pill.show_level(percent, muted)
-        self.show()
-        self.get_window().raise_()
-
-    def placement(self):
-        """(x, y, width) of the monitor the TV app is on."""
-        display = Gdk.Display.get_default()
-        window = self.shell.get_window()
-        monitor = (display.get_monitor_at_window(window) if window else None) or display.get_primary_monitor() or display.get_monitor(0)
-        area = monitor.get_geometry()
-        return area.x, area.y, area.width
-
-    def dismiss(self):
-        self.pill.dismiss()
+        self.reveal(lambda: self.pill.show_level(percent, muted))
 
 
 class AmbientVolumeLine(VolumeIndicator):

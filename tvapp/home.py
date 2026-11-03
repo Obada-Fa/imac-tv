@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
-                     BufferingOverlay, Toast, AppsScreen, ShortcutsScreen, CalculatorScreen, SystemScreen, BACK_KEYS as _BACK, ARROWS)
+                     BufferingOverlay, AppsScreen, ShortcutsScreen, CalculatorScreen, SystemScreen, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
 MENU_KEYS = ("Menu", "m", "M")          # the remote's Menu key (the phone sends "Menu"); "m" on a keyboard
@@ -28,7 +28,7 @@ from homescreen import AmbientHomeScreen, home_css, search_scope  # noqa: E402
 from widgets.netinfo import get_network_info, make_qr_pixbuf, current_code, fmt_code, remote_connected  # noqa: E402,F401
 import widgets
 from widgets import pairing as pairing_ui  # noqa: E402
-from widgets import chrome, glass, volume_hud  # noqa: E402
+from widgets import chrome, glass, island, volume_hud  # noqa: E402
 from widgets.browser_menu import BrowserMenu  # noqa: E402
 from widgets.playback import PlaybackSuggestion
 from theme import theme_css
@@ -192,9 +192,11 @@ class Home(Gtk.Window):
         self.buffering.connect("map", lambda *_: self.covered(True))
         self.buffering.connect("unmap", lambda *_: self.covered(False))
         root.add_overlay(self.buffering)
-        self.toaster = Toast(self)
-        root.add_overlay(self.toaster)
+        self.notice = island.NoticeIsland(self)    # notices, on the island at the top edge, like the volume
+        root.add_overlay(self.notice)
+        self.notice_overlay = None      # the notice island above other apps; made the first time it is needed
         self.volume_pill = volume_hud.VolumePill(self)
+        self.volume_pill.on_hidden = self.volume_hidden
         root.add_overlay(self.volume_pill)
         self.volume_overlay = None      # the island above other apps; made the first time it is needed
         self.volume_seen = 0.0
@@ -207,7 +209,6 @@ class Home(Gtk.Window):
         self.trigger_network_refresh()
         self.show_all()
         self.buffering.hide()
-        self.toaster.hide()
         self.push(self.top_screen("home"))
         GLib.timeout_add(500, self.tick)
         self.watch_ui_requests()
@@ -367,8 +368,36 @@ class Home(Gtk.Window):
     def after(self, ms, fn):
         GLib.timeout_add(ms, lambda: fn() and False)
 
-    def toast(self, text, secs=4):
-        self.toaster.say(text, secs)
+    def toast(self, text, secs=4, kind=None):
+        """A notice on the island at the top edge: in Home's window, or in the island's own window over the app in
+        front. `kind` picks its icon (info, play, phone, done, update, error); it is guessed from the words if left out."""
+        if self.prev_app not in (None, "home") and not self.buffering.get_visible():
+            if not self.notice_overlay:
+                self.notice_overlay = island.IslandWindow(self, island.NoticeIsland(self, frosted=False))
+            self.notice.dismiss()
+            self.notice_overlay.reveal(lambda: self.notice_overlay.island.say(text, secs, kind))
+        else:
+            if self.notice_overlay:
+                self.notice_overlay.dismiss()
+            self.notice.say(text, secs, kind)
+
+    def notice_islands(self):
+        return [n for n in (self.notice, self.notice_overlay.island if self.notice_overlay else None) if n]
+
+    def hold_notices(self):
+        """The volume island takes the top edge: a notice there steps aside until it is gone."""
+        for notice in self.notice_islands():
+            notice.hold()
+
+    def volume_hidden(self):
+        """A volume island tucked away: once none shows, a notice that stepped aside gets the edge back."""
+        if getattr(self, "volume_switching", False):
+            return
+        pills = (self.volume_pill, self.volume_overlay.pill if self.volume_overlay else None)
+        if any(pill is not None and pill.phase != "closed" for pill in pills):
+            return
+        for notice in self.notice_islands():
+            notice.release()
 
     # ---- header
     def make_header(self):
@@ -757,18 +786,26 @@ class Home(Gtk.Window):
         ambient Home keeps it to a hairline under the clock."""
         screen = self.current()
         line = getattr(screen, "volume_line", None)
-        if over:
-            self.volume_pill.dismiss()
-            if not self.volume_overlay:
-                self.volume_overlay = volume_hud.VolumeOverlay(self)
-            self.volume_overlay.show_level(percent, muted)
-        elif line and screen.idle.ambient:
-            self.volume_pill.dismiss()
-            line.show_level(percent, muted)
-        else:
-            self.volume_pill.show_level(percent, muted)
-        if not over and self.volume_overlay:
-            self.volume_overlay.dismiss()
+        self.volume_switching = True        # trading one volume island for another doesn't free the edge
+        try:
+            if over:
+                self.volume_pill.dismiss()
+                if not self.volume_overlay:
+                    self.volume_overlay = volume_hud.VolumeOverlay(self)
+                    self.volume_overlay.on_hidden = self.volume_hidden
+                self.hold_notices()
+                self.volume_overlay.show_level(percent, muted)
+            elif line and screen.idle.ambient:
+                self.volume_pill.dismiss()
+                line.show_level(percent, muted)
+            else:
+                self.hold_notices()
+                self.volume_pill.show_level(percent, muted)
+            if not over and self.volume_overlay:
+                self.volume_overlay.dismiss()
+        finally:
+            self.volume_switching = False
+        self.volume_hidden()                # the hairline leaves the edge free
 
     def check_ui_request(self):
         path = DATA / "ui_request.json"
@@ -923,7 +960,7 @@ class Home(Gtk.Window):
         target = updates.get('latest')
         if updates.get('available') and target != getattr(self, 'update_seen', None):
             self.update_seen = target
-            self.toast('A TV update is available. Select Update now to install and restart.', 8)
+            self.toast('A TV update is available. Select Update now on Home to install it.', 8, 'update')
         settings = self.tops.get("settings")
         if settings and settings.category == "System":
             settings.update_system_status(state)
@@ -935,13 +972,13 @@ class Home(Gtk.Window):
         app, phase = state.get("app"), state.get("phase")
         if phase == "buffering":
             self.buffering.show_for(state)
-            self.toaster.hide()
+            self.notice.close()
             self.fast_until = max(self.fast_until, time.monotonic() + 5)
         else:
             self.buffering.hide_now()
         err = state.get("error") or ""
         if self.state_seen and err and err != self.last_error:
-            self.toast(err, 6)
+            self.toast(err, 6, 'error')
         self.last_error = err
         if self.prev_app == "player" and app == "home" and self.state_seen:
             media = state.get("media")

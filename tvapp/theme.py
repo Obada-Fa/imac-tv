@@ -51,7 +51,7 @@ entry.search-entry selection {{ background-color: rgba(255,255,255,0.22); color:
 .set-page, .ah-scrim { background: #0b121c; }
 .header-bar { background-image: linear-gradient(180deg, #0b121c, rgba(11,18,28,0.92) 55%, rgba(11,18,28,0)); }
 .app-button,
-.hero-secondary, .toast, .qr-dialog, .ah-sheet, .ah-dbtn, .ah-cardbtn { background: #1c2c3c; }
+.hero-secondary, .qr-dialog, .ah-sheet, .ah-dbtn, .ah-cardbtn { background: #1c2c3c; }
 .hero-fade { background-image: linear-gradient(90deg, #0b121c 0%, #0b121c 44%, transparent 80%); }
 """
     if not cfg.get('visual_effects', True):

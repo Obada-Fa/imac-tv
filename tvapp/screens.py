@@ -2075,29 +2075,6 @@ class BufferingOverlay(Gtk.Box):
             self.hide()
 
 
-class Toast(Gtk.Label):
-    def __init__(self, shell):
-        super().__init__()
-        self.get_style_context().add_class("toast")
-        self.set_halign(Gtk.Align.CENTER)
-        self.set_valign(Gtk.Align.END)
-        self.set_margin_bottom(shell.px(70))
-        self.set_no_show_all(True)
-        self.timer = 0
-
-    def say(self, text, secs=4):
-        self.set_text(text)
-        self.show()
-        if self.timer:
-            GLib.source_remove(self.timer)
-        self.timer = GLib.timeout_add(int(secs * 1000), self._hide)
-
-    def _hide(self):
-        self.timer = 0
-        self.hide()
-        return False
-
-
 def build_css(scale=1.0):
     p = lambda n: round(n * scale)
     return f"""
@@ -2139,5 +2116,4 @@ window {{ font-family: "Inter", "Noto Sans", "Noto Sans Arabic", sans-serif; }}
 .buffer-title {{ font-size: {p(52)}px; font-weight: 800; color: #fff; }}
 .buffer-line {{ font-size: {p(22)}px; color: #9aa1ad; }}
 .buffer-status {{ font-size: {p(28)}px; font-weight: 600; color: #e6e9ee; }}
-.toast {{ background: rgba(30,34,44,0.97); color: #fff; font-size: {p(24)}px; font-weight: 600; border: {p(2)}px solid rgba(255,255,255,0.3); border-radius: {p(16)}px; padding: {p(16)}px {p(34)}px; }}
 """

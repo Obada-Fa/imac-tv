@@ -39,7 +39,8 @@ class IslandMotionTests(unittest.TestCase):
 
 class RoutingTests(unittest.TestCase):
     def shell(self, screen):
-        return SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=None)
+        return SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=None,
+                               hold_notices=mock.Mock(), volume_hidden=mock.Mock())
 
     def test_ambient_home_gets_only_the_hairline(self):
         screen = SimpleNamespace(volume_line=mock.Mock(), idle=SimpleNamespace(ambient=True))
@@ -60,14 +61,16 @@ class RoutingTests(unittest.TestCase):
 class OverAppTests(unittest.TestCase):
     def test_over_an_app_the_island_gets_its_own_window(self):
         screen = SimpleNamespace(volume_line=mock.Mock(), idle=SimpleNamespace(ambient=True))
-        shell = SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=mock.Mock())
+        shell = SimpleNamespace(current=lambda: screen, volume_pill=mock.Mock(), volume_overlay=mock.Mock(),
+                                hold_notices=mock.Mock(), volume_hidden=mock.Mock())
         home.Home.show_volume(shell, 60, False, True)
         shell.volume_overlay.show_level.assert_called_once_with(60, False)
         screen.volume_line.show_level.assert_not_called()
         shell.volume_pill.show_level.assert_not_called()
 
     def test_back_on_home_the_overlay_goes_away(self):
-        shell = SimpleNamespace(current=lambda: SimpleNamespace(), volume_pill=mock.Mock(), volume_overlay=mock.Mock())
+        shell = SimpleNamespace(current=lambda: SimpleNamespace(), volume_pill=mock.Mock(), volume_overlay=mock.Mock(),
+                                hold_notices=mock.Mock(), volume_hidden=mock.Mock())
         home.Home.show_volume(shell, 60, False)
         shell.volume_overlay.dismiss.assert_called_once()
         shell.volume_pill.show_level.assert_called_once_with(60, False)

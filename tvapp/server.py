@@ -438,7 +438,7 @@ class Controller:
         self.lock = threading.RLock()
         self.action_lock = threading.RLock()
         self.settings_lock = threading.Lock()
-        self.updater = updater.Updater(BASE.parent, DATA, running="", notify=self._notify_update)
+        self.updater = updater.Updater(BASE.parent, DATA, running="")   # Home shows an available update on its island
         self.retro = backgrounds.Backgrounds(DATA)
         threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
         self.home_lock = threading.Lock()
@@ -704,14 +704,6 @@ class Controller:
             command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1" if change["muted"] else "0"])
         percent, muted = self._system_volume()
         self._volume_osd(percent, bool(muted))
-
-    def _notify_update(self):
-        try:
-            command(["notify-send", "--app-name=iMac TV", "--icon=software-update-available",
-                     "TV update available", "Open TV Home or your phone remote and select Update now to install and restart."], timeout=3)
-            return True
-        except (RuntimeError, OSError, subprocess.TimeoutExpired):
-            return False  # The in-app notice also works on desktops without a notification daemon.
 
     def _watch(self):
         self.updater.capture_running()
