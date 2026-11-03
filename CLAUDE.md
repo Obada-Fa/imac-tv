@@ -13,7 +13,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - `~/.local/share/imactv/home.json`: style, node_shape, tile_shape, shapes, visualizer, qr_style, and ambient interval/idle/idle_music.
   - `~/.local/share/imactv/media.json`: autoplay_next, auto_skip_intro, still_watching_*.
 
-## Current state (2026-10-23, HEAD a8c6d16, pushed)
+## Current state (2026-11-03, HEAD b950b3e, pushed)
 - **Ambient Home:**
   - changing Bing/Wikimedia photo, clock, weather
   - network style (default): hexagon nodes and frosted tiles; bubbles is the alternative style
@@ -30,7 +30,8 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
 - **Brave as a TV app:** `tvapp/browser.py` launches a natively installed Brave in kiosk mode on its own profile (`~/.local/share/imactv/brave-tv`; logins and extensions need setting up there once) with a local debugging port. `widgets/browser_menu.py` is the TV menu. The phone's Remote tab switches to a browser layout while it runs: address bar, page buttons, a full touchpad with a one-finger scroll edge, and a Browser sheet (tabs, zoom, Shields, Menu on TV). Not verified on the real TV (Mutter stacking, CPU).
 - **YouTube behind Home:** the window is minimized so the video stops rendering; audio is auto-resumed if minimizing paused it.
 - **YouTube volume is the system volume:** `tvapp/youtube_volume.py` keeps the video element at full level over a local debugging port (9334). A lasting DevTools connection (`Link`) wraps VacuumTube's command hook: volume and mute from the phone's YouTube app set the system volume and show the TV island, and the TV's own volume and mute go back into VacuumTube, so the phone shows the same level. Checked in headless Chrome against a stand-in page; not verified in real VacuumTube or with the real phone app.
-- **Volume on the TV:** the server writes `volume_event.json`; Home watches it and shows `widgets/volume_hud.py`: a frosted island on the top screen edge over Home and Settings, a hairline under the clock in ambient; over other apps it is the island in its own `VolumeOverlay` window, tinted rather than frosted. Not verified on the real TV (Mutter stacking above fullscreen apps, transparency).
+- **Volume on the TV:** the server writes `volume_event.json`; Home watches it and shows `widgets/volume_hud.py`: a frosted island on the top screen edge over Home and Settings, a hairline under the clock in ambient. Over other apps it is the island in its own `island.IslandWindow`: Zorin's GNOME paints any see-through part of a separate window black (even when the window is cut to shape), so the window copies the picture of the app behind it and frosts from that, only while it shows (~0.6 ms/frame, refreshed at 15 fps while holding; a faint seam is possible during fast video motion). Not verified on the real TV.
+- **Notices are islands:** `shell.toast()` shows `island.NoticeIsland` at the top edge (bead drops out, widens to fit the text, one light sweep, folds back), with icons per kind (phone, play, warning, done/update, info). It shows over apps too, steps aside while the volume island shows, and replaces the old bottom `Toast` and the server's `notify-send` update banner. Not verified on the real TV.
 - **Not yet verified on the real TV:**
   - VacuumTube's MPRIS controls
   - the YouTube volume lock, including on the Flatpak build
