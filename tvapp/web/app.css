@@ -354,13 +354,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 @media(max-height:680px){.shell{gap:9px;padding-top:calc(env(safe-area-inset-top) + 12px)}h1{font-size:28px}.brightness{height:46px}.volume .hb{width:52px}.volume{grid-template-columns:52px 1fr 52px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}.spinner{animation-duration:3s}}
 
-/* Home's clock, thin and large, heading the remote */
-.clock{font-size:58px;line-height:1;font-weight:200;letter-spacing:.01em;color:#fff;font-variant-numeric:tabular-nums}
-.masthead.home-head{position:relative;display:block}
-.home-head .apps{position:absolute;top:0;right:0}
-@media(max-width:359px){.clock{font-size:50px}}
-@media(max-height:680px){.clock{font-size:46px}}
-
 .sheet select.language-select{width:100%;min-height:48px;padding:10px 14px;border:1px solid var(--hair);border-radius:12px;background:#111b2b;color:#fff;font-size:16px}
 
 .twitch{margin-top:26px}
@@ -417,7 +410,7 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .approw .star:active{border-color:var(--hair-hot);background:var(--glass-press)}
 .approw button:disabled{opacity:.42}
 .approw+.approw::before{pointer-events:none}
-.apps button[data-app]{padding:0 9px}   /* the Apps icon joined the nav: keep it clear of the clock */
+.apps button[data-app]{padding:0 9px}
 .webnav{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
 .webbar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
 .webbar button{min-height:50px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:14px;border:1px solid var(--hair);background:rgba(22,29,45,.72);color:var(--ink2)}
@@ -432,8 +425,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .webtab-open b{font-weight:500;font-size:14px}.webtab-open small{color:var(--ink3);font-size:12px}
 .webtab-close{width:52px;min-height:52px;padding:0;border:0;border-radius:0;background:none;font-size:22px;font-weight:300;color:var(--ink2)}
 .web-on .notice,.web-on .phone-media,.web-on .topbar{display:none!important}
-.web-on .clock{font-size:30px}.web-on .masthead{margin-bottom:4px}
-.hive.discord.webnav-on.pointer{aspect-ratio:auto;height:max(240px,calc(100dvh - 460px))}
 .hive.webnav-on.pointer .pad span,.hive.webnav-on.pointer .pad small{margin-right:48px}
 .web-on #type-open{display:none}
 .webrecent{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
@@ -441,4 +432,46 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .webtyping{display:flex;gap:8px}
 .webtyping input{flex:1;min-width:0;min-height:48px;font-size:16px;padding:0 14px;border-radius:14px;border:1px solid rgba(192,232,248,.7);background:rgba(192,232,248,.08);color:#fff}
 .webtyping button{min-height:48px;padding:0 16px;border-radius:14px;font-size:14px;font-weight:500}
-.web-typing-on .hive.discord.webnav-on.pointer{height:max(200px,calc(100dvh - 518px))}
+
+
+/* Main remote: the pad takes the space left between the app shortcuts and the thumb controls. */
+.home-head{align-items:center}
+.home-head h1.eyebrow{font-size:11px}
+#remote-activity{display:contents}
+#activity-slot:not([hidden]){display:grid;gap:10px}
+#activity-slot .phone-media{margin:0}
+#remote:not(.media-first){
+  height:100vh;height:100dvh;min-height:0;
+  padding:calc(env(safe-area-inset-top) + 8px) max(var(--gut),env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 75px) max(var(--gut),env(safe-area-inset-left));
+  gap:clamp(4px,1dvh,10px)
+}
+#remote:not(.media-first) .controls,.browse{min-height:0;gap:clamp(4px,1dvh,10px)}
+.browse{flex:1;margin:0}
+.pad-space{flex:1;min-height:0;container-type:size;display:grid;place-items:center}
+.pad-space .hive{margin:0;width:min(100%,var(--hive-w),calc(100cqh * var(--hive-ar)))}
+.pad-space .hive.discord.pointer{width:100%;height:100%;aspect-ratio:auto}
+#foot{flex-wrap:wrap;gap:0}
+#foot .quiet{padding:0 10px;min-height:44px}
+@media(max-width:359px){
+  #foot .quiet{padding-inline:6px}
+  #foot .quiet::before{display:none}
+}
+@media(orientation:landscape) and (max-height:550px) and (min-width:480px){
+  #remote:not(.media-first){max-width:960px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);grid-template-rows:auto auto 1fr auto auto;column-gap:16px}
+  #remote:not(.media-first) .controls{display:contents}
+  #remote:not(.media-first) .home-head{grid-area:1/1}
+  #remote:not(.media-first) .notice{grid-area:2/1}
+  #remote:not(.media-first) .topbar{grid-area:3/1;align-self:center}
+  #remote:not(.media-first) .volume{grid-area:4/1}
+  #remote:not(.media-first) #foot{grid-area:5/1}
+  #remote:not(.media-first) .browse{grid-area:1/2/-1/3}
+  #remote:not(.media-first) .home-head .eyebrow{display:none}
+  #remote:not(.media-first) #foot .quiet{padding-inline:6px}
+  #remote:not(.media-first) #foot .quiet::before{display:none}
+}
+@media(orientation:landscape) and (max-height:340px) and (min-width:480px){
+  #remote:not(.media-first){padding-bottom:calc(env(safe-area-inset-bottom) + 55px);row-gap:2px}
+  body:has(#remote:not([hidden],.media-first)) .tabbar{padding-block:0 env(safe-area-inset-bottom)}
+  body:has(#remote:not([hidden],.media-first)) .tabbar button{min-height:50px}
+  #remote:not(.media-first) .notice{font-size:12px}
+}

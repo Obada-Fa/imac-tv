@@ -227,8 +227,8 @@ buffering card (source, peers, speed, Cancel), and a Now Playing card with scrub
 bar, skip, subtitle/audio pickers and subtitle delay. Stop returns to the
 title's details. VacuumTube provides YouTube.
 
-The phone keeps its clock, glass controls and blurred photo background, with no
-decorative constellation lines or dots. This simpler appearance applies across
+The main remote fits the phone viewport and keeps the D-pad, volume and bottom tabs within reach.
+Media and TV updates open from the footer. The glass controls sit over a blurred photo. This simpler appearance applies across
 the phone's Remote, browsing and Settings screens.
 
 ### Phone hardware volume buttons
@@ -240,7 +240,7 @@ deliver those button presses to page JavaScript, especially in the background.
 Adding the web remote to the home screen does not grant native volume handling.
 
 The Flutter **Nexus Remote** app has an Android implementation in its TV section.
-It opens this exact web remote full screen, with the same clock,
+It opens this exact web remote full screen, with the same
 menus, catalog and playback functions. Pair with the six-digit code, then enable
 **Settings → Connections → Nexus Remote → TV volume buttons**. A native
 `MediaSession` / `VolumeProvider` and connected-device foreground service send
@@ -264,7 +264,7 @@ and [Android remote-volume API](https://developer.android.com/reference/android/
 
 ### Phone notification and lock-screen controls
 
-On the phone's Remote tab, tap **Show in phone media controls** while something
+On the main Remote tab, open the media button in the footer. Tap **Show in phone media controls** while something
 is playing on the TV. In browsers supporting the Media Session API (such as
 Chrome on Android), the notification shade and lock screen can then show the
 title, artwork, play/pause and seeking. YouTube also offers previous/next when

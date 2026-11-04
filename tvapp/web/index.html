@@ -15,20 +15,22 @@
 <div id="connection" class="connection" role="status" aria-label="Connecting" title="Connecting…"></div>
 <main id="remote" class="shell" hidden>
   <header class="masthead home-head">
-    <div class="mast-text"><small class="eyebrow">IMAC TV</small><h1 id="clock" class="clock">--:--</h1><p id="remote-meta" class="meta">Connecting…</p></div>
+    <div class="mast-text"><h1 class="eyebrow">Nexus TV</h1><p id="remote-meta" class="meta">Connecting…</p></div>
     <nav id="apps" class="apps" aria-label="TV apps"><button data-app="home" type="button">Home</button><button data-app="youtube" type="button">YouTube</button><button id="apps-open" type="button" aria-label="All apps" title="All apps"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4.5" y="4.5" width="6" height="6" rx="1.6"/><rect x="13.5" y="4.5" width="6" height="6" rx="1.6"/><rect x="4.5" y="13.5" width="6" height="6" rx="1.6"/><rect x="13.5" y="13.5" width="6" height="6" rx="1.6"/></svg></button></nav>
   </header>
   <div id="notice" class="notice" role="status" hidden></div>
-  <button id="update-notice" type="button" class="nextbtn glass" hidden>TV update available · Update now</button>
-  <button id="phone-media" type="button" class="phone-media nextbtn glass" aria-pressed="false" hidden>Show in phone media controls</button>
-  <div id="yt" class="yt glass" hidden>
-    <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
-    <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>
-    <div class="yt-ctl"><button id="yt-prev" type="button" class="hb" data-yt="previous" aria-label="Previous"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M18 6l-8 6 8 6z"/></svg></button><button id="yt-back" type="button" class="hb sk" aria-label="Back 10 seconds">−10</button><button id="yt-play" type="button" class="hb lit" data-yt="play_pause" aria-label="Play or pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg></button><button id="yt-fwd" type="button" class="hb sk" aria-label="Forward 10 seconds">+10</button><button id="yt-next" type="button" class="hb" data-yt="next" aria-label="Next"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M6 6l8 6-8 6z"/></svg></button></div>
-    <button id="yt-show" type="button" class="yt-show" hidden>Open</button>
-    <button id="yt-mode" type="button" class="yt-mode" hidden aria-label="Choose how the TV shows this YouTube channel"></button>
+  <div id="remote-activity">
+    <button id="update-notice" type="button" class="nextbtn glass" hidden>TV update available · Update now</button>
+    <button id="phone-media" type="button" class="phone-media nextbtn glass" aria-pressed="false" hidden>Show in phone media controls</button>
+    <div id="yt" class="yt glass" hidden>
+      <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
+      <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>
+      <div class="yt-ctl"><button id="yt-prev" type="button" class="hb" data-yt="previous" aria-label="Previous"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M18 6l-8 6 8 6z"/></svg></button><button id="yt-back" type="button" class="hb sk" aria-label="Back 10 seconds">−10</button><button id="yt-play" type="button" class="hb lit" data-yt="play_pause" aria-label="Play or pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg></button><button id="yt-fwd" type="button" class="hb sk" aria-label="Forward 10 seconds">+10</button><button id="yt-next" type="button" class="hb" data-yt="next" aria-label="Next"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M6 6l8 6-8 6z"/></svg></button></div>
+      <button id="yt-show" type="button" class="yt-show" hidden>Open</button>
+      <button id="yt-mode" type="button" class="yt-mode" hidden aria-label="Choose how the TV shows this YouTube channel"></button>
+    </div>
+    <button id="viz-next" type="button" class="viz-next" hidden aria-label="Next visualizer effect"><i class="mk" aria-hidden="true"></i>Next effect<small id="viz-mode"></small></button>
   </div>
-  <button id="viz-next" type="button" class="viz-next" hidden aria-label="Next visualizer effect"><i class="mk" aria-hidden="true"></i>Next effect<small id="viz-mode"></small></button>
   <div class="topbar">
     <div class="brightness glass">
       <button id="screen-off" type="button" class="hb" aria-pressed="false" aria-label="Turn the TV screen off" title="Turn the screen off; audio keeps playing">
@@ -90,7 +92,7 @@
           <button id="web-tabs" type="button" aria-label="Tabs and browser options"><b id="web-tab-count">1</b></button>
         </div>
       </div>
-      <div id="hive" class="hive">
+      <div class="pad-space"><div id="hive" class="hive">
         <div id="dpad" class="dpad">
           <button data-action="up" type="button" class="cell seg" aria-label="Up"></button>
           <button data-action="left" type="button" class="cell seg" aria-label="Left"></button>
@@ -103,11 +105,11 @@
         <button data-action="home" type="button" class="cell sat" aria-label="Home"></button>
         <button id="search-open" type="button" class="cell sat" aria-label="Type on TV"><span class="sr">Type on TV</span></button>
         <button id="more-open" type="button" class="cell sat" aria-label="Quick actions"></button>
-      </div>
+      </div></div>
     </div>
     <div class="volume"><button data-action="volume" data-direction="-1" type="button" class="hb" aria-label="Volume down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10"/></svg></button><button data-action="mute" id="volume-label" type="button" class="vol-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" type="button" class="hb" aria-label="Volume up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10M12 7v10"/></svg></button></div>
   </section>
-  <footer id="foot"><button id="mode" type="button" class="quiet" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open" type="button" class="quiet">Keyboard</button><button id="settings-open" type="button" class="quiet" hidden>Settings</button></footer>
+  <footer id="foot"><button id="mode" type="button" class="quiet" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open" type="button" class="quiet">Keyboard</button><button id="activity-open" type="button" class="quiet" hidden>Media</button><button id="settings-open" type="button" class="quiet" hidden>Settings</button></footer>
 </main>
 
 <main id="browser" class="shell" hidden>
@@ -182,6 +184,6 @@
 
 <section id="pair" class="pair" hidden><div class="pair-card glass"><small class="eyebrow">IMAC TV</small><h1>Connect your phone</h1><p class="meta">Enter the six-digit code shown on your TV.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit" class="go">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
 
-<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" type="button" class="hb" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg></button></div><div id="sheet-content"></div></div></section>
+<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" type="button" class="hb" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg></button></div><div id="sheet-content"></div><div id="activity-slot" hidden></div></div></section>
 <nav id="tabbar" class="tabbar" aria-label="Sections" hidden><button type="button" data-tab="remote"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="7.5" y="3" width="9" height="18" rx="2.6"/><circle cx="12" cy="9" r="2"/><path d="M10.5 15h3"/></svg><span>Remote</span></button><button type="button" data-tab="movie"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="5" width="17" height="14" rx="1.8"/><path d="M7.5 5v14M16.5 5v14M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/></svg><span>Movies</span></button><button type="button" data-tab="series"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="5.5" width="17" height="11.5" rx="1.8"/><path d="M8.5 20.5h7M12 17v3.5"/></svg><span>Series</span></button><button type="button" data-tab="search"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6"/><path d="m15.5 15.5 4.5 4.5"/></svg><span>Search</span></button><button type="button" data-tab="settings"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 3.2 7.6 4.4v8.8L12 20.8l-7.6-4.4V7.6z"/><circle cx="12" cy="12" r="2.8"/></svg><span>Settings</span></button></nav>
 </body></html>

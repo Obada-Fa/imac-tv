@@ -52,7 +52,7 @@
     return true;
   }
   const PRESSABLE = 'button, [role=switch], label.row, .ptile';
-  const SCROLLS = '.pane, #sheet-content, .hrow, #settings-tabs';
+  const SCROLLS = '.pane, #sheet-content, #activity-slot, .hrow, #settings-tabs';
   document.addEventListener('pointerdown', e => {
     felt = null;
     const el = e.target.closest(PRESSABLE);
@@ -261,16 +261,6 @@
     b.innerHTML = playing ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6.5v11M15 6.5v11"/></svg>'
       : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg>';
   }
-  // Home's clock and date line; one timer, woken once a minute.
-  let remoteLabel = 'Connecting', clockTimer = 0;
-  function tickClock() {
-    clearTimeout(clockTimer);
-    const now = new Date();
-    $('clock').textContent = now.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hourCycle: 'h23'});
-    const day = now.toLocaleDateString([], {weekday: 'short', day: 'numeric', month: 'short'});
-    $('remote-meta').textContent = [day, remoteLabel].filter(Boolean).join(' · ');
-    clockTimer = setTimeout(tickClock, 60000 - now.getSeconds() * 1000 - now.getMilliseconds() + 50);
-  }
   const fillRange = input => {
     const min = Number(input.min) || 0, max = Number(input.max) || 100, v = Number(input.value) || 0;
     input.style.setProperty('--fill', (max > min ? Math.max(0, Math.min(100, (v - min) / (max - min) * 100)) : 0).toFixed(1) + '%');
@@ -284,14 +274,14 @@
     $('connection').title = label; $('connection').setAttribute('aria-label', label);
     $('connection').classList.toggle('off', !value);
     document.body.classList.toggle('offline', !value);
-    remoteLabel = label.replace(/^●\s*/, '');
-    tickClock();
-    document.querySelectorAll('#controls button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => { if (b.disabled !== !value) b.disabled = !value; });
+    $('remote-meta').textContent = label.replace(/^●\s*/, '');
+    document.querySelectorAll('#controls button, #playback-help button, footer button, .apps button, #tabbar button, .pane button, #sheet-content .tsheet button').forEach(b => { if (b.disabled !== !value) b.disabled = !value; });
     document.querySelectorAll('#imac-apps .app-row').forEach(r => fillApp(r, r.app));   // Close stays off for apps that aren't running
     renderUpdateStatus();
   }
 
   function showPair() {
+    $('activity-slot').hidden = true;
     $('connection').hidden = true; pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
     connected(false, 'Pair this phone');
     updateTabbar();
@@ -542,6 +532,21 @@
     $('remote').classList.toggle('media-first', view !== 'browse');
     renderYoutube(s.youtube_now, view);
     renderViz(s.visualizer, view);
+    // In the main controller these variable-height panels share one sheet.
+    const activity = $('remote-activity'), slot = $('activity-slot'), opener = $('activity-open');
+    const inMenu = view === 'browse';
+    const suggestion = $('playback-help');
+    if (inMenu && activity.parentElement !== slot) {
+      activity.prepend(suggestion);
+      slot.append(activity);
+    }
+    if (!inMenu && activity.parentElement !== remote) {
+      c.prepend(suggestion);
+      remote.insertBefore(activity, remote.querySelector('.topbar'));
+    }
+    opener.hidden = !inMenu || !activity.querySelector(':scope > :not([hidden])');
+    opener.textContent = help ? 'Playback help' : !$('update-notice').hidden ? 'TV update' : !$('yt').hidden ? 'YouTube media' : 'Media';
+    if (opener.hidden && sheetName === 'activity') closeSheet();
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
     $('buffer').hidden = view !== 'buffering';
@@ -752,9 +757,11 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('activity-slot').hidden = name !== 'activity';
+    $('sheet-title').textContent = {activity: 'TV activity', type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
+    if (name === 'activity') { content.replaceChildren(); return; }
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'others') { renderOthersSheet(); return; }
     if (name === 'web') { renderWebSheet(); return; }
@@ -914,7 +921,8 @@
     row.replaceChildren(...parts);
   }
 
-  function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
+  function closeSheet() { $('activity-slot').hidden = true; sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
+  $('activity-open').onclick = () => openSheet('activity');
   $('sheet-close').onclick = closeSheet;
   $('mode').onclick = () => setMode(mode === 'pointer' ? 'dpad' : 'pointer');
   $('mic-mute').onclick = () => send('mic_mute').then(r => {
@@ -2161,7 +2169,6 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   applyShape(nodeShape);
   drawSky(true);
-  tickClock();
   checkAutoPair();
   refresh(); setInterval(refresh, 2000);
 })();
