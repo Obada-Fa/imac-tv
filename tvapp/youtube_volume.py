@@ -46,11 +46,21 @@ LOCK_LEVEL = """(() => {
   };
   const level = lock("volume", "__imactvVolumeLocked", 1);
   const mute = lock("muted", "__imactvMuteLocked", false);
-  if (level) {
+  // A new execution context can arrive before <html>. Keep suppression independent
+  // of the media locks and restore it if YouTube replaces the document's styles.
+  const styleId = "__imactvVolumeStyle";
+  const hideIndicator = () => {
+    if (!document.documentElement || document.getElementById(styleId)) return;
     const style = document.createElement("style");
-    style.textContent = "#vt-volume-indicator { display: none !important; }";
+    style.id = styleId;
+    style.textContent = '#vt-volume-indicator, [idomkey="lazy-mdx-volume"] { display: none !important; }';
     document.documentElement.appendChild(style);
+  };
+  if (!window.__imactvVolumeObserver) {
+    window.__imactvVolumeObserver = new MutationObserver(hideIndicator);
+    window.__imactvVolumeObserver.observe(document, {childList: true, subtree: true});
   }
+  hideIndicator();
   return level || mute;
 })()"""
 HOOK = """(() => {
