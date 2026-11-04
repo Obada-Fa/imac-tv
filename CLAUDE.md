@@ -40,4 +40,5 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - mpv OSD prompts and OK routing
   - TheIntroDB coverage
   - live phone connect/disconnect for the QR drop-down
+- **All apps (Home tile, phone grid button):** `apps.others_apps()` lists the PC's utilities first (`apps.UTILITIES`: browser, Files, Disks, Disk Usage, System Monitor, Terminal, PC Settings, Software, Remote Desktop, then Calculator, with friendly names), then every other installed `.desktop` app. Menu on any card on the TV, or the star on the phone, pins it to Home (max 8). Home's apps row is the irregular scattered strip again (not left-aligned).
 - **Open decision:** which Quick, Draw! animals to keep (suggested: whale, swan, cat, rabbit, horse, giraffe, snail). Animals are off by default.

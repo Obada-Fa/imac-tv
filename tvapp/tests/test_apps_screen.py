@@ -72,20 +72,20 @@ class RowCompositionTests(unittest.TestCase):
     def test_favorites_then_the_fixed_tiles_in_order(self):
         specs = rows.apps_row_specs(FAVS)
         self.assertEqual([s["title"] for s in specs],
-                         ["Movies", "YouTube", "Brave", "RustDesk", "Others"])
+                         ["Movies", "YouTube", "Brave", "RustDesk", "All apps"])
         self.assertEqual([s["kind"] for s in specs],
                          ["movies", "youtube", None, None, "apps"])
         self.assertEqual([s["app"] is None for s in specs], [False] * 4 + [True])
 
     def test_no_favorites_leaves_only_the_fixed_tiles(self):
-        self.assertEqual([s["title"] for s in rows.apps_row_specs([])], ["Others"])
+        self.assertEqual([s["title"] for s in rows.apps_row_specs([])], ["All apps"])
 
     def test_widget_items_use_home_apps_and_open_them_through_the_shell(self):
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=list(FAVS)):
             w = rows.AppsWidget(shell)
             items = w.items()
-        self.assertEqual([i["title"] for i in items][-1:], ["Others"])
+        self.assertEqual([i["title"] for i in items][-1:], ["All apps"])
         items[2]["on_activate"]()
         self.assertEqual(shell.opened, [FAVS[2]])
         items[-1]["on_activate"]()
@@ -101,7 +101,7 @@ class RowCompositionTests(unittest.TestCase):
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=None):
             titles = [i["title"] for i in rows.AppsWidget(shell).items()]
-        self.assertEqual(titles, ["Movies", "Series", "YouTube", "Twitch", "Others"])
+        self.assertEqual(titles, ["Movies", "Series", "YouTube", "Twitch", "All apps"])
 
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
@@ -141,7 +141,7 @@ class RowRebuildTests(unittest.TestCase):
                 self.assertEqual(len(w.row.bubbles), 5)
                 w.set_rev(6)
                 self.assertEqual(self.titles(w)[:5], ["Movies", "YouTube", "Brave", "RustDesk", "Calculator"])
-                self.assertEqual(self.titles(w)[-1:], ["Others"])
+                self.assertEqual(self.titles(w)[-1:], ["All apps"])
                 self.shell.root.remove(w.host)
 
     def test_focus_stays_on_the_same_tile_after_a_rebuild(self):
@@ -468,13 +468,23 @@ class AppIconLoadingTests(unittest.TestCase):
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
 class PhaseTwoTests(unittest.TestCase):
-    def test_empty_others_is_hidden_from_home(self):
+    def test_all_apps_is_always_on_home_without_scanning_the_pc(self):
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=FAVS), \
-             mock.patch.object(screens, "others_app_list", return_value=[]):
+             mock.patch.object(screens, "others_app_list", side_effect=AssertionError("scanned on the GTK thread")):
             widget = rows.AppsWidget(shell)
             specs = widget.items()
-        self.assertEqual([spec["key"] for spec in specs], [app["id"] for app in FAVS])
+        self.assertEqual([spec["key"] for spec in specs], [app["id"] for app in FAVS] + ["fixed:apps"])
+        shell.destroy()
+
+    def test_utilities_get_their_own_section_before_the_pc_apps(self):
+        shell = StubShell()
+        screen = screens.AppsScreen(shell)
+        tools = [dict(item("desktop:files", "Files"), utility=True), dict(item("calculator", "Calculator", "screen"), utility=True)]
+        screen.populate(tools + [item("desktop:gimp", "GIMP")])
+        titles = [c.get_text() for c in screen.box.get_children() if hasattr(c, "get_text")]
+        self.assertEqual([[c.app_item["name"] for c in r] for r in screen.rows], [["Files", "Calculator"], ["GIMP"]])
+        self.assertIn("Press Menu on any app to add it to Home or remove it", titles)
         shell.destroy()
 
     def test_first_use_pairing_remains_visible_without_status_line(self):

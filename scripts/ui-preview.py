@@ -161,12 +161,19 @@ def main():
             page.dispose()
             shell.destroy()
 
-            sample_apps = [dict(id="desktop:brave-browser", name="Web Browser", kind="desktop", favorite=False,
-                                icon=None, builtin_kind=None, description="Browse the web with Brave"),
-                           dict(id="desktop:rustdesk", name="Remote Desktop", kind="desktop", favorite=False,
-                                icon=None, builtin_kind=None, description="Connect with RustDesk"),
-                           dict(id="calculator", name="Calculator", kind="screen", favorite=False,
-                                icon=None, builtin_kind="calculator", description="Calculate using your remote")]
+            def sample(app_id, name, description=None, kind="desktop", builtin=None, favorite=False):
+                return dict(id=app_id, name=name, kind=kind, favorite=favorite, icon=None, builtin_kind=builtin,
+                            description=description, utility=bool(description))
+            sample_apps = [sample("desktop:brave-browser", "Web Browser", "Browse the web with Brave"),
+                           sample("desktop:org.gnome.Nautilus", "Files", "Folders, downloads and USB sticks"),
+                           sample("desktop:org.gnome.DiskUtility", "Disks", "Drives, partitions and disk images"),
+                           sample("desktop:org.gnome.SystemMonitor", "System Monitor", "Running apps, CPU and memory"),
+                           sample("desktop:org.gnome.Software", "Software", "Install and update apps"),
+                           sample("desktop:rustdesk", "Remote Desktop", "Reach another computer"),
+                           sample("calculator", "Calculator", "Calculate using your remote", "screen", "calculator"),
+                           sample("desktop:gimp", "GIMP"), sample("desktop:google-chrome", "Google Chrome"),
+                           sample("desktop:libreoffice-writer", "LibreOffice Writer", favorite=True),
+                           sample("desktop:org.videolan.VLC", "VLC media player")]
             for name, cls in (("others", screens.AppsScreen), ("shortcuts", screens.ShortcutsScreen),
                               ("calculator", screens.CalculatorScreen), ("system", screens.SystemScreen)):
                 shell = Shell(height)

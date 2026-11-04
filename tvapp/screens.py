@@ -1094,7 +1094,6 @@ def app_tile(item, w, h, icon=None):
 
 
 APP_ART = (236, 140)        # a card's tile at 1080p
-MAX_FAVORITES = 6
 
 
 class AppCard(chrome.PosterCard):
@@ -1117,7 +1116,7 @@ class AppCard(chrome.PosterCard):
 
 
 class AppsScreen(Screen):
-    """Curated Others screen; ShortcutsScreen reuses it to manage Home pins."""
+    """All apps: the PC's utilities, the TV's own screens and every installed app; ShortcutsScreen reuses it to manage Home pins."""
     header = True
     sname = "apps"
 
@@ -1195,19 +1194,32 @@ class AppsScreen(Screen):
             note.set_margin_top(s.px(60))
             self.box.pack_start(note, False, False, 0)
         else:
-            section("Home shortcuts" if self.sname == "shortcuts" else "Others")
             if self.sname == "shortcuts":
-                hint = text_label("Select a shortcut to add it to or remove it from Home", "section-note")
-                self.box.pack_start(hint, False, False, 0)
+                groups = [("Home shortcuts", "Select a shortcut to add it to or remove it from Home", self.items)]
+            else:
+                hint = "Press Menu on any app to add it to Home or remove it"
+                tools = [i for i in self.items if i.get("utility")]
+                rest = [i for i in self.items if not i.get("utility")]
+                groups = ([("Utilities", hint, tools), ("On this PC", None, rest)] if tools else
+                          [("All apps", hint, rest)])
             n = self.per_row()
-            for k in range(0, len(self.items), n):
-                activate = (lambda item: s.set_app_favorite(item, not item.get("favorite"))) if self.sname == "shortcuts" else s.open_app_item
-                cards = [AppCard(s, i, activate,
-                                 ("On Home · OK to remove" if i.get("favorite") else "OK to add to Home")
-                                 if self.sname == "shortcuts" else None)
-                         for i in self.items[k:k + n]]
-                self.rows.append(cards)
-                row(cards)
+            if self.sname == "shortcuts":
+                activate = lambda item: s.set_app_favorite(item, not item.get("favorite"))
+            else:
+                activate = s.open_app_item
+            for title, hint, items in groups:
+                if not items:
+                    continue
+                section(title)
+                if hint:
+                    self.box.pack_start(text_label(hint, "section-note"), False, False, 0)
+                for k in range(0, len(items), n):
+                    cards = [AppCard(s, i, activate,
+                                     ("On Home · OK to remove" if i.get("favorite") else "OK to add to Home")
+                                     if self.sname == "shortcuts" else ("On Home" if i.get("favorite") else None))
+                             for i in items[k:k + n]]
+                    self.rows.append(cards)
+                    row(cards)
         self.box.show_all()
         cards = self.cards()
         target = next((c for c in cards if keep and c.app_item["id"] == keep["id"]), None)

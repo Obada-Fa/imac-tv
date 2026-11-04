@@ -218,7 +218,7 @@ class ContinueCards(Gtk.Box):
 
 # ---------------------------------------------------------------- the Apps row
 
-FIXED_TILES = (("Others", "apps", "apps"),)
+FIXED_TILES = (("All apps", "apps", "apps"),)
 # Built-in tiles shown while there is no apps module at all, so Home is never an empty row
 FALLBACK = (("Movies", "movies", "screen"), ("Series", "series", "screen"), ("YouTube", "youtube", "app"),
             ("Twitch", "twitch", "screen"))
@@ -229,7 +229,7 @@ def fallback_apps():
 
 
 def apps_row_specs(favorites, others=True):
-    """The Apps row in order: saved favorites followed by Others.
+    """The Apps row in order: saved favorites followed by All apps.
     -> [{"key", "title", "kind", "app"}]; "app" is the apps.py item for a favorite (None for a fixed tile)."""
     out = [{"key": it["id"], "title": it.get("name") or it["id"], "kind": it.get("builtin_kind"), "app": it}
            for it in favorites]
@@ -298,23 +298,26 @@ class AppNode(network.RoundNode):
 
 
 class AppNodeRow(RowBase):
-    """The Apps row in the network style, aligned on one baseline."""
+    """The Apps row in the network style: small glass nodes in an irregular strip. It widens with the tile count so
+    nine tiles keep the spacing seven had."""
 
     def __init__(self, shell, specs, height, seed=1, shape="hexagon"):
         super().__init__(shell, height)
         n = len(specs)
+        width_frac = min(0.8, 0.55 + 0.08 * max(0, n - 7))
         d = 2 * round(56 * shell.scale)
-        lay = [{"cx": shell.px(170 + i * 190), "cy": shell.px(80)} for i in range(n)]
+        lay = network.row_layout([(d, d)] * n, shell.sw, height - shell.px(34), seed=seed, width_frac=width_frac,
+                                 spread=0.1, gap_scale=2.6)
         for i, (spec, p) in enumerate(zip(specs, lay)):
             node = AppNode(shell, d // 2, title=spec["title"], kind=spec.get("kind"), on_activate=spec["on_activate"],
                            seed=seed * 17 + i, shape=shape, app=spec.get("app"))
-            node.amp = 0
             self.add_node(node, round(p["cx"] - node.cx), round(p["cy"] - node.cy))
 
 
 @register
 class AppsWidget(RowWidget):
-    """Home favorites and Others, rebuilt on apps_rev while preserving focus."""
+    """Home's apps row: the favorites (apps.home_apps(), oldest first) in an irregular strip, then All apps.
+    It rebuilds when apps_rev moves, keeping focus on the same tile."""
     id = "apps"
     top, height = 0.70, 0.235
     seed = 11
@@ -334,7 +337,7 @@ class AppsWidget(RowWidget):
     def items(self):
         sh = self.shell
         self.apps = self.favorites()
-        specs = apps_row_specs(self.apps, others=bool(screens.others_app_list()))
+        specs = apps_row_specs(self.apps)
         fixed = {"apps": lambda: sh.push(sh.top_screen("apps")), "search": lambda: sh.goto_top("search"),
                  "settings": lambda: sh.goto_top("settings")}
         out = []
@@ -352,17 +355,8 @@ class AppsWidget(RowWidget):
                       **({"kind": it["kind"]} if it.get("kind") else {"app": it["app"]})} for it in items]
             row = BubbleRow(sh, specs, h, seed=self.seed, base=self.base, spread=self.spread,
                             max_r=sh.px(self.max_r), width_frac=self.width_frac)
-            row.lean_strength = 0
-            for i, node in enumerate(row.bubbles):
-                node.phase = [0.0] * 4
-                node.speed = [0.0] * 3
-                x = sh.px(170 + i * 190) - node.side // 2
-                y = sh.px(80) - node.side // 2
-                row.home[node] = (x, y)
-                row.fixed.move(node, x, y)
         else:
             row = AppNodeRow(sh, items, h, seed=self.seed, shape=self.config.get("node_shape", "hexagon"))
-            row.lean_strength = 0
         for node, it in zip(row.bubbles, items):
             node.menu_item = it["app"]                    # the Menu key's target (fixed tiles have none)
         return row
@@ -382,5 +376,5 @@ class AppsWidget(RowWidget):
 
     def on_enter(self, returning):
         """Back on Home: pick up apps installed or removed meanwhile (cheap: only when the tiles differ)."""
-        if returning and [sp["key"] for sp in apps_row_specs(self.favorites(), others=bool(screens.others_app_list()))] != self.keys:
+        if returning and [sp["key"] for sp in apps_row_specs(self.favorites())] != self.keys:
             self.rebuild()

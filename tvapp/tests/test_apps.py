@@ -87,27 +87,39 @@ class AppsTests(unittest.TestCase):
         self.assertEqual(self.ids(apps.home_apps()), apps.DEFAULT_FAVORITES)
         self.assertEqual(self.ids()[:4], apps.DEFAULT_FAVORITES)
 
-    def test_scoped_catalog_and_saved_pins(self):
+    def test_all_apps_lists_utilities_then_everything_on_the_pc(self):
         self.write("brave-browser", "Brave", exec_="brave-browser")
+        self.write("google-chrome", "Google Chrome")
         self.write("org.rustdesk.RustDesk", "RustDesk")
+        self.write("org.gnome.Nautilus", "Files")
+        self.write("org.gnome.DiskUtility", "Disks")
         self.write("other", "Other")
         (self.data / "home.json").write_text(json.dumps({"favorites": ["desktop:other", "desktop:gone", "movies"]}))
         self.assertEqual(self.ids(apps.home_apps()), ["desktop:other", "movies"])
-        self.assertEqual(self.ids(apps.others_apps()), ["desktop:brave-browser", "desktop:org.rustdesk.RustDesk", "calculator"])
-        self.assertNotIn("desktop:other", self.ids(apps.others_apps()))
+        everything = apps.others_apps()
+        self.assertEqual(self.ids(everything)[:5], ["desktop:brave-browser", "desktop:org.gnome.Nautilus",
+                                                    "desktop:org.gnome.DiskUtility", "desktop:org.rustdesk.RustDesk",
+                                                    "calculator"])
+        self.assertEqual([i["name"] for i in everything[:5]], ["Web Browser", "Files", "Disks", "Remote Desktop", "Calculator"])
+        self.assertTrue(all(i.get("utility") and i.get("description") for i in everything[:5]))
+        rest = self.ids(everything[5:])
+        self.assertIn("desktop:google-chrome", rest)         # a second browser keeps its own name
+        self.assertIn("desktop:other", rest)                 # pinned PC apps stay listed, marked as favorites
+        self.assertTrue(next(i for i in everything if i["id"] == "desktop:other")["favorite"])
+        self.assertNotIn("movies", rest)                     # a TV screen already on Home is not repeated
+        self.assertIn("series", rest)
         candidates = self.ids(apps.shortcut_candidates())
         self.assertEqual(candidates[:2], ["desktop:other", "movies"])
+        self.assertIn("desktop:google-chrome", candidates)   # any app on the PC can be pinned
+        self.assertEqual(len(candidates), len(set(candidates)))
         self.assertEqual(json.loads((self.data / "home.json").read_text())["favorites"], ["desktop:other", "desktop:gone", "movies"])
         self.assertEqual(apps.item("calculator")["kind"], "screen")
-        utilities = apps.others_apps()
-        self.assertEqual([i["name"] for i in utilities], ["Web Browser", "Remote Desktop", "Calculator"])
-        self.assertTrue(all(i.get("description") for i in utilities))
         self.assertEqual(apps.item("desktop:brave-browser")["name"], "Brave")
 
-    def test_scoped_does_not_parse_unrelated_entries(self):
+    def test_home_does_not_parse_unrelated_entries(self):
         self.write("unrelated", "Unrelated")
         with mock.patch.object(apps, "_entry", wraps=apps._entry) as entry:
-            apps.shortcut_candidates()
+            apps.home_apps()
             self.assertFalse(any(c.args[1] == "unrelated" for c in entry.call_args_list))
 
     def test_builtin_apps_only_when_available(self):
@@ -121,15 +133,15 @@ class AppsTests(unittest.TestCase):
             self.write(f"x{n}", f"X{n}")
         self.write("rustdesk", "RustDesk")
         self.write("brave-browser", "Brave")
-        apps.set_favorite("desktop:brave-browser", True)
-        apps.set_favorite("desktop:rustdesk", True)
-        self.assertEqual(len(apps.home_apps()), 6)
+        for app_id in ("desktop:brave-browser", "desktop:rustdesk", "desktop:x1", "desktop:x2"):
+            apps.set_favorite(app_id, True)
+        self.assertEqual(len(apps.home_apps()), apps.MAX_FAVORITES)
         with self.assertRaisesRegex(ValueError, "Home is full: remove a favorite first"):
             apps.set_favorite("desktop:x0", True)
         apps.set_favorite("movies", False)
         result = apps.set_favorite("desktop:x0", True)
-        self.assertEqual(self.ids(result)[5], "desktop:x0")
-        self.assertEqual(len(apps.home_apps()), 6)
+        self.assertEqual(self.ids(result)[apps.MAX_FAVORITES - 1], "desktop:x0")
+        self.assertEqual(len(apps.home_apps()), apps.MAX_FAVORITES)
 
     def test_oldest_first_and_idempotent(self):
         self.write("x", "X")

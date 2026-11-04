@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import browser
 
-MAX_FAVORITES = 6
+MAX_FAVORITES = 8
 SCAN_SECONDS = 60
 DEFAULT_FAVORITES = ["movies", "series", "youtube", "twitch"]
 FULL_ERROR = "Home is full: remove a favorite first"
@@ -259,27 +259,69 @@ def list_apps():
     return items + [dict(i, favorite=False) for i in rest]
 
 
+# The PC's own tools worth having on a TV, in the order All apps shows them: (provider, desktop ids, name,
+# description). The first installed id of a provider gets the friendly name; any others keep their own.
+UTILITIES = [
+    ("brave", ("brave-browser", "brave-browser-stable", "com.brave.browser", "brave"),
+     "Web Browser", "Browse the web with Brave"),
+    ("browser", ("firefox", "firefox_firefox", "org.mozilla.firefox", "google-chrome", "com.google.chrome",
+                 "chromium", "chromium_chromium", "chromium-browser", "org.chromium.chromium", "microsoft-edge"),
+     "Web Browser", "Browse the web"),
+    ("files", ("org.gnome.nautilus", "nautilus", "nemo", "thunar", "org.kde.dolphin", "pcmanfm", "caja"),
+     "Files", "Folders, downloads and USB sticks"),
+    ("disks", ("org.gnome.diskutility", "gnome-disks"), "Disks", "Drives, partitions and disk images"),
+    ("diskusage", ("org.gnome.baobab", "baobab"), "Disk Usage", "See what fills your drives"),
+    ("monitor", ("org.gnome.systemmonitor", "gnome-system-monitor", "gnome-system-monitor-kde", "org.kde.plasma-systemmonitor"),
+     "System Monitor", "Running apps, CPU and memory"),
+    ("terminal", ("org.gnome.terminal", "gnome-terminal", "org.gnome.console", "kitty", "org.kde.konsole"),
+     "Terminal", "The command line"),
+    ("pcsettings", ("org.gnome.settings", "gnome-control-center"), "PC Settings", "The computer's own settings"),
+    ("software", ("org.gnome.software", "gnome-software", "io.elementary.appcenter", "org.kde.discover"),
+     "Software", "Install and update apps"),
+    ("rustdesk", ("rustdesk", "org.rustdesk.rustdesk", "com.anydesk.anydesk", "anydesk"),
+     "Remote Desktop", "Reach another computer"),
+]
+_PROVIDERS = {did: provider for provider, ids, _n, _d in UTILITIES for did in ids}
+_UTILITY_ORDER = {provider: i for i, (provider, *_rest) in enumerate(UTILITIES)}
+
+
 def _provider(did):
-    """Recognize supported utility desktop IDs without parsing unrelated entries."""
+    """The UTILITIES provider of a desktop id ("brave", "files" ...), else None."""
     name = did.lower().removeprefix("desktop:")
-    if name in ("brave", "brave-browser", "brave-browser-stable", "com.brave.browser"):
-        return "brave"
-    if name in ("rustdesk", "org.rustdesk.rustdesk"):
-        return "rustdesk"
-    return None
+    return _PROVIDERS.get(name)
+
+
+def _decorate(catalog):
+    """Friendly names and descriptions for the utilities (first installed id per provider) and the calculator."""
+    named = set()
+    for app_id in sorted(catalog, key=lambda i: (_utility_rank(i), i)):
+        item, provider = catalog[app_id], _provider(app_id)
+        group = "browser" if provider in ("brave", "browser") else provider
+        if provider and group not in named:
+            named.add(group)
+            _p, _ids, name, description = UTILITIES[_UTILITY_ORDER[provider]]
+            item.update(name=name, description=description, utility=True)
+        elif app_id == "calculator":
+            item.update(description="Calculate using your remote", utility=True)
+    return catalog
+
+
+def _utility_rank(app_id):
+    provider = _provider(app_id)
+    if provider is None:
+        return len(UTILITIES) + (0 if app_id == "calculator" else 1)
+    ids = UTILITIES[_UTILITY_ORDER[provider]][1]
+    return _UTILITY_ORDER[provider] + ids.index(app_id.lower().removeprefix("desktop:")) / 100
 
 
 def _scoped_catalog():
-    """Resolve only known shortcuts and saved desktop IDs, without building the full app catalog."""
+    """Resolve only Home's saved desktop ids, without building the full app catalog."""
     have = _builtin_have()
     out = {bid: {"id": bid, "name": name, "kind": kind, "icon": None, "builtin_kind": bid}
            for bid, name, kind in BUILTINS if kind != "app" or have.get(bid)}
     wanted = {i for i in _stored_favorites() if i.startswith("desktop:")}
-    candidates = wanted | {"desktop:" + name for name in (
-        "brave", "brave-browser", "brave-browser-stable", "com.brave.Browser",
-        "rustdesk", "org.rustdesk.RustDesk")}
     # Standard XDG/Flatpak exports put these entries directly in applications/.
-    for app_id in sorted(candidates):
+    for app_id in sorted(wanted):
         did = app_id[len("desktop:"):]
         if not did or "/" in did or "\\" in did or did in (".", ".."):
             continue
@@ -289,7 +331,7 @@ def _scoped_catalog():
                 out[app_id] = {"id": app_id, "name": entry["name"], "kind": "desktop",
                                "icon": "/api/apps/icon?id=" + quote(app_id, safe=""), "builtin_kind": None}
                 break
-    # Desktop IDs can encode subdirectories; use the legacy scanner only for
+    # Desktop IDs can encode subdirectories; use the full scanner only for
     # saved IDs not resolved above, preserving existing pins in that case.
     missing = wanted - out.keys()
     if missing:
@@ -297,15 +339,7 @@ def _scoped_catalog():
             if app_id in missing:
                 out[app_id] = {"id": app_id, "name": entry["name"], "kind": "desktop",
                                "icon": "/api/apps/icon?id=" + quote(app_id, safe=""), "builtin_kind": None}
-    for app_id, item in out.items():
-        provider = _provider(app_id)
-        if provider == "brave":
-            item.update(name="Web Browser", description="Browse the web with Brave")
-        elif provider == "rustdesk":
-            item.update(name="Remote Desktop", description="Connect with RustDesk")
-        elif app_id == "calculator":
-            item.update(description="Calculate using your remote")
-    return out
+    return _decorate(out)
 
 
 def home_apps():
@@ -313,27 +347,35 @@ def home_apps():
     return [dict(catalog[f], favorite=True) for f in _favorite_ids(catalog)]
 
 
+def _ordered(catalog, favs):
+    """Utilities (browser, files, disks ... calculator) first, then every other app by name."""
+    def key(i):
+        if catalog[i].get("utility"):
+            rank = _utility_rank(i)
+        else:
+            rank = len(UTILITIES) + (1.5 if catalog[i]["kind"] != "desktop" else 2)
+        return (rank, catalog[i]["name"].casefold(), i)
+    return [dict(catalog[i], favorite=i in favs) for i in sorted(catalog, key=key)]
+
+
 def shortcut_candidates():
-    """Entertainment, supported utilities and saved pins, in stable order."""
-    catalog = _scoped_catalog()
+    """What can be pinned to Home: the pins, the entertainment tiles, then everything else on the PC."""
+    catalog = _decorate(_catalog())
     favs = _favorite_ids(catalog)
     ids = list(favs)
     for app_id in DEFAULT_FAVORITES:
         if app_id in catalog and app_id not in ids:
             ids.append(app_id)
-    for provider in ("brave", "rustdesk"):
-        matches = [i for i in sorted(catalog) if _provider(i) == provider]
-        if matches and not any(_provider(i) == provider for i in ids):
-            ids.append(matches[0])
-    if "calculator" not in ids:
-        ids.append("calculator")
-    return [dict(catalog[i], favorite=i in favs) for i in ids]
+    rest = [i for i in _ordered(catalog, favs) if i["id"] not in ids and i["kind"] != "screen" or
+            i["id"] == "calculator" and "calculator" not in ids]
+    return [dict(catalog[i], favorite=i in favs) for i in ids] + rest
 
 
 def others_apps():
-    """Supported utilities not already pinned on Home."""
-    return [i for i in shortcut_candidates() if not i["favorite"] and
-            (i["id"] == "calculator" or _provider(i["id"]))]
+    """All apps: the utilities first, then the TV's own screens not on Home, then every app installed on the PC."""
+    catalog = _decorate(_catalog())
+    favs = _favorite_ids(catalog)
+    return [i for i in _ordered(catalog, favs) if i["kind"] == "desktop" or i.get("utility") or not i["favorite"]]
 
 
 def lookup(app_id):

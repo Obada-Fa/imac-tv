@@ -752,7 +752,7 @@
 
   function openSheet(name) {
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'Others', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
@@ -1972,7 +1972,7 @@
     send('play_twitch', {login, title: title || ''}).catch(() => {});
   }
 
-  // ---- Curated shortcuts: Others launches utilities; Settings pins shortcuts to TV Home. ----
+  // ---- All apps launches the PC's apps and pins them to TV Home; Settings lists the Home shortcuts. ----
   let othersData = [], shortcutsData = [], appsMax = 6, appsRev = null;
   let othersLoaded = false, shortcutsLoaded = false, othersToken = 0, shortcutsToken = 0, pinBusy = false, shortcutsError = '';
   async function scopedApps(scope) {
@@ -2021,9 +2021,9 @@
   }
   function renderOthersSheet() {
     const content = $('sheet-content');
-    content.innerHTML = `<div class="tsheet appsheet"><h2>Others</h2><p class="meta">Useful tools for your TV.</p><div id="others-list" class="glass rows"></div><p id="others-empty" class="muted" hidden></p></div>`;
+    content.innerHTML = `<div class="tsheet appsheet"><h2>All apps</h2><p class="meta">Everything on the TV's computer. Star an app to put it on Home.</p><div id="others-list" class="glass rows"></div><p id="others-empty" class="muted" hidden></p></div>`;
     if (othersLoaded) drawOthers();
-    else { $('others-empty').hidden = false; $('others-empty').textContent = 'Loading utilities…'; }
+    else { $('others-empty').hidden = false; $('others-empty').textContent = 'Loading apps…'; }
     loadOthers();
   }
   function utilityRow(a) {
@@ -2038,7 +2038,20 @@
       message('Opening ' + a.name + ' on the TV…');
       send('app_open', {id: a.id}).then(() => { closeSheet(); showTab('remote'); }).catch(() => {});
     };
-    row.append(main);
+    const pin = document.createElement('button');
+    pin.type = 'button'; pin.className = 'star';
+    pin.disabled = !online || pinBusy || (!a.favorite && othersData.filter(item => item.favorite).length >= appsMax);
+    pin.setAttribute('role', 'switch'); pin.setAttribute('aria-checked', String(Boolean(a.favorite)));
+    pin.setAttribute('aria-label', a.favorite ? `Remove ${a.name} from Home` : `Add ${a.name} to Home`);
+    pin.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.5 5.2 5.6.8-4.1 4 1 5.6-5-2.7-5 2.7 1-5.6-4.1-4 5.6-.8z"/></svg>';
+    pin.classList.toggle('on', Boolean(a.favorite));
+    pin.onclick = async () => {
+      if (pinBusy) return;
+      pinBusy = true; drawOthers();
+      try { await send('app_favorite', {id: a.id, favorite: !a.favorite}); await refreshShortcutScopes(); }
+      catch (e) {} finally { pinBusy = false; drawOthers(); }
+    };
+    row.append(main, pin);
     return row;
   }
   function drawOthers() {
@@ -2046,7 +2059,7 @@
     const list = $('others-list'), empty = $('others-empty');
     list.replaceChildren(...othersData.map(utilityRow));
     empty.hidden = Boolean(othersData.length);
-    if (!othersData.length) empty.textContent = othersLoaded ? 'No other utilities are available.' : 'Loading utilities…';
+    if (!othersData.length) empty.textContent = othersLoaded ? 'No apps found.' : 'Loading apps…';
   }
   async function refreshShortcutScopes() {
     // app_favorite returns the legacy full catalog. Ignore it and reload only
