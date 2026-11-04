@@ -2,6 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const remote = $('remote'), pair = $('pair'), sheet = $('sheet'), browser = $('browser'), tabbar = $('tabbar');
+  const keyboard = new TVKeyboard(send);
   let state = null, online = false, mode = 'dpad', sheetName = '', draggingSeek = false;
   let draggingBrightness = false, brightnessReason = '', updatePending = false;
   const phoneMedia = new TVMediaControls({button: $('phone-media'), send, message,
@@ -271,7 +272,7 @@
   function connected(value, label) {
     const was = online;
     online = value;
-    if (!value) phoneMedia.disconnect();
+    if (!value) { keyboard.observe(null, null, false); phoneMedia.disconnect(); }
     if (was !== value && setState) renderConnections();
     $('connection').title = label; $('connection').setAttribute('aria-label', label);
     $('connection').classList.toggle('off', !value);
@@ -372,7 +373,7 @@
       phoneAudio.mic_muted ? 'Phone mic muted · Tap to unmute' : 'Phone mic on · Tap to mute';
     const preferred = bigpad ? 'pointer' : 'dpad';
     const remembered = sessionStorage.getItem('mode-' + (discord ? 'discord' : s.app));
-    if (mode !== (remembered || preferred) && !sheetName && !searching) setMode(remembered || preferred);
+    if (mode !== (remembered || preferred) && !sheetName && !keyboard.session) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
     if (tab === 'settings' && setState) {
       for (const [key, , , , , network] of setState.fields || []) {
@@ -401,7 +402,7 @@
     return [lang, detail].filter(Boolean).join(' · ') || `Track ${t.id}`;
   };
   const isPreferred = t => PREFERRED.includes(LANG[String(t.lang || '').toLowerCase()]);
-  let sigs = {}, subDelay = 0, delayTouched = 0, delayWanted = null, delaySending = false, searching = false, sent = '', typeTimer = null;
+  let sigs = {}, subDelay = 0, delayTouched = 0, delayWanted = null, delaySending = false;
 
   function chip(label, on, fn) {
     const b = document.createElement('button');
@@ -528,7 +529,7 @@
     const c = $('controls');
     if (c.dataset.view !== view) {
       c.dataset.view = view;
-      if (view !== 'browse') { closeSearch(); showTab('remote'); }
+      if (view !== 'browse') { keyboard.close(); showTab('remote'); }
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
     $('remote').classList.toggle('media-first', view !== 'browse');
@@ -602,51 +603,58 @@
       showDelay();
       if (sheetName === 'subs' || sheetName === 'audio') renderTrackSheet();
     }
-    $('search-open').classList.toggle('on', searching);
+    syncKeyboard(s);
+    $('search-open').classList.toggle('on', Boolean(keyboard.session));
     const yt = s.app === 'youtube', label = yt ? 'Search YouTube' : 'Type on TV';
     const sr = $('search-open').querySelector('.sr');
     if (sr) sr.textContent = label;
     $('search-open').setAttribute('aria-label', label);
-    $('search-input').placeholder = yt ? 'Type to search YouTube on the TV' : 'Type to search on the TV';
   }
 
-  function closeSearch() {
-    searching = false; sent = ''; clearTimeout(typeTimer);
-    $('search-box').hidden = true; $('search-input').value = '';
+  function syncKeyboard(s) {
+    const focus = s.text_focus || null;
+    // Catalog search has its own text field and results. Release its IME if the TV leaves search.
+    if (tab === 'search' && catalogKeyboard) {
+      if (focus && s.app === catalogKeyboard.app && !catalogKeyboard.focus &&
+          (s.app !== 'home' || focus.startsWith('search:'))) catalogKeyboard.focus = focus;
+      if ((catalogKeyboard.focus && catalogKeyboard.focus !== focus) ||
+          (!catalogKeyboard.focus && Date.now() > catalogKeyboard.deadline)) $('find-input').blur();
+    }
+    const localField = document.activeElement;
+    const localTyping = localField !== keyboard.input && localField?.matches('input:not([type=range]),textarea');
+    keyboard.observe(s.app, focus, online && $('controls').dataset.view === 'browse' && tab === 'remote' &&
+      !sheetName && !document.hidden && !localTyping);
   }
-  // Send only what changed: appended text is typed, removed text becomes backspaces.
-  async function flushTyping() {
-    clearTimeout(typeTimer);
-    const value = $('search-input').value;
-    let common = 0;
-    while (common < sent.length && common < value.length && sent[common] === value[common]) common++;
-    const del = sent.length - common, add = value.slice(common);
-    sent = value;
+  // The full TV state is relatively expensive. While typing, check just focus between state polls.
+  let focusReadAt = 0, checkingFocus = false;
+  async function checkTypingFocus() {
+    if (checkingFocus || !keyboard.session || document.hidden || !online) return;
+    checkingFocus = true;
+    const at = performance.now(), session = keyboard.session;
     try {
-      for (let i = 0; i < del; i++) await send('delete');
-      if (add) await send('type', {text: add});
-    } catch (e) { /* toast already shown */ }
+      const s = await api('/api/text-focus');
+      if (at < focusReadAt || session !== keyboard.session || s.app !== state?.app) return;
+      focusReadAt = at;
+      state.text_focus = s.text_focus;
+      syncKeyboard(s);
+    } catch { /* the regular state poll handles disconnects */ }
+    finally { checkingFocus = false; }
   }
-  async function openSearch() {
-    
-    searching = true;
-    $('search-box').hidden = false; $('search-input').value = ''; sent = '';
-    $('search-input').focus();  // inside the tap so the native keyboard opens
-    try { await send('open_search'); } catch (e) { return; }
-    $('search-input').focus();
+  setInterval(checkTypingFocus, 450);
+
+  $('search-open').onclick = async () => {
+    const target = state?.app === 'youtube' ? 'youtube' : 'home';
+    // Focus during the tap (required on iOS). Hold early edits until the TV confirms its field.
+    const session = keyboard.open(target, null, true);
+    try {
+      await send('open_search');
+      session.ready = true;
+      checkTypingFocus();
+    } catch { if (keyboard.session === session) keyboard.close(); }
+  };
+  function manualKeyboard() {
+    if (state && online) keyboard.open(state.app, state.text_focus || null);
   }
-  $('search-open').onclick = openSearch;
-  $('search-input').addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = setTimeout(flushTyping, 400); });
-  $('search-box').onsubmit = async e => {
-    e.preventDefault(); await flushTyping(); fire('enter');
-    // Drop the keyboard so the D-pad is reachable again.
-    $('search-input').value = ''; sent = ''; $('search-input').blur();
-  };
-  $('search-del').onclick = async () => {
-    const i = $('search-input');
-    if (i.value) { i.value = i.value.slice(0, -1); await flushTyping(); } else fire('delete');
-    i.focus();
-  };
   document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => {
     const p = state && state.playback; if (!p || !p.active) return;
     fire('seek', {seconds: Math.max(0, Math.min(p.duration || 86400, (p.position || 0) + Number(b.dataset.skip)))});
@@ -720,11 +728,19 @@
     showDelay();
   }
 
+  let refreshId = 0, renderedId = 0;
   async function refresh() {
+    const id = ++refreshId, started = performance.now();
     try {
       const s = await api('/api/state');
+      if (id < renderedId) return;
+      renderedId = id;
+      if (started < focusReadAt && state?.app === s.app) s.text_focus = state.text_focus;
+      else focusReadAt = started;
       render(s);
     } catch (err) {
+      if (id < renderedId) return;
+      renderedId = id;
       if (err.message.includes('Pair')) { showPair(); return; }
       if (!pair.hidden) return;
       connected(false, '● Reconnecting');
@@ -758,9 +774,10 @@
   }
 
   function openSheet(name) {
+    keyboard.close();
     sheetName = name; sheet.hidden = false; updateTabbar();
     $('activity-slot').hidden = name !== 'activity';
-    $('sheet-title').textContent = {activity: 'TV activity', type: 'Type on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {activity: 'TV activity', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'activity') { content.replaceChildren(); return; }
@@ -768,16 +785,7 @@
     if (name === 'others') { renderOthersSheet(); return; }
     if (name === 'web') { renderWebSheet(); return; }
     if (name === 'output') { renderOutputSheet(); return; }
-    if (name === 'type') {
-      content.innerHTML = `<p>Send text to the selected TV app. Select its search box first.</p><form id="text-form"><input type="text" id="text-input" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type with your Android keyboard"><div class="sheet-row"><button type="submit">Send text</button><button type="button" data-action="enter">Enter</button><button type="button" data-action="delete">⌫ Delete</button></div></form><div class="feedback" id="sheet-feedback"></div>`;
-      $('text-form').onsubmit = e => {
-        e.preventDefault(); const value = $('text-input').value;
-        if (!value) return;
-        send('type', {text: value}).then(() => {$('sheet-feedback').textContent = 'Text sent'; $('text-input').value = '';})
-          .catch(err => {$('sheet-feedback').textContent = err.message;});
-      };
-      $('text-input').focus();
-    } else if (name === 'torbox') {
+    if (name === 'torbox') {
       renderTorbox(content);
     } else if (name === 'off') {
       content.innerHTML = `<p>Full shutdown keeps the iMac cool. To start it again, press the physical power button.</p><div class="sheet-row"><button id="off-confirm" class="danger">Turn off iMac</button><button id="off-cancel">Cancel</button></div>`;
@@ -947,7 +955,7 @@
   document.addEventListener('pointerup', () => draggingBrightness = false);
   document.addEventListener('pointercancel', () => draggingBrightness = false);
 
-  $('type-open').onclick = () => openSheet('type');
+  $('type-open').onclick = manualKeyboard;
   $('more-open').onclick = () => openSheet('more');
   $('np-more-open').onclick = () => openSheet('more');
   // A plain toggle: the server reads the live X state, so a press always flips
@@ -1002,7 +1010,7 @@
     document.querySelectorAll('.pressed').forEach(b => b.classList.remove('pressed'));
   }
   window.addEventListener('blur', releaseAll);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { releaseAll(); keyboard.close(); } });
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-action]');
     if (b && !b.disabled && e.detail === 0) {
@@ -1024,13 +1032,6 @@
     const front = webFront(s);
     $('web-tab-count').textContent = webTabs(s).length || '–';
     webUrl.placeholder = (front && front.title) || 'Search or type a website';
-    const typing = Boolean(s.browser && s.browser.typing);
-    const typed = $('web-typing');
-    $('remote').classList.toggle('web-typing-on', typing);
-    if (typed.hidden === typing) {
-      typed.hidden = !typing;
-      if (typing) { haptic('press'); try { $('web-text').focus(); } catch (x) {} }   // phones may still want a tap
-    }
     if (sheetName === 'web') renderWebSheet();
   }
   // Sites this phone opened from the address bar, offered while the bar is in use
@@ -1088,25 +1089,13 @@
   }
   document.querySelectorAll('[data-web]').forEach(b => b.onclick = () => webDo(b.dataset.web));
   $('web-tabs').onclick = () => openSheet('web');
-  $('web-type').onclick = () => openSheet('type');
+  $('web-type').onclick = manualKeyboard;
   webUrl.onfocus = () => {     // like a phone browser: the current address, ready to be typed over
     const front = webFront(state);
     if (front && !webUrl.value) { webUrl.value = front.url; webUrl.select(); }
     drawRecent();
   };
   webUrl.onblur = () => { webUrl.value = ''; $('web-recent').hidden = true; };
-  $('web-typing').onsubmit = e => {
-    e.preventDefault();
-    const box = $('web-text'), text = box.value;
-    if (text) send('type', {text}).then(() => { box.value = ''; }).catch(() => {});
-    else fire('enter');
-  };
-  $('web-enter').addEventListener('pointerdown', e => e.preventDefault());
-  $('web-enter').onclick = () => {
-    const box = $('web-text'), text = box.value;
-    box.value = '';
-    (text ? send('type', {text}) : Promise.resolve()).then(() => send('enter')).catch(() => {});
-  };
   $('web-form').onsubmit = e => {
     e.preventDefault();
     const text = webUrl.value.trim();
@@ -1247,7 +1236,7 @@
   }
 
   // ---- Tabs: Remote / Movies / Series / Search ----
-  let tab = 'remote', titleToken = 0, findFocused = false;
+  let tab = 'remote', titleToken = 0, findFocused = false, catalogKeyboard = null;
   try { const t = sessionStorage.getItem('tab'); if (['remote', 'movie', 'series', 'search', 'settings'].includes(t)) tab = t; } catch (e) {}
   const loaded = {movie: false, series: false}, items = {movie: [], series: []}, busy = {};
   let continueItems = null;
@@ -1272,6 +1261,7 @@
   }
   function showTab(name) {
     if (name === tab) { applyTab(); return; }
+    keyboard.close();
     tab = name;
     if ((name === 'movie' || name === 'series') && online && loaded[name]) refreshContinue();
     try { sessionStorage.setItem('tab', name); } catch (e) {}
@@ -1284,8 +1274,9 @@
     const changed = b.dataset.tab !== tab;
     showTab(b.dataset.tab);
     if (b.dataset.tab === 'search') {
+      catalogKeyboard = {app:state?.app === 'youtube' ? 'youtube' : 'home', deadline:Date.now()+5000};
       $('find-input').focus();   // the tap opens the phone keyboard; polling never steals focus
-      fire('open_search');
+      send('open_search').catch(() => $('find-input').blur());
     }
     if (changed && tvScreen[b.dataset.tab]) {
       try { Promise.resolve(send('show', {screen: tvScreen[b.dataset.tab]})).catch(() => {}); } catch (e) {}
@@ -1906,7 +1897,7 @@
   const fi = $('find-input');
   let findTimer = null, findSeq = 0;
   fi.addEventListener('focus', () => { findFocused = true; updateTabbar(); });
-  fi.addEventListener('blur', () => { findFocused = false; updateTabbar(); });
+  fi.addEventListener('blur', () => { catalogKeyboard = null; findFocused = false; updateTabbar(); });
   async function runFind() {
     clearTimeout(findTimer);
     const q = fi.value.trim(), seq = ++findSeq;

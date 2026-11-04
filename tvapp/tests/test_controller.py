@@ -75,6 +75,23 @@ class ControllerTests(unittest.TestCase):
             c.action("type", {"text": "a.b+é@example.com"})
         self.assertEqual(run.call_args.args[0][-1], "a.b+é@example.com")
 
+    def test_live_keyboard_applies_only_to_its_original_target(self):
+        c = server.Controller.__new__(server.Controller)
+        c.app, c.phase = "home", "ready"
+        edit = {"app": "home", "focus": "search:1", "key": "a", "mods": ["ctrl"]}
+        with mock.patch.object(server, "window_for", return_value={"id": "0x123"}), \
+                mock.patch.object(c, "text_focus", return_value="search:1"), \
+                mock.patch.object(server, "active_window_id", return_value=0x123) as active, \
+                mock.patch.object(server, "command") as run:
+            self.assertFalse(c.keyboard_input({**edit, "focus": "search:old"})["applied"])
+            self.assertFalse(c.keyboard_input({**edit, "app": "youtube"})["applied"])
+            active.return_value = 0x456
+            self.assertFalse(c.keyboard_input(edit)["applied"])
+            run.assert_not_called()
+            active.return_value = 0x123
+            self.assertTrue(c.keyboard_input(edit)["applied"])
+            run.assert_called_once_with(["xdotool", "key", "--clearmodifiers", "ctrl+a"])
+
     def test_unsupported_seek_reports_error(self):
         with mock.patch.object(server.threading, "Thread"):
             c = server.Controller()

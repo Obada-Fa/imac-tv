@@ -44,7 +44,7 @@ the generic legacy dialog CSS is not evidence of the current design.
   - **Touchpad & Mouse Mode**: Fluid pointer trackpad with click, right-click, and two-finger scroll.
   - **State-aware**: the remote switches between browsing (D-pad, Search), buffering (source, peers, speed, Cancel) and a **Now Playing** card (scrub bar, play/pause, ±10/±60 s, subtitle and audio pickers, subtitle delay, Stop).
   - **Phone media controls**: opt in from the Remote tab to show TV playback in the phone's notification shade and lock screen on supported browsers, with play/pause, seeking and available track/episode controls. Keep the remote tab open; volume stays in the page. See [phone media controls](tvapp/README.md#phone-notification-and-lock-screen-controls).
-  - **Search & typing**: tap Search, then use your phone's native keyboard; text is sent to the TV as you type.
+  - **Search & typing** follows the focused TV field. Tap Search to type directly on the TV with your phone keyboard. Leaving the field dismisses the keyboard. Tap Keyboard for Nexus Link shortcuts, including Win, Ctrl, Alt and arrow keys.
   - **System Controls**: Hardware volume, mute, display brightness, screen blanking, sleep timer, and clean power-off.
   - **Security & Pairing**: Pair once using the on-screen 6-digit code or QR code; secure device cookie migration.
 

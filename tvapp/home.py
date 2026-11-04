@@ -16,6 +16,7 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from text_focus import TextFocus
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
@@ -214,6 +215,7 @@ class Home(Gtk.Window):
         self.show_all()
         self.buffering.hide()
         self.push(self.top_screen("home"))
+        self.text_focus = TextFocus(self, DATA / "text_focus.json")
         GLib.timeout_add(500, self.tick)
         self.watch_ui_requests()
         if TRACE:
@@ -743,7 +745,7 @@ class Home(Gtk.Window):
         if hasattr(screen, "handle_key") and screen.handle_key(key):
             return True
         if key in BACK_KEYS:
-            if key == "BackSpace" and in_entry and focus.get_text():
+            if key == "BackSpace" and in_entry:
                 return False
             self.go_back()
             return True
@@ -1077,6 +1079,7 @@ class Home(Gtk.Window):
 
     def tick(self):
         self.tick_n += 1
+        self.text_focus.update()
         if self.tick_n % 2 == 0:
             self.sync_home_settings()
         self.check_ui_request()

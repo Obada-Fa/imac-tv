@@ -23,9 +23,20 @@ SHORTCUTS = {"back": "alt+Left", "forward": "alt+Right", "reload": "ctrl+r", "zo
              "zoom_out": "ctrl+minus", "zoom_reset": "ctrl+0"}
 PAGES = {"shields": "brave://settings/shields", "settings": "brave://settings", "bookmarks": "brave://bookmarks",
          "history": "brave://history", "downloads": "brave://downloads"}
-FIELD_CHECK = ("(()=>{let e=document.activeElement;while(e&&e.shadowRoot&&e.shadowRoot.activeElement)e=e.shadowRoot.activeElement;"
-               "if(!e)return false;if(e.isContentEditable||e.tagName==='TEXTAREA')return true;"
-               "return e.tagName==='INPUT'&&!/^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/i.test(e.type)})()")
+FIELD_CHECK = """(() => {
+  let e = document.activeElement;
+  while (e && e.shadowRoot && e.shadowRoot.activeElement) e = e.shadowRoot.activeElement;
+  if (!document.hasFocus() || !e || e.disabled || e.readOnly) return null;
+  if (!(e.isContentEditable || e.tagName === 'TEXTAREA' ||
+        (e.tagName === 'INPUT' && /^(text|search|url|email|tel|password|number)$/.test(e.type)))) return null;
+  if (!window.__nexusField) {
+    window.__nexusField = {element: null, serial: 0};
+    document.addEventListener('focusout', () => { window.__nexusField.element = null; }, true);
+  }
+  const state = window.__nexusField;
+  if (state.element !== e) { state.element = e; state.serial++; }
+  return performance.timeOrigin + '-' + state.serial;
+})()"""
 _DOMAIN = re.compile(r"^(localhost|[\w-]+(\.[\w-]+)+)(:\d+)?([/?#]\S*)?$")
 _TAB_ID = re.compile(r"^[0-9A-Fa-f-]{8,64}$")
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -99,8 +110,8 @@ def view(window_title, timeout=0.4):
         return None
     title = re.sub(r" - Brave$", "", window_title or "")
     front = next((p for p in pages if p["title"] == title), pages[0] if pages else None)
-    return {"tabs": [{**p, "active": p is front} for p in pages],
-            "typing": bool(front) and field_focused(front["id"], timeout)}
+    focus = field_focused(front["id"], timeout) if front else None
+    return {"tabs": [{**p, "active": p is front} for p in pages], "typing": bool(focus), "focus": focus}
 
 
 def _page_command(tab_id, method, params, timeout=2, port=None):
@@ -140,13 +151,14 @@ def navigate(tab_id, url):
     _page_command(tab_id, "Page.navigate", {"url": url})
 
 
-def field_focused(tab_id, timeout=0.4):
-    """Whether a text field on the page has the focus, so the phone can offer its keyboard."""
+def field_focused(tab_id, timeout=0.4, port=None):
+    """An opaque token for this editable focus, or None when the page is not typing."""
     try:
-        reply = _page_command(tab_id, "Runtime.evaluate", {"expression": FIELD_CHECK, "returnByValue": True}, timeout)
+        reply = _page_command(tab_id, "Runtime.evaluate", {"expression": FIELD_CHECK, "returnByValue": True}, timeout, port)
     except (OSError, ValueError):
-        return False
-    return (reply.get("result") or {}).get("value") is True
+        return None
+    token = (reply.get("result") or {}).get("value")
+    return tab_id + ":" + token if isinstance(token, str) else None
 
 
 def _ws_read(data, sock):

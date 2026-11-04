@@ -1498,6 +1498,7 @@ class SearchScreen(Screen):
         page.set_margin_start(px(68))
         page.set_margin_end(px(68))
         self.entry = Gtk.Entry()
+        self.entry.set_name("nexus-search-field")
         self.entry.set_placeholder_text("Search " + SEARCH_SCOPE_LABEL[None])
         self.entry.get_style_context().add_class("search-entry")
         self.entry.set_size_request(-1, px(76))

@@ -1795,6 +1795,58 @@ class Controller:
         mode = data.get("mode") if active and isinstance(data.get("mode"), str) else None
         return {"active": active, "mode": mode}
 
+    def text_focus(self, app, win, web=None):
+        if not win or self.phase != "ready":
+            return None
+        if apps.is_tv_browser(app):
+            if web is None:
+                web = browser.view(win.get("title"))
+            return (web or {}).get("focus")
+        if app == "youtube":
+            page = youtube_volume.youtube_page()
+            return browser.field_focused(page["id"], port=youtube_volume.PORT) if page else None
+        path = DATA / "text_focus.json"
+        try:
+            if time.time() - path.stat().st_mtime > 8:
+                return None
+            info = self._read_json(path, {})
+            if (isinstance(info, dict) and isinstance(info.get("token"), str) and
+                    str(info.get("pid")) == win.get("pid") and int(win["id"], 16) == active_window_id()):
+                return info["token"]
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        return None
+
+    def keyboard_input(self, params):
+        """Apply one IME edit or key chord in order, while its original target still has focus."""
+        win = window_for(self.app)
+        if params.get("app") != self.app or self.phase != "ready" or not win:
+            return {"applied": False}
+        focus = params.get("focus")
+        if focus is not None and focus != self.text_focus(self.app, win):
+            return {"applied": False}
+        if int(win["id"], 16) != active_window_id():
+            return {"applied": False}
+        key, mods = params.get("key"), params.get("mods", [])
+        text, erase = params.get("text", ""), params.get("erase", 0)
+        if (not isinstance(text, str) or len(text) > 1000 or type(erase) is not int or not 0 <= erase <= 500
+                or not isinstance(mods, list) or len(mods) > 4 or
+                any(m not in ("ctrl", "alt", "shift", "super") for m in mods)):
+            raise ValueError("Invalid keyboard edit")
+        if key is not None:
+            if (not isinstance(key, str) or text or erase or not re.fullmatch(
+                    r"[a-zA-Z0-9]|F(?:[1-9]|1[0-2])|Left|Right|Up|Down|Home|End|Prior|Next|Delete|BackSpace|"
+                    r"Return|Escape|Tab|Super_L|space|minus|equal|bracketleft|bracketright|backslash|"
+                    r"semicolon|apostrophe|comma|period|slash|grave", key)):
+                raise ValueError("Unknown keyboard key")
+            command(["xdotool", "key", "--clearmodifiers", "+".join([*mods, key])])
+        else:
+            if erase:
+                command(["xdotool", "key", "--clearmodifiers", "--delay", "1", "--repeat", str(erase), "BackSpace"])
+            if text:
+                command(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text], timeout=10)
+        return {"applied": True}
+
     def status(self):
         with self.lock:
             app, phase, error = self.app, self.phase, self.error
@@ -1817,9 +1869,11 @@ class Controller:
             current_media["next"] = nxt
         app_name = (apps.lookup(app) or {}).get("name") if app.startswith("desktop:") else None
         tv_browser = apps.is_tv_browser(app)
-        return {"app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
+        web = self._browser_view(win) if tv_browser and phase == "ready" else None
+        return {"text_focus": self.text_focus(app, win, web or {}) if not player["active"] else None,
+                "app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "apps_rev": apps.apps_rev(), **({"app_name": app_name} if app_name else {}),
-                "tv_browser": tv_browser, **({"browser": self._browser_view(win)} if tv_browser and phase == "ready" else {}),
+                "tv_browser": tv_browser, **({"browser": web} if tv_browser and phase == "ready" else {}),
                 "playback_suggestion": self._health_view(),
                 "gui": gui, "volume": percent, "muted": muted,
                 "audio_warning": self.audio_warning,
@@ -2191,6 +2245,8 @@ class Controller:
                                            "choice": "switch" if action == "ok" else "dismiss"})
             if action in ("left", "right", "up", "down") and self.health_suggestion:
                 return {"ok": True, "ignored": True}  # the prompt's OK / Back choices take priority over seeking
+            if action == "keyboard_input":
+                return self.keyboard_input(params)
             if action == "open_search":
                 if self.app == "youtube":
                     # Stay on YouTube: focus VacuumTube and press the YouTube TV search shortcut.
@@ -2567,7 +2623,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Set-Cookie", f"imactv={token}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict")
                 self.end_headers()
                 return
-        if parsed.path == "/" or parsed.path in ("/app.css", "/app.js", "/media-session.js"):
+        if parsed.path == "/" or parsed.path in ("/app.css", "/app.js", "/keyboard.js", "/media-session.js"):
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
             path = WEB / name
             payload = path.read_bytes()
@@ -2637,6 +2693,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._note_presence()
             self.respond(200, CONTROL.status())
+            return
+        if parsed.path == "/api/text-focus":
+            if not self.authorised(parsed.query):
+                self.respond(401, {"error": "Pair this phone using the code on the TV"})
+                return
+            app = CONTROL.app
+            self.respond(200, {"app": app, "text_focus": CONTROL.text_focus(app, window_for(app))})
             return
         if parsed.path == "/api/settings":
             if not self.authorised(parsed.query):
