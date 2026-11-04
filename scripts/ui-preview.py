@@ -141,8 +141,9 @@ def main():
             page.canvas.show_surface(bg, blur, animate=False)
             page.canvas.extra = None
             clock = next(w for w in page.items if w.id == "clock")
-            clock.time_lbl.set_text("20:30")
-            clock.date_lbl.set_text("Tuesday 27 October")
+            clock.face.tick = lambda: None                   # a fixed time, for screenshots that don't change
+            clock.face.stop()
+            clock.face.now = datetime.datetime(2026, 10, 27, 20, 30, 42)
             capture(shell, "home-network", page.first_focus([]))
             shell.remote = {"connected": False, "count": 0}
             next(w for w in page.items if w.id == "pairing").render()

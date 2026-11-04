@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""iMac TV controller. The HTTP process deliberately never opens X11."""
+"""Nexus TV controller. The HTTP process deliberately never opens X11."""
 import hashlib
 import hmac
 import concurrent.futures
@@ -129,13 +129,13 @@ def windows():
 
 def window_for(app):
     if app == "home":
-        return next((w for w in windows() if w["title"] == "iMac TV"), None)
+        return next((w for w in windows() if w["title"] == "Nexus TV"), None)
     if app == "youtube":
         return next((w for w in windows() if any(k in w["class"] or k in w["title"].lower() for k in ("vacuumtube", "rocks.shy.vacuumtube", "youtube"))), None)
     if app == "discord":
         return next((w for w in windows() if "discord" in w["class"].lower() or "discord" in w["title"].lower()), None)
     if app.startswith("desktop:"):
-        return next((w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "iMac TV"), None)
+        return next((w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "Nexus TV"), None)
     if app == "player":
         return next((w for w in windows() if w["class"].startswith("mpv") or "mpv" in w["class"].split(".")), None)
     return None
@@ -1890,7 +1890,7 @@ class Controller:
     def _close_desktop(self, app):
         """Close a desktop app: a polite window close first, then SIGTERM and SIGKILL for the window's own process."""
         for sig, wait in ((None, 3.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 1.0)):
-            wins = [w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "iMac TV"]
+            wins = [w for w in windows() if apps.matches_window(app, w["class"]) and w["title"] != "Nexus TV"]
             if not wins:
                 return
             for win in wins:
@@ -2508,7 +2508,7 @@ def running_desktop_apps(sample):
         for item in apps.list_apps():
             if item["kind"] != "desktop":
                 continue
-            mine = [w for w in wins if apps.matches_window(item["id"], w["class"]) and w["title"] != "iMac TV"]
+            mine = [w for w in wins if apps.matches_window(item["id"], w["class"]) and w["title"] != "Nexus TV"]
             if mine:
                 extra.append({"key": item["id"], "title": item["name"], "running": True,
                               "pids": [int(w["pid"]) for w in mine if w["pid"].isdigit() and int(w["pid"]) > 1], "memory": 0, "cpu": 0.0})

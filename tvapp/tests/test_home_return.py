@@ -14,7 +14,7 @@ spec = importlib.util.spec_from_file_location("imactv_server_home_return", Path(
 server = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(server)
 
-HOME_ROW = "0x00600003  0 1234  0 0 1920 1080 home.py.Home host iMac TV"
+HOME_ROW = "0x00600003  0 1234  0 0 1920 1080 home.py.Home host Nexus TV"
 
 
 class InlineThread:

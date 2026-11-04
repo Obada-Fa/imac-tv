@@ -9,7 +9,7 @@ else
   cat > "$HOME/.config/autostart/imactv-home.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=iMac TV Home (disabled)
+Name=Nexus TV Home (disabled)
 Exec=/bin/true
 Hidden=true
 EOF

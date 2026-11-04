@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV / Zorin TV - App Installer (Flatpak / Flathub)
+# Nexus TV / Zorin TV - App Installer (Flatpak / Flathub)
 # Installs VacuumTube (YouTube Leanback for TV). Media playback uses mpv + the
 # stremio-service engine (see install-engine.sh).
 # ==============================================================================

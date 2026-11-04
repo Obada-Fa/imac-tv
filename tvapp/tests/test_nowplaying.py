@@ -54,9 +54,9 @@ class ParseTests(unittest.TestCase):
 
 class FallbackTests(unittest.TestCase):
     def test_window_fallback(self):
-        lines = ["0x01 0 vacuumtube.VacuumTube host YouTube", "0x02 0 imactv.Home host iMac TV"]
+        lines = ["0x01 0 vacuumtube.VacuumTube host YouTube", "0x02 0 imactv.Home host Nexus TV"]
         self.assertEqual(nowplaying.window_fallback(lines)["status"], "Open")
-        self.assertIsNone(nowplaying.window_fallback(["0x02 0 imactv.Home host iMac TV"]))
+        self.assertIsNone(nowplaying.window_fallback(["0x02 0 imactv.Home host Nexus TV"]))
         self.assertIsNone(nowplaying.window_fallback([]))
 
 

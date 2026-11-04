@@ -890,9 +890,9 @@ class HexSpinner(Gtk.DrawingArea, _Animated):
 # ---------------------------------------------------------------- header
 
 class Wordmark(Gtk.DrawingArea):
-    """'iMac TV' in Home's light weight after a small hexagon mark (a lit core in a hairline rim)."""
+    """'Nexus TV' in Home's light weight after a small hexagon mark (a lit core in a hairline rim)."""
 
-    def __init__(self, shell, look_, text="iMac TV"):
+    def __init__(self, shell, look_, text="Nexus TV"):
         super().__init__()
         self.shell, self.look, self.label = shell, look_, text
         self.text = TextCache(self)

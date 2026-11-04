@@ -34,7 +34,7 @@ fi
 
 cat > "$HOME/.config/systemd/user/tvremote.service" <<EOF
 [Unit]
-Description=iMac TV controller
+Description=Nexus TV controller
 After=network.target
 
 [Service]
@@ -54,7 +54,7 @@ rm -f "$HOME/.config/autostart/stremio-tv.desktop"
 cat > "$HOME/.config/autostart/imactv-home.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=iMac TV Home
+Name=Nexus TV Home
 Exec=/usr/bin/python3 $app_dir/home.py
 Terminal=false
 NoDisplay=true
@@ -64,7 +64,7 @@ EOF
 cat > "$HOME/.config/autostart/mintwelcome.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Mint Welcome (disabled for iMac TV)
+Name=Mint Welcome (disabled for Nexus TV)
 Exec=/bin/true
 Hidden=true
 EOF

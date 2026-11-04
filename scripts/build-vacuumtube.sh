@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV / Zorin TV - Build VacuumTube from Source
+# Nexus TV / Zorin TV - Build VacuumTube from Source
 # Builds the YouTube Leanback desktop Electron app using electron-builder
 # ==============================================================================
 set -euo pipefail

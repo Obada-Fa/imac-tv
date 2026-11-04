@@ -1,4 +1,4 @@
-"""Display control for iMac TV: resolution modes through xrandr, a keep-or-revert trial, and whether any
+"""Display control for Nexus TV: resolution modes through xrandr, a keep-or-revert trial, and whether any
 screen is showing the app at all.
 
 No GTK here: server.py (a separate process) imports this too. Parsing and decisions are pure functions;

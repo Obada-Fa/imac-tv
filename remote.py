@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-iMac TV Remote - control this machine's X11 desktop from a phone browser.
+Nexus TV Remote - control this machine's X11 desktop from a phone browser.
 
   * No xdotool. Key/pointer injection goes straight to libX11 + libXtst
     through ctypes, both already installed. Nothing needs sudo.
@@ -1005,7 +1005,7 @@ PAGE = """<!doctype html>
 <div id="app">
   <div class="bar">
     <div class="tgt" id="tgt">no target</div>
-    <div class="hint" id="hint">iMac TV</div>
+    <div class="hint" id="hint">Nexus TV</div>
   </div>
 
   <!-- Top App Switcher Row -->

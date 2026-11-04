@@ -16,7 +16,7 @@ import urllib.request
 
 PORT = int(os.environ.get("IMACTV_BRAVE_PORT", "9333"))
 WM_CLASS = "ImacTvBrave"
-MENU_TITLE = "iMac TV Browser"
+MENU_TITLE = "Nexus TV Browser"
 START_URL = "https://search.brave.com/"
 SCALE = "1.5"
 SHORTCUTS = {"back": "alt+Left", "forward": "alt+Right", "reload": "ctrl+r", "zoom_in": "ctrl+plus",

@@ -44,7 +44,7 @@ for app, expected in (("youtube", "VacuumTube"),):
     for attempt in range(10):
         active = subprocess.run(["xdotool", "getactivewindow", "getwindowname"],
                                 capture_output=True, text=True, env=env, timeout=3)
-        if "iMac TV" in active.stdout:
+        if "Nexus TV" in active.stdout:
             break
         time.sleep(1)
     else:

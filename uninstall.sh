@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV / Zorin TV - Uninstaller
+# Nexus TV / Zorin TV - Uninstaller
 # Stops and removes TV remote service, autostart entries, and sudo privileges
 # ==============================================================================
 set -euo pipefail
@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-printf "${YELLOW}${BOLD}=== Uninstalling iMac TV / Zorin TV ===${NC}\n"
+printf "${YELLOW}${BOLD}=== Uninstalling Nexus TV / Zorin TV ===${NC}\n"
 
 # 1. Stop and disable systemd user service
 if systemctl --user is-active tvremote.service &>/dev/null; then
@@ -53,5 +53,5 @@ if [ -L "$HOME/tvremote/tvapp" ]; then
   rm -f "$HOME/tvremote/tvapp"
 fi
 
-printf "\n${GREEN}${BOLD}✓ iMac TV has been uninstalled successfully.${NC}\n"
+printf "\n${GREEN}${BOLD}✓ Nexus TV has been uninstalled successfully.${NC}\n"
 printf "Note: App installations (VacuumTube, mpv, stremio-service) were kept intact.\n"

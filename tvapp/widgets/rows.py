@@ -1,4 +1,5 @@
-"""Aligned Continue watching cards and Home shortcuts in the selected appearance."""
+"""Focusable rows: continue-watching (plus the YouTube "now playing" node first), floating over the photo, and
+Home's apps row. Each renders as bubbles or as network nodes depending on home.json "style"."""
 import sys
 from pathlib import Path
 
@@ -10,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import screens  # noqa: E402
 from . import Widget, register  # noqa: E402
 from .bubbles import BubbleRow, RowBase  # noqa: E402
-from . import network, chrome  # noqa: E402
+from . import network  # noqa: E402
 
 MAX_CONTINUE = 5
 
@@ -144,9 +145,6 @@ class ContinueWidget(RowWidget):
         old = self.prev_keys[had] if had < len(self.prev_keys) else None
         return self.keys.index(old) if old in self.keys else min(had, len(items) - 1)
 
-    def make_row(self, items, h):
-        return ContinueCards(self.shell, items, h)
-
     def refresh(self):
         self.rebuild()
 
@@ -164,61 +162,9 @@ class ContinueWidget(RowWidget):
             self.row.update_now(state)
 
 
-class ContinueCards(Gtk.Box):
-    """A stable landscape rail; the focused title remains readable in full above the cards."""
-    def __init__(self, shell, items, height):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL)
-        self.bubbles = []
-        heading = screens.text_label("Continue watching", "section-title")
-        heading.set_halign(Gtk.Align.START)
-        heading.set_margin_start(shell.px(110))
-        self.pack_start(heading, False, False, 0)
-        self.label = screens.text_label("", "ah-continue-detail")
-        self.label.set_halign(Gtk.Align.START)
-        self.label.set_line_wrap(True)
-        self.label.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        self.label.set_max_width_chars(85)
-        self.label.set_width_chars(65)
-        self.label.set_margin_start(shell.px(110))
-        self.pack_start(self.label, False, False, 0)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        row.set_margin_start(shell.px(96))
-        self.pack_start(row, False, False, 0)
-        for item in items:
-            info = {"name": item["title"], "subtitle": item.get("sub", ""), "progress": item.get("progress")}
-            card = chrome.PosterCard(shell, chrome.look(shell), info, "wide", shell.px(270), shell.px(152), item["on_activate"])
-            card.now = item.get("now")
-            card.connect("focus-in-event", lambda c, _e: self.show_title(c) or False)
-            url = item.get("art_url") or item.get("poster_url")
-            if url:
-                screens.load_art(url, shell.px(270), shell.px(152), lambda pb, c=card: c.set_pixbuf(pb) if pb is not None and not c.dead else None)
-            row.pack_start(card, False, False, 0)
-            self.bubbles.append(card)
-
-    def show_title(self, card):
-        detail = " · ".join(x for x in (card.title, card.sub) if x)
-        self.label.set_text(detail)
-
-    def focus_items(self):
-        return list(self.bubbles)
-
-    def animate(self, dt, now):
-        pass
-
-    def update_now(self, state):
-        if self.bubbles and self.bubbles[0].now:
-            card = self.bubbles[0]
-            card.title = state.get("title") or "YouTube"
-            card.sub = state.get("artist") or ""
-            card.now = state.get("status") or "Open"
-            if card.has_focus():
-                self.show_title(card)
-            card.queue_draw()
-
-
 # ---------------------------------------------------------------- the Apps row
 
-FIXED_TILES = (("All apps", "apps", "apps"),)
+FIXED_TILES = (("All apps", "apps", "apps"), ("Search", "search", "search"), ("Settings", "settings", "settings"))
 # Built-in tiles shown while there is no apps module at all, so Home is never an empty row
 FALLBACK = (("Movies", "movies", "screen"), ("Series", "series", "screen"), ("YouTube", "youtube", "app"),
             ("Twitch", "twitch", "screen"))
@@ -229,7 +175,7 @@ def fallback_apps():
 
 
 def apps_row_specs(favorites, others=True):
-    """The Apps row in order: saved favorites followed by All apps.
+    """The Apps row in order: saved favorites followed by All apps, Search and Settings.
     -> [{"key", "title", "kind", "app"}]; "app" is the apps.py item for a favorite (None for a fixed tile)."""
     out = [{"key": it["id"], "title": it.get("name") or it["id"], "kind": it.get("builtin_kind"), "app": it}
            for it in favorites]
@@ -316,7 +262,8 @@ class AppNodeRow(RowBase):
 
 @register
 class AppsWidget(RowWidget):
-    """Home's apps row: the favorites (apps.home_apps(), oldest first) in an irregular strip, then All apps.
+    """Home's apps row: the favorites (apps.home_apps(), oldest first) in an irregular strip, then All apps,
+    Search and Settings.
     It rebuilds when apps_rev moves, keeping focus on the same tile."""
     id = "apps"
     top, height = 0.70, 0.235

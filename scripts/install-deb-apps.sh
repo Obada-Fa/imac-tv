@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV / Zorin TV - Native .deb App Installer
+# Nexus TV / Zorin TV - Native .deb App Installer
 # Downloads & installs official Debian/Ubuntu packages for VacuumTube
 # ==============================================================================
 set -euo pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Artwork-led, remote-friendly TV Home for iMac TV."""
+"""Artwork-led, remote-friendly TV Home for Nexus TV."""
 import datetime
 import fcntl
 import json
@@ -115,7 +115,7 @@ class Home(Gtk.Window):
     """Window shell: header, screen stack with back stack, key routing, polling."""
 
     def __init__(self):
-        super().__init__(title="iMac TV")
+        super().__init__(title="Nexus TV")
         subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, check=False)
         self.fullscreen()
@@ -415,16 +415,10 @@ class Home(Gtk.Window):
         self.conn_pill = chrome.PhoneChip(self, None, look, on_activate=lambda: self.show_pairing())
         right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self.px(8))
         right.set_valign(Gtk.Align.CENTER)
-        search = chrome.GlassButton(self, None, look, "Search", width=self.px(120), height=self.px(42), px=18,
-                                    on_activate=lambda: self.open_search())
-        system = chrome.GlassButton(self, None, look, "System", width=self.px(120), height=self.px(42), px=18,
-                                    on_activate=lambda: self.push(self.top_screen("system"))
-                                    if getattr(self.current(), "sname", None) != "system" else None)
         self.clock = chrome.HeaderClock(self, look, compact=True)
-        for widget in (search, self.clock, system):
-            right.pack_start(widget, False, False, 0)
+        right.pack_start(self.clock, False, False, 0)
         bar.pack_end(right, False, False, 0)
-        self.header_row = [search, system]
+        self.header_row = []                # Search and Settings are tiles on Home's apps row
         self.clock.set_now(datetime.datetime.now())
         return bar
 
@@ -617,7 +611,7 @@ class Home(Gtk.Window):
         if self.sheet:
             return [[w for w in row if w.get_visible()] for row in self.sheet["rows"]]
         screen = self.current()
-        rows = [self.header_row] if screen and screen.header else []
+        rows = [self.header_row] if screen and screen.header and self.header_row else []
         if self.update_notice.get_visible() and self.update_notice.get_sensitive():
             rows.append([self.update_notice])
         rows += screen.focus_groups() if screen else []

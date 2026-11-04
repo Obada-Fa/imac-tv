@@ -39,12 +39,12 @@ class TVMediaControls {
     if (pb?.active) {
       const episode = media.type === 'series' && media.season != null && media.episode != null ?
         `S${media.season} · E${media.episode}` : '';
-      return {kind: 'mpv', title: media.name || pb.title || 'Video', artist: episode || 'iMac TV',
+      return {kind: 'mpv', title: media.name || pb.title || 'Video', artist: episode || 'Nexus TV',
         art: media.poster, paused: Boolean(pb.paused), duration: pb.duration, position: pb.position,
         seekable: pb.duration > 0, next: Boolean(media.next), previous: false, pausable: true};
     }
     if (yt && ['Playing', 'Paused'].includes(yt.status)) {
-      return {kind: 'youtube', title: yt.title || 'YouTube', artist: yt.artist || 'YouTube on iMac TV',
+      return {kind: 'youtube', title: yt.title || 'YouTube', artist: yt.artist || 'YouTube on Nexus TV',
         art: yt.art, paused: yt.status === 'Paused', duration: yt.length, position: yt.position,
         seekable: yt.can_seek !== false && yt.length > 0 && Number.isFinite(yt.position),
         next: yt.can_next !== false, previous: yt.can_prev !== false, pausable: yt.can_pause !== false};
@@ -137,7 +137,7 @@ class TVMediaControls {
         const url = new URL(t.art, location.href);
         if (t.art && ['http:', 'https:'].includes(url.protocol)) artwork = [{src: url.href}];
       } catch (error) {}
-      this.session.metadata = new MediaMetadata({title: t.title, artist: t.artist, album: 'iMac TV', artwork});
+      this.session.metadata = new MediaMetadata({title: t.title, artist: t.artist, album: 'Nexus TV', artwork});
       this.signature = signature;
     }
     this.session.playbackState = t.paused ? 'paused' : 'playing';

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV - Streaming engine installer
+# Nexus TV - Streaming engine installer
 # Installs the headless stremio-service (torrent streaming server on
 # 127.0.0.1:11470) and a systemd user unit `imactv-engine.service` that runs its
 # bundled server.js directly (no tray icon). Falls back to Flatpak.
@@ -93,7 +93,7 @@ fi
 mkdir -p "$HOME/.config/systemd/user" "$HOME/.stremio-server"
 cat > "$UNIT" <<UNITEOF
 [Unit]
-Description=iMac TV streaming engine (stremio-service server.js)
+Description=Nexus TV streaming engine (stremio-service server.js)
 After=network.target
 
 [Service]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# iMac TV / Zorin TV - Complete Automated Installer
+# Nexus TV / Zorin TV - Complete Automated Installer
 # Sets up TV Home, Mobile Web Remote, System Service, VacuumTube, mpv & streaming engine
 # ==============================================================================
 set -euo pipefail
@@ -255,7 +255,7 @@ TVAPP_DIR="$APP_DIR" bash "$APP_DIR/deploy/install.sh"
 IP="$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")"
 
 printf "\n${GREEN}${BOLD}==================================================================${NC}\n"
-printf "${GREEN}${BOLD}           iMac TV / Zorin TV Installation Complete!             ${NC}\n"
+printf "${GREEN}${BOLD}           Nexus TV / Zorin TV Installation Complete!             ${NC}\n"
 printf "${GREEN}${BOLD}==================================================================${NC}\n"
 printf "\n"
 printf "  ${BOLD}1. TV Home:${NC} Will start automatically on login. You can test it now by running:\n"

@@ -666,7 +666,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_select_home_keeps_youtube_running_and_select_youtube_restores_it(self):
         c = self.controller()
-        yt, home = {"id": "0x9", "class": "vacuumtube", "title": "YouTube"}, {"id": "0x1", "class": "x", "title": "iMac TV"}
+        yt, home = {"id": "0x9", "class": "vacuumtube", "title": "YouTube"}, {"id": "0x1", "class": "x", "title": "Nexus TV"}
         with mock.patch.object(server, "window_for", side_effect=lambda a: {"youtube": yt, "home": home}.get(a)), \
                 mock.patch.object(server, "minimize") as mini, mock.patch.object(c, "_show_home"), mock.patch.object(c, "_end_playback"), \
                 mock.patch.object(server.threading, "Thread"):

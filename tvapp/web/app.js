@@ -1601,7 +1601,7 @@
     const card = el('div', 'glass linkcard' + (online ? '' : ' offline'));
     const sig = el('div', 'sigline'), bars = el('span', 'sig');
     for (let i = 0; i < 4; i++) bars.append(el('i', online || i === 0 ? '' : 'dim'));
-    sig.append(bars, el('span', '', online ? 'iMac TV · paired' : 'iMac TV · not reachable'));
+    sig.append(bars, el('span', '', online ? 'Nexus TV · paired' : 'Nexus TV · not reachable'));
     card.append(sig, el('h4', '', online ? 'This phone is connected' : 'Reconnecting…'),
       el('p', 'meta', 'Pair another phone with the QR code on TV Home.'));
     const rows = el('div', 'glass rows');

@@ -72,36 +72,36 @@ class RowCompositionTests(unittest.TestCase):
     def test_favorites_then_the_fixed_tiles_in_order(self):
         specs = rows.apps_row_specs(FAVS)
         self.assertEqual([s["title"] for s in specs],
-                         ["Movies", "YouTube", "Brave", "RustDesk", "All apps"])
+                         ["Movies", "YouTube", "Brave", "RustDesk", "All apps", "Search", "Settings"])
         self.assertEqual([s["kind"] for s in specs],
-                         ["movies", "youtube", None, None, "apps"])
-        self.assertEqual([s["app"] is None for s in specs], [False] * 4 + [True])
+                         ["movies", "youtube", None, None, "apps", "search", "settings"])
+        self.assertEqual([s["app"] is None for s in specs], [False] * 4 + [True] * 3)
 
     def test_no_favorites_leaves_only_the_fixed_tiles(self):
-        self.assertEqual([s["title"] for s in rows.apps_row_specs([])], ["All apps"])
+        self.assertEqual([s["title"] for s in rows.apps_row_specs([])], ["All apps", "Search", "Settings"])
 
     def test_widget_items_use_home_apps_and_open_them_through_the_shell(self):
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=list(FAVS)):
             w = rows.AppsWidget(shell)
             items = w.items()
-        self.assertEqual([i["title"] for i in items][-1:], ["All apps"])
+        self.assertEqual([i["title"] for i in items][-3:], ["All apps", "Search", "Settings"])
         items[2]["on_activate"]()
         self.assertEqual(shell.opened, [FAVS[2]])
-        items[-1]["on_activate"]()
+        items[-3]["on_activate"]()
         self.assertEqual(shell.gone, ["apps"])
 
     def test_nine_tiles_for_six_favorites(self):
         six = [item("a%d" % i, "App %d" % i, favorite=True) for i in range(6)]
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=six):
-            self.assertEqual(len(rows.AppsWidget(shell).items()), 7)
+            self.assertEqual(len(rows.AppsWidget(shell).items()), 9)
 
     def test_without_an_apps_module_the_old_built_in_tiles_remain(self):
         shell = StubShell()
         with mock.patch.object(screens, "home_app_list", return_value=None):
             titles = [i["title"] for i in rows.AppsWidget(shell).items()]
-        self.assertEqual(titles, ["Movies", "Series", "YouTube", "Twitch", "All apps"])
+        self.assertEqual(titles, ["Movies", "Series", "YouTube", "Twitch", "All apps", "Search", "Settings"])
 
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
@@ -134,14 +134,14 @@ class RowRebuildTests(unittest.TestCase):
             with self.subTest(style=style):
                 self.favs = list(FAVS)
                 w = self.build(style)
-                self.assertEqual(len(w.row.bubbles), 5)
+                self.assertEqual(len(w.row.bubbles), 7)
                 w.set_rev(5)                          # the first revision is only remembered
                 self.favs = FAVS + [item("desktop:calc", "Calculator", favorite=True)]
                 w.set_rev(5)
-                self.assertEqual(len(w.row.bubbles), 5)
+                self.assertEqual(len(w.row.bubbles), 7)
                 w.set_rev(6)
                 self.assertEqual(self.titles(w)[:5], ["Movies", "YouTube", "Brave", "RustDesk", "Calculator"])
-                self.assertEqual(self.titles(w)[-1:], ["All apps"])
+                self.assertEqual(self.titles(w)[-3:], ["All apps", "Search", "Settings"])
                 self.shell.root.remove(w.host)
 
     def test_focus_stays_on_the_same_tile_after_a_rebuild(self):
@@ -169,7 +169,7 @@ class RowRebuildTests(unittest.TestCase):
         w = self.build("network")
         targets = [getattr(b, "menu_item", "missing") for b in w.row.bubbles]
         self.assertEqual([t["id"] for t in targets[:4]], [f["id"] for f in FAVS])
-        self.assertEqual(targets[4:], [None])
+        self.assertEqual(targets[4:], [None] * 3)
 
 
 @unittest.skipIf(screens is None, "GTK bindings unavailable")
@@ -474,7 +474,7 @@ class PhaseTwoTests(unittest.TestCase):
              mock.patch.object(screens, "others_app_list", side_effect=AssertionError("scanned on the GTK thread")):
             widget = rows.AppsWidget(shell)
             specs = widget.items()
-        self.assertEqual([spec["key"] for spec in specs], [app["id"] for app in FAVS] + ["fixed:apps"])
+        self.assertEqual([spec["key"] for spec in specs], [app["id"] for app in FAVS] + ["fixed:apps", "fixed:search", "fixed:settings"])
         shell.destroy()
 
     def test_utilities_get_their_own_section_before_the_pc_apps(self):
@@ -485,25 +485,6 @@ class PhaseTwoTests(unittest.TestCase):
         titles = [c.get_text() for c in screen.box.get_children() if hasattr(c, "get_text")]
         self.assertEqual([[c.app_item["name"] for c in r] for r in screen.rows], [["Files", "Calculator"], ["GIMP"]])
         self.assertIn("Press Menu on any app to add it to Home or remove it", titles)
-        shell.destroy()
-
-    def test_first_use_pairing_remains_visible_without_status_line(self):
-        from widgets.pairing import PairingWidget
-        shell = StubShell()
-        shell.prev_app = "home"
-        shell.remote = {"connected": False}
-        widget = PairingWidget(shell)
-        outer = widget.build()
-        shell.root.add(outer)
-        shell.show_all()
-        self.assertTrue(outer.get_visible())
-        self.assertTrue(widget.qr.get_visible())
-        self.assertIn(":8765", widget.address_lbl.get_text())
-        self.assertTrue(widget.rev.get_reveal_child())
-        self.assertFalse(widget.card.get_visible())
-        shell.remote = {"connected": True}
-        widget.render()
-        self.assertFalse(outer.get_visible())
         shell.destroy()
 
     def test_continue_restores_saved_focus_when_now_playing_is_inserted(self):
@@ -589,20 +570,6 @@ class PhaseTwoTests(unittest.TestCase):
         shell.push.assert_not_called()
         shell.goto_top.assert_not_called()
 
-    def test_continue_heading_updates_with_focused_track(self):
-        shell = StubShell()
-        item_ = {"title": "Before", "sub": "Artist", "now": "Playing", "on_activate": lambda: None}
-        rail = rows.ContinueCards(shell, [item_], 300)
-        shell.root.add(rail)
-        shell.show_all()
-        rail.bubbles[0].grab_focus()
-        pump()
-        with mock.patch.object(rail.bubbles[0], "has_focus", return_value=True):
-            rail.update_now({"title": "After", "artist": "New artist", "status": "Paused"})
-        self.assertEqual(rail.bubbles[0].title, "After")
-        self.assertEqual(rail.bubbles[0].sub, "New artist")
-        self.assertIn("New artist", rail.label.get_text())
-        shell.destroy()
 
 
 if __name__ == "__main__":

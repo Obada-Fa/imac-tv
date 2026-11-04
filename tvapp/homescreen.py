@@ -24,7 +24,7 @@ import screens
 from screens import Screen, text_label, cover_pixbuf
 import backgrounds
 import widgets
-from widgets import network, shapes, contours, volume_hud, chrome
+from widgets import network, shapes, contours, volume_hud
 import perflog
 
 PERF = perflog.from_env()       # IMACTV_PERF_LOG=path: per-frame timings (None, and free, when unset)
@@ -141,8 +141,7 @@ def home_css(scale=1.0):
     sh = "text-shadow: 0 2px 3px rgba(0,0,0,0.55);"
     return f"""
 .ah-time {{ font-size: {p(128)}px; font-weight: 200; color: #fff; {sh} }}
-.ah-time-small {{ font-size: {p(30)}px; font-weight: 300; color: rgba(255,255,255,0.85); }}
-.ah-continue-detail {{ font-size: {p(24)}px; font-weight: 400; color: rgba(255,255,255,0.86); {sh} }}
+.ah-time-small {{ font-size: {p(56)}px; font-weight: 300; color: rgba(255,255,255,0.85); }}
 .ah-date {{ font-size: {p(32)}px; font-weight: 400; color: rgba(255,255,255,0.88); {sh} }}
 .ah-wicon {{ font-size: {p(34)}px; }}
 .ah-wtemp {{ font-size: {p(34)}px; font-weight: 500; color: #fff; {sh} }}
@@ -605,21 +604,8 @@ class AmbientHomeScreen(Screen):
         right.set_margin_end(px(72))
         right.set_margin_top(px(64))
         overlay.add_overlay(left)
-        wordmark = chrome.Wordmark(shell, chrome.look(shell))
-        left.pack_start(wordmark, False, False, 0)
-        corner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=px(6))
-        corner.set_halign(Gtk.Align.END)
-        self.search_btn = chrome.GlassButton(shell, None, chrome.look(shell), "Search", width=px(125), height=px(42),
-                                             px=18, on_activate=lambda: shell.open_search())
-        self.system_btn = chrome.GlassButton(shell, None, chrome.look(shell), "System", width=px(125), height=px(42),
-                                             px=18, on_activate=lambda: shell.push(shell.top_screen("system")))
-        corner.pack_start(self.search_btn, False, False, 0)
-        right.pack_start(corner, False, False, 0)
-        self.chrome_widgets += [wordmark, self.search_btn, self.system_btn]
         for w in sorted(self.items, key=lambda i: i.order):
-            if w.id == "clock":
-                corner.pack_start(w.widget, False, False, 0)
-            elif w.slot == "topleft":
+            if w.slot == "topleft":
                 left.pack_start(w.widget, False, False, 0)
             elif w.slot == "topright":
                 right.pack_start(w.widget, False, False, 0)
@@ -632,7 +618,6 @@ class AmbientHomeScreen(Screen):
                 self.chrome_widgets.append(w.widget)
             self.due[w.id] = 0.0
 
-        corner.pack_start(self.system_btn, False, False, 0)
         self.volume_line = volume_hud.AmbientVolumeLine(px)
         left.pack_start(self.volume_line, False, False, 0)
         left.reorder_child(self.volume_line, 1)     # directly under the clock
@@ -674,8 +659,8 @@ class AmbientHomeScreen(Screen):
         pass
 
     def rows(self):
-        rows = [[self.search_btn, self.system_btn]]
-        rows += [w.focus_items() for w in sorted((w for w in self.items if w.slot == "topright"), key=lambda i: i.order)]
+        rows = [w for w in self.items if w.slot == "topright"]
+        rows = [w.focus_items() for w in sorted(rows, key=lambda i: i.order)]
         body = sorted((w for w in self.items if w.slot == "row"), key=lambda i: getattr(i, "top", 0))
         rows += [w.focus_items() for w in body]
         return rows
