@@ -8,6 +8,7 @@ import cairo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import home
+import overlays
 import server
 from widgets import island, volume_hud
 from gi.repository import Gtk
@@ -131,42 +132,151 @@ class NoticeMotionTests(unittest.TestCase):
                 island.badge(cairo.Context(surface), glyph_kind, 40, 30, 16, 1.0)
 
 
-class WindowBackdropTests(unittest.TestCase):
-    """Over another app the island's window paints that app's picture, as no compositor can be trusted to."""
+class FakeTarget:
+    def __init__(self, answers=True, shows=True):
+        self.answers, self.shows = answers, shows
+        self.frost = overlays.LiveFrost()
+        self.frames, self.hidden = [], 0
 
-    def test_grabs_the_topmost_window_that_covers_it(self):
-        app = Gtk.Window()
-        app.set_app_paintable(True)
-        app.connect("draw", lambda _w, cr: (cr.set_source_rgb(0.0, 0.5, 1.0), cr.paint()) and False)
-        app.resize(600, 200)
-        app.move(0, 0)
-        app.show_all()
-        self.addCleanup(app.destroy)
-        for _ in range(50):
-            Gtk.main_iteration_do(False)
-        window = volume_hud.VolumeOverlay(shell())
-        self.addCleanup(window.destroy)
-        window.placed, window.at = (300, 60), (50, 10)
-        with mock.patch.object(window, "candidates", return_value=[app.get_window()]):
-            self.assertTrue(window.grab())
-        self.assertEqual((window.picture.get_width(), window.picture.get_height()), (300, 60))
-        self.assertGreater(window.blur_k, 1)
-        self.assertEqual(window.blur_layers()[0][0], window.soft)
-        self.assertIs(window.pill.frost_source(), window)       # the island frosts the app's picture
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 300, 60)
-        window.paint_backdrop(window, cairo.Context(surface))
-        b, g, r = surface.get_data()[0:3]
-        self.assertEqual((r, g), (0, 128))
-        self.assertGreater(b, 240)
+    def connect(self, timeout=0.4):
+        return self.answers
 
-    def test_a_window_that_does_not_cover_it_is_skipped(self):
-        window = volume_hud.VolumeOverlay(shell())
-        self.addCleanup(window.destroy)
-        small = mock.Mock(get_origin=lambda: (True, 0, 0), get_width=lambda: 10, get_height=lambda: 10)
-        window.placed, window.at = (300, 60), (50, 10)
-        with mock.patch.object(window, "candidates", return_value=[small]):
-            self.assertFalse(window.grab())
-        self.assertIsNone(window.picture)
+    def show(self, surface, outline):
+        self.frames.append((surface.get_width(), surface.get_height(), outline))
+        return self.shows
+
+    def hide(self):
+        self.hidden += 1
+
+    def close(self):
+        pass
+
+
+class OverAppsTests(unittest.TestCase):
+    """Over another app the island is drawn by that app where it can be, never from an old copy of its picture."""
+
+    def host(self, app, tv_browser=False, **targets):
+        host = volume_hud.VolumeOverlay(SimpleNamespace(px=lambda n: round(n), get_window=lambda: None,
+                                                        prev_app=app, tv_browser=tv_browser))
+        made = []
+        host.make = lambda kind: made.append(kind) or targets.get(kind) or FakeTarget()
+        return host, made
+
+    def test_each_app_gets_its_own_target(self):
+        for app, tv_browser, kind in (("youtube", False, "youtube"), ("player", False, "mpv"),
+                                      ("desktop:brave-browser", True, "browser"), ("desktop:org.gnome.Nautilus", False, "window")):
+            host, made = self.host(app, tv_browser)
+            host.choose()
+            self.assertEqual(made, [kind], app)
+
+    def test_an_app_that_does_not_answer_leaves_it_to_the_window(self):
+        window = FakeTarget()
+        host, made = self.host("youtube", youtube=FakeTarget(answers=False), window=window)
+        self.assertIs(host.choose(), window)
+        self.assertEqual(made, ["youtube", "window"])
+
+    def test_frames_go_to_the_app_and_stop_when_it_is_hidden(self):
+        page = FakeTarget()
+        host, _made = self.host("youtube", youtube=page)
+        host.pill.show_level(40)
+        host.pill.stop_timers()
+        host.pill.started -= 0.2                            # a fifth of a second into opening
+        host.pill.animate()
+        self.assertTrue(page.frames)
+        width, height, outline = page.frames[-1]
+        self.assertEqual((width, height), host.pill.room())
+        self.assertTrue(outline.startswith("M") and outline.endswith("Z"))
+        self.assertIs(host.pill.frost_source(), page.frost)
+        host.pill.dismiss()
+        self.assertEqual(page.hidden, 1)
+        self.assertIsNone(host.target)
+
+    def test_a_page_that_stops_answering_hands_over_to_the_window(self):
+        page, window = FakeTarget(shows=False), FakeTarget()
+        host, _made = self.host("youtube", youtube=page, window=window)
+        host.pill.show_level(70)
+        host.pill.stop_timers()
+        host.pill.started -= 0.2
+        host.pill.animate()
+        self.assertTrue(window.frames)
+        self.assertIs(host.target, window)
+
+    def test_the_frame_is_the_island_alone(self):
+        host, _made = self.host("player", mpv=FakeTarget())
+        host.pill.show_level(100)
+        host.pill.size = 1.0
+        host.island.frost = overlays.SolidFrost()
+        surface, _outline = host.render()
+        data = surface.get_data()
+        corner = data[0:4]                                  # beside the island: nothing
+        middle = (surface.get_height() // 2) * surface.get_stride() + (surface.get_width() // 2) * 4
+        self.assertEqual(bytes(corner), bytes(4))
+        self.assertEqual(data[middle + 3], 255)             # solid glass over mpv
+        self.assertEqual(host.pill.render_width, 0)
+
+
+class MpvTargetTests(unittest.TestCase):
+    def test_lays_the_frame_over_the_video_in_two_halves(self):
+        import json, socket, tempfile, threading
+        folder = tempfile.mkdtemp()
+        path = folder + "/mpv.sock"
+        server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server_sock.bind(path)
+        server_sock.listen(1)
+        seen = []
+
+        def mpv():
+            conn, _ = server_sock.accept()
+            data = b""
+            with conn:
+                while True:
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        return
+                    data += chunk
+                    while b"\n" in data:
+                        line, data = data.split(b"\n", 1)
+                        message = json.loads(line)
+                        seen.append(message["command"])
+                        if message["command"][0] == "get_property":
+                            conn.sendall(json.dumps({"data": {"w": 1920, "h": 1080}, "error": "success",
+                                                     "request_id": message["request_id"]}).encode() + b"\n")
+                        else:
+                            try:
+                                conn.sendall(b'{"error":"success"}\n')
+                            except BrokenPipeError:
+                                return
+        thread = threading.Thread(target=mpv, daemon=True)
+        thread.start()
+        target = overlays.MpvTarget(path)
+        self.assertTrue(target.connect())
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 70)
+        self.assertTrue(target.show(surface))
+        self.assertTrue(target.show(surface))
+        frames = list(target._file.parent.glob(target._file.name))
+        self.assertEqual(len(frames), 1)
+        target.hide()
+        thread.join(2)
+        server_sock.close()
+        adds = [c for c in seen if c[0] == "overlay-add"]
+        self.assertEqual([c[1:4] for c in adds], [[overlays.MPV_OVERLAY, 760, 0]] * 2)
+        self.assertEqual([c[5] for c in adds], [0, 400 * 4 * 70])
+        self.assertEqual(adds[0][6:], ["bgra", 400, 70, 1600])
+        self.assertEqual(seen[-1], ["overlay-remove", overlays.MPV_OVERLAY])
+        self.assertFalse(frames[0].exists())                # its file goes with it
+
+    def test_no_mpv_no_target(self):
+        self.assertFalse(overlays.MpvTarget("/nonexistent/mpv.sock").connect())
+
+
+class OutlineTests(unittest.TestCase):
+    def test_cairo_path_becomes_closed_svg(self):
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 200, 80)
+        cr = cairo.Context(surface)
+        island.edge_outline(cr, 30, 170, 60, 16, 28)
+        svg = overlays.svg_path(cr.copy_path())
+        self.assertTrue(svg.startswith("M") and svg.endswith("Z"))
+        self.assertIn("C", svg)
 
 
 class ShellTests(unittest.TestCase):

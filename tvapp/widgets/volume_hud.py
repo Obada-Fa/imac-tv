@@ -121,6 +121,10 @@ class VolumePill(VolumeIndicator):
         self.started = 0.0
         self.bar = 0.0
         self.on_hidden = self.on_frame = self.frost = None
+        self.render_width = 0               # set while it is drawn off screen, for an app's own overlay
+
+    def span(self):
+        return self.render_width or self.get_allocated_width()
 
     def room(self):
         """Space for the widest island, with its overshoot; px changes when the TV's resolution does."""
@@ -195,7 +199,7 @@ class VolumePill(VolumeIndicator):
     def trace(self, cr):
         """Grow the island out of the screen edge from its left end (louder only reaches further right) and trace
         its outline; (left, width, height), or None while it is tucked away."""
-        px, cx = self.px, self.get_allocated_width() / 2
+        px, cx = self.px, self.span() / 2
         if self.size <= 0.01:
             return None
         left = cx - px(self.WIDTH) / 2
@@ -250,8 +254,8 @@ class VolumePill(VolumeIndicator):
                 cr.stroke()
 
 
-class VolumeOverlay(island.IslandWindow):
-    """The island over YouTube, movies and other apps, in its own window, frosted from the app's picture."""
+class VolumeOverlay(island.IslandOverApps):
+    """The island over YouTube, movies and other apps, drawn by the app in front where it can."""
 
     def __init__(self, shell):
         super().__init__(shell, VolumePill(shell, frosted=False))

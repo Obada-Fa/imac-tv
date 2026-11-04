@@ -1,7 +1,8 @@
 """The TV's island: glass joined to the top edge of the screen, for the volume and for notices.
 
-Over Home it is frosted from Home's photo. Over another app it lives in its own small window that paints the app's
-picture behind it and frosts from that, so it never relies on the compositor to see through. Islands are idle
+Over Home it is frosted from Home's photo. Over another app it is drawn by that app where it can be: YouTube's and
+the TV browser's page frost their own live picture under it, mpv lays it over its video; elsewhere it is solid glass
+in its own small window (see `IslandOverApps`). Islands are idle
 until they show: no timer runs while they are tucked away, and over Home nothing redraws while they hold still."""
 
 import math
@@ -15,11 +16,11 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("GdkX11", "3.0")
 from gi.repository import Gdk, GdkX11, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
+import overlays  # noqa: E402
 from widgets import network  # noqa: E402
 
 SHOULDER, CORNER = 16, 28
 FRAME_MS = 33           # 30 fps, only while an island moves, in a small part of the screen
-BACKDROP_MS = 66        # 15 fps: the app's picture behind an island over it, only while the island shows
 
 
 def edge_outline(cr, left, right, height, shoulder, corner):
@@ -51,60 +52,47 @@ def paint_glass(cr, base, widget, photo):
 
 
 class IslandWindow(Gtk.Window):
-    """An island over YouTube, movies and other apps, when Home's window is behind them: a small window on the top
-    screen edge that takes no focus or clicks and is on screen only while its island shows.
+    """The island's own window, over apps that can't draw it themselves (anything but YouTube, the TV browser and
+    mpv), or when they don't answer: a small window on the top screen edge that takes no focus or clicks.
 
-    Seeing through a window can't be left to the compositor: GNOME on X11 painted this window's empty part black
-    over VacuumTube, and in testing it ignored the window's alpha and its shape alike. So the window paints the
-    picture of the app behind it, read from that app's window on every frame the island moves and 15 times a
-    second while it holds still, and frosts the island from it, like the island over Home's photo."""
+    GNOME on X11 paints a separate window's see-through part black over VacuumTube, whatever its alpha and shape,
+    so the island here is solid glass and the window paints the app's picture around it, read once when it
+    appears (and when it changes size): those few pixels at the shoulders are all that come from a copy."""
 
-    transparency = True             # read by network.paint_frost, as for Home's photo
-
-    def __init__(self, shell, island):
+    def __init__(self, shell):
         super().__init__(type=Gtk.WindowType.POPUP)
-        self.shell, self.island = shell, island
-        self.on_hidden = None
+        self.shell = shell
+        self.frost = overlays.SolidFrost()
         self.placed, self.at = None, (0, 0)
-        self.source, self.picture, self.soft, self.blur_k = None, None, None, 1.0
-        self.backdrop_timer = 0
+        self.source, self.picture, self.frame = None, None, None
         self.set_app_paintable(True)
         self.set_accept_focus(False)
         self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
         visual = self.get_screen().get_rgba_visual()
         if visual:
             self.set_visual(visual)     # where the compositor does blend, a failed read still shows the app
-        self.connect("draw", self.paint_backdrop)
+        self.connect("draw", self.paint)
         self.connect("realize", lambda *_: self.get_window().input_shape_combine_region(cairo.Region(), 0, 0))
-        self.connect("unmap", lambda *_: self.stop_backdrop())
-        self.connect("destroy", lambda *_: self.stop_backdrop())
-        island.on_frame = self.island_moved
-        island.on_hidden = self.island_hidden
-        island.frost = self
-        self.add(island)
 
-    def reveal(self, start):
-        """Set the island going with `start()`; the window appears with its first frame and stays on top."""
-        start()
-        if self.get_visible():
-            self.get_window().raise_()
-
-    def island_moved(self):
+    def show_frame(self, surface, _outline=None):
+        size = (surface.get_width(), surface.get_height())
+        if not self.get_visible() or size != self.placed:
+            self.place(size)
+            self.grab()
+        self.frame = surface
         if not self.get_visible():
-            self.place()
-            self.source = None
-            self.grab()                 # the app's picture is there before the window first shows
             self.show()
-            self.get_window().raise_()
-            self.backdrop_timer = self.backdrop_timer or GLib.timeout_add(BACKDROP_MS, self.refresh)
-            return
-        if self.island.room() != self.placed:
-            self.place()
-        self.grab()
+        self.get_window().raise_()
+        self.queue_draw()
+        return True
 
-    def place(self):
+    def hide_frame(self):
+        self.hide()
+        self.source = self.picture = self.frame = None
+
+    def place(self, size):
         """Size the window for the island and centre it on the top edge of the TV's monitor."""
-        width, height = self.placed = self.island.room()
+        width, height = self.placed = size
         x, y, full = self.placement()
         self.at = (x + (full - width) // 2, y)
         self.resize(width, height)
@@ -118,32 +106,18 @@ class IslandWindow(Gtk.Window):
         area = monitor.get_geometry()
         return area.x, area.y, area.width
 
-    # ---- the picture behind
-    def paint_backdrop(self, _w, cr):
+    def paint(self, _w, cr):
+        cr.set_operator(cairo.OPERATOR_SOURCE)
         if self.picture is not None:
-            cr.set_operator(cairo.OPERATOR_SOURCE)
             cr.set_source_surface(self.picture, 0, 0)
-            cr.paint()
         else:
-            cr.set_operator(cairo.OPERATOR_CLEAR)
-            cr.paint()
+            cr.set_source_rgba(0, 0, 0, 0)
+        cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
+        if self.frame is not None:
+            cr.set_source_surface(self.frame, 0, 0)
+            cr.paint()
         return False
-
-    def blur_layers(self):
-        return [(self.soft, 1.0)] if self.soft is not None else []
-
-    def refresh(self):
-        moving = getattr(self.island, "timer", 0) or getattr(self.island, "fade_timer", 0)
-        if self.grab() and not moving:
-            self.queue_draw()           # the island holds still: only the app's picture moves
-        return True
-
-    def stop_backdrop(self):
-        if self.backdrop_timer:
-            GLib.source_remove(self.backdrop_timer)
-            self.backdrop_timer = 0
-        self.source = self.picture = self.soft = None
 
     def candidates(self):
         """Windows from the top of the stack down, the app in front first."""
@@ -162,7 +136,9 @@ class IslandWindow(Gtk.Window):
             return False
         (x, y), (w, h) = self.at, self.placed
         display = Gdk.Display.get_default()
-        for source in ([self.source] if self.source else self.candidates()):
+        for source in self.candidates():
+            if source == self.get_window():
+                continue
             display.error_trap_push()
             _ok, sx, sy = source.get_origin()
             covers = sx <= x and sy <= y and sx + source.get_width() >= x + w and sy + source.get_height() >= y + h
@@ -171,34 +147,124 @@ class IslandWindow(Gtk.Window):
                 continue
             self.source = source
             self.picture = Gdk.cairo_surface_create_from_pixbuf(pixbuf, 1, None)
-            self.soft, self.blur_k = soft_copy(self.picture, w, h)
             return True
-        self.source = self.picture = self.soft = None
+        self.source = self.picture = None
         return False
 
-    def island_hidden(self):
-        self.hide()
-        if self.on_hidden:
-            self.on_hidden()
+
+class IslandOverApps:
+    """An island over YouTube, movies and other apps, when Home's window is behind them. The island isn't in any
+    window: each frame it moves is drawn into a small picture and handed to what the app in front can show,
+    chosen when the island appears: YouTube's or the TV browser's own page (frosted live by the page), mpv's
+    video (solid), or else the island's own window (solid)."""
+
+    def __init__(self, shell, island):
+        self.shell, self.island = shell, island
+        self.on_hidden = None
+        self.target = None
+        self.targets = {}               # made the first time each is needed, then kept with their connections
+        island.on_frame = self.island_moved
+        island.on_hidden = self.island_hidden
+
+    def reveal(self, start):
+        """Set the island going with `start()`; it appears with its first frame."""
+        start()
 
     def dismiss(self):
         self.island.dismiss()
 
+    def kind(self):
+        app = getattr(self.shell, "prev_app", None)
+        if app == "youtube":
+            return "youtube"
+        if app == "player":
+            return "mpv"
+        if getattr(self.shell, "tv_browser", False):
+            return "browser"
+        return "window"
 
-def soft_copy(picture, width, height):
-    """A blur of `picture` for frosting, made as Home makes its photo's: a 1/16 sample, softened twice.
-    Returns (surface, how much to scale it up)."""
-    from widgets.glass import soften
-    tw, th = max(2, round(width / 16)), max(2, round(height / 16))
-    small = cairo.ImageSurface(cairo.FORMAT_RGB24, tw, th)
-    cr = cairo.Context(small)
-    cr.scale(tw / width, th / height)
-    cr.set_source_surface(picture, 0, 0)
-    cr.get_source().set_filter(cairo.FILTER_GOOD)
-    cr.paint()
-    small.flush()
-    soft = soften(soften(small))
-    return soft, width / soft.get_width()
+    def make(self, kind):
+        if kind == "youtube":
+            return overlays.youtube_target()
+        if kind == "browser":
+            return overlays.browser_target()
+        if kind == "mpv":
+            return overlays.MpvTarget()
+        return WindowTarget(IslandWindow(self.shell))
+
+    def choose(self):
+        """The target for the app in front; the island's own window when that app doesn't answer."""
+        for kind in (self.kind(), "window"):
+            target = self.targets.get(kind) or self.targets.setdefault(kind, self.make(kind))
+            if target.connect():
+                return target
+        return self.targets["window"]
+
+    def island_moved(self):
+        if self.target is None:
+            self.target = self.choose()
+        self.island.frost = self.target.frost
+        surface, outline = self.render()
+        if surface is None:
+            return
+        if not self.target.show(surface, outline) and not isinstance(self.target, WindowTarget):
+            self.target = self.targets.get("window") or self.targets.setdefault("window", self.make("window"))
+            self.island.frost = self.target.frost
+            surface, outline = self.render()
+            self.target.show(surface, outline)
+
+    def render(self):
+        """The island's frame now, and its outline as SVG path data, both in device pixels."""
+        width, height = (max(1, int(v)) for v in self.island.room())
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+        self.island.render_width = width
+        try:
+            cr = cairo.Context(surface)
+            if self.island.trace(cr) is None:
+                return None, None
+            cr.identity_matrix()
+            outline = overlays.svg_path(cr.copy_path())
+            cr = cairo.Context(surface)
+            gray = cairo.FontOptions()
+            gray.set_antialias(cairo.ANTIALIAS_GRAY)    # coloured subpixel edges would show on a see-through frame
+            cr.set_font_options(gray)
+            self.island.on_draw(self.island, cr)
+        finally:
+            self.island.render_width = 0
+        surface.flush()
+        return surface, outline
+
+    def island_hidden(self):
+        if self.target is not None:
+            self.target.hide()
+            self.target = None
+        if self.on_hidden:
+            self.on_hidden()
+
+    def destroy(self):
+        for target in self.targets.values():
+            target.close()
+        self.targets.clear()
+
+
+class WindowTarget:
+    """The island's own window as a target, like the page and mpv ones."""
+
+    def __init__(self, window):
+        self.window = window
+        self.frost = window.frost
+
+    def connect(self, timeout=0.4):
+        return True
+
+    def show(self, surface, outline=None):
+        return self.window.show_frame(surface, outline)
+
+    def hide(self):
+        self.window.hide_frame()
+
+    def close(self):
+        self.window.destroy()
 
 
 # ---------------------------------------------------------------- notices
@@ -336,6 +402,10 @@ class NoticeIsland(Gtk.DrawingArea):
         self.text_alpha = self.old_alpha = 0.0
         self.shine = -1.0
         self.room_size = (1, 1)
+        self.render_width = 0               # set while it is drawn off screen, for an app's own overlay
+
+    def span(self):
+        return self.render_width or self.get_allocated_width()
 
     # ---- what callers use
     def say(self, text, secs=4, kind=None):
@@ -510,7 +580,7 @@ class NoticeIsland(Gtk.DrawingArea):
         """Trace the island's outline; (left, width, height), or None while it is tucked away."""
         if self.h < 0.5 or self.w < 0.5:
             return None
-        left = self.get_allocated_width() / 2 - self.w / 2
+        left = self.span() / 2 - self.w / 2
         grown = min(1.0, self.h / self.px(self.HEIGHT))     # the shoulders grow in with the bead
         edge_outline(cr, left, left + self.w, self.h, self.px(SHOULDER) * grown, self.px(CORNER))
         return left, self.w, self.h
@@ -542,7 +612,7 @@ class NoticeIsland(Gtk.DrawingArea):
         px = self.px
         H = self.full[1]
         y = height / 2
-        x = self.get_allocated_width() / 2 - max(0.0, width / 2 - px(self.PAD) - px(self.BADGE))
+        x = self.span() / 2 - max(0.0, width / 2 - px(self.PAD) - px(self.BADGE))
         r = px(self.BADGE) * min(1.0, height / H)
         words = x + px(self.BADGE) + px(self.GAP)
         if self.old and self.old_alpha > 0.01:

@@ -148,7 +148,10 @@ def blur_pixbuf(pb):
 
 
 def paint_frost(cr, base, widget, photo):
-    """Fill the current clip with the blurred, screen-fixed crop of the photo behind `widget`."""
+    """Fill the current clip with the blurred, screen-fixed crop of the photo behind `widget`. A live frost (an
+    app's page under an island) blurs its own picture, so nothing is painted for it here."""
+    if getattr(photo, "live", False):
+        return
     if photo is not None and not getattr(photo, "transparency", True):
         cr.set_source_rgb(0.075, 0.105, 0.15)
         cr.paint()

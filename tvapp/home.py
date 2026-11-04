@@ -146,6 +146,7 @@ class Home(Gtk.Window):
         self.state_loading = False
         self.fast_until = 0
         self.prev_app = None
+        self.tv_browser = False         # the TV browser (Brave) is the app in front
         self.last_error = None
         self.state_seen = False
         self.playback_prompt = None
@@ -373,7 +374,7 @@ class Home(Gtk.Window):
         front. `kind` picks its icon (info, play, phone, done, update, error); it is guessed from the words if left out."""
         if self.prev_app not in (None, "home") and not self.buffering.get_visible():
             if not self.notice_overlay:
-                self.notice_overlay = island.IslandWindow(self, island.NoticeIsland(self, frosted=False))
+                self.notice_overlay = island.IslandOverApps(self, island.NoticeIsland(self, frosted=False))
             self.notice.dismiss()
             self.notice_overlay.reveal(lambda: self.notice_overlay.island.say(text, secs, kind))
         else:
@@ -989,6 +990,7 @@ class Home(Gtk.Window):
             trace(f"prev_app {self.prev_app} -> {app}")
             self.trace_frames = 3
         self.prev_app = app
+        self.tv_browser = bool(state.get("tv_browser"))
         self.state_seen = True
         self.update_playback_prompt(state.get("playback_suggestion"))
         self.sync_apps(state.get("apps_rev"))
