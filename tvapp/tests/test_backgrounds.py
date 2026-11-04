@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import backgrounds  # noqa: E402
 import widgets  # noqa: E402
+import wallpapers  # noqa: E402
 from gi.repository import GdkPixbuf  # noqa: E402
 from test_torbox import TorboxCase, server  # noqa: E402
 
@@ -121,6 +122,21 @@ class LibraryTests(unittest.TestCase):
             self.assertGreaterEqual(max(w, h), 3840, f.name)
             self.assertGreaterEqual(min(w, h), 2160, f.name)
 
+    def test_bundled_collections_ship_widescreen_art_and_cycle_without_repeats(self):
+        for source in wallpapers.BUNDLED:
+            records = wallpapers.pictures(source)
+            self.assertGreaterEqual(len(records), 2)
+            for item in records:
+                self.assertTrue(item["caption"] and item["credit"])
+                fmt, width, height = backgrounds.probe(item["path"])
+                self.assertEqual(fmt, "jpeg")
+                self.assertGreaterEqual(height, 1080)
+                self.assertEqual(width * 9, height * 16)
+            provider = wallpapers.Collection(source)
+            cycle = [provider.next()["path"] for _ in records]
+            self.assertEqual(set(cycle), {item["path"] for item in records})
+            self.assertNotEqual(provider.next()["path"], cycle[-1])
+
     def test_remove(self):
         a = self.lib.import_file(image(self.src / "x.png", 1280, 720))
         self.assertTrue(self.lib.remove(a["id"]))
@@ -138,9 +154,9 @@ class LibraryTests(unittest.TestCase):
 class ConfigTests(unittest.TestCase):
     def test_defaults_and_validation(self):
         cfg = widgets.parse_config({})
-        self.assertEqual((cfg["background"], cfg["retro_off"]), ("photos", []))
+        self.assertEqual((cfg["background"], cfg["retro_off"]), ("topographic", []))
         for bad in ("retr0", 5, None, ["retro"]):
-            self.assertEqual(widgets.parse_config({"background": bad})["background"], "photos")
+            self.assertEqual(widgets.parse_config({"background": bad})["background"], "topographic")
         for bad in ("0123456789ab", 7, None, {"a": 1}):
             self.assertEqual(widgets.parse_config({"retro_off": bad})["retro_off"], [])
         cfg = widgets.parse_config({"background": "retro",
@@ -157,7 +173,7 @@ class ConfigTests(unittest.TestCase):
             raw = json.loads((Path(d) / "home.json").read_text())
             self.assertEqual(raw["display"]["mode"], "1920x1080")
             (Path(d) / "home.json").write_text("{corrupt")
-            self.assertEqual(widgets.load_config(d)["background"], "photos")
+            self.assertEqual(widgets.load_config(d)["background"], "topographic")
 
 
 class PhoneTests(TorboxCase):
@@ -182,6 +198,17 @@ class PhoneTests(TorboxCase):
         for bad in ({"source": "tv"}, {"source": 4}, {}):
             with self.assertRaises(ValueError):
                 self.c.action("background_set", bad)
+
+    def test_curated_source_selected_on_phone_is_used_on_home(self):
+        import homescreen
+        for source in wallpapers.BUNDLED:
+            state = self.c.action("background_set", {"source": source})["background"]
+            self.assertEqual((state["source"], state["wanted"]), (source, source))
+            home = SimpleNamespace(bg_source=widgets.load_config(self.data)["background"],
+                                   collections={source: wallpapers.Collection(source)})
+            provider, off = homescreen.AmbientHomeScreen.provider(home)
+            self.assertEqual(off, ())
+            self.assertEqual(provider.next()["source"], source)
 
     def test_all_on_by_default_and_toggle_round_trip(self):
         ids = [self.c.retro.import_file(image(self.src / ("p%d.png" % n), 1280 + n, 720, rgb=n * 0x01000000 + 0xff))["id"]

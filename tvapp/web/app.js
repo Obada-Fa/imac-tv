@@ -149,11 +149,13 @@
       ctx.fillStyle = dim; ctx.fillRect(0, 0, w, h);
     }
   }
+  let requestedSky = null;
   function setSkyPhoto(src) {
-    if (!src || (skyPhoto && skyPhoto.dataset.src === src)) return;
+    if (!src || src === requestedSky) return;
+    requestedSky = src;
     const img = new Image();
-    img.dataset.src = src;
-    img.onload = () => { skyPhoto = img; drawSky(true); };
+    img.onload = () => { if (src === requestedSky) { skyPhoto = img; drawSky(true); } };
+    img.onerror = () => { if (src === requestedSky) requestedSky = null; };
     img.src = src;
   }
   let skyTimer = 0;
@@ -1358,12 +1360,16 @@
     const min = setState.youtube_close_after_paused_min || 0;
     document.querySelectorAll('#yt-close button').forEach(b => b.classList.toggle('on', Number(b.dataset.min) === min));
   }
-  // Home's photo (Focus) or the first retro picture that's on, far behind everything.
+  function themePreview(source, retro) {
+    if (source === 'retro') {
+      const cover = retro.find(r => r.on) || retro[0];
+      return cover ? '/api/retro/thumb/' + cover.id : '';
+    }
+    return '/api/themes/' + (source === 'photos' ? 'focus' : source) + '.jpg';
+  }
   function skyFromSettings() {
     const bg = setState && setState.background;
-    if (!bg) return;
-    const retro = bg.source === 'retro' && (bg.retro.find(r => r.on) || bg.retro[0]);
-    setSkyPhoto(retro ? '/api/retro/thumb/' + retro.id : '/api/themes/focus.jpg');
+    if (bg) setSkyPhoto(themePreview(bg.source, bg.retro));
   }
   function renderBackground() {
     const bg = setState.background || {source: 'photos', retro: []};
@@ -1373,8 +1379,7 @@
     $('bg-retro').hidden = !bg.retro.length || bg.source !== 'retro';
     for (const button of document.querySelectorAll('#bg-source button')) {
       const on = button.dataset.src === bg.source;
-      const first = bg.retro.find(r => r.on) || bg.retro[0];
-      const src = button.dataset.src === 'photos' ? '/api/themes/focus.jpg' : first ? '/api/retro/thumb/' + first.id : '';
+      const src = themePreview(button.dataset.src, bg.retro);
       const url = src ? `url("${src}")` : '';
       if (button.style.backgroundImage !== url) button.style.backgroundImage = url;
       button.classList.toggle('on', on);

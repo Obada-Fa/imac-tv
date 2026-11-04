@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "tvapp"))
 import settings_model
 import twitch
 import widgets
+import wallpapers
 from media.config import DEFAULTS
 
 
@@ -136,8 +137,17 @@ class Preview(SimpleHTTPRequestHandler):
             self.json({"outputs": [], "trial": {"active": False}, "display_error": "",
                        "torbox": {"configured": True}, "fields": settings_model.FIELDS,
                        "values": settings_model.values(widgets.parse_config({}), DEFAULTS),
-                       "background": {"source": "photos", "wanted": "photos", "retro": []},
+                       "background": {"source": widgets.DEFAULT_CONFIG["background"],
+                                      "wanted": widgets.DEFAULT_CONFIG["background"], "retro": []},
                        "youtube_close_after_paused_min": 0})
+        elif path in {f"/api/themes/{key}.jpg" for key in wallpapers.BUNDLED}:
+            source = Path(path).stem
+            body = Path(wallpapers.pictures(source)[0]["path"]).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path == "/api/themes/focus.jpg":
             body = (ROOT / "tvapp/assets/preview-stremio-space.png").read_bytes()
             self.send_response(200)

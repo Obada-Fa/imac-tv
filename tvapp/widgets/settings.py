@@ -15,6 +15,7 @@ from gi.repository import Gtk, Gdk, GLib
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import audio_output  # noqa: E402
 import backgrounds  # noqa: E402
+import wallpapers  # noqa: E402
 import display  # noqa: E402
 import settings_model
 import widgets  # noqa: E402
@@ -554,22 +555,26 @@ class SettingsScreen(Screen):
         return False
 
     def render_background(self):
-        px = self.shell.px
         cfg = widgets.load_config(display.DATA)
         lib = self.retro.list()
-        use_retro = cfg["background"] == "retro" and bool(lib)
+        source = cfg["background"]
+        if source == "retro" and not lib:
+            source = "photos"
         home = self.shell.tops.get('home')
         photo = getattr(home, 'current_item', None) or {}
+        focus_cover = (photo.get('path') if photo.get('source') in ('bing', 'wikimedia') else None)
         self.section('Background')
-        self.grid([
-            self.picture_button('Focus', 'Nature photography', not use_retro, ('bg', 'photos'),
-                                lambda: self.choose_background('photos'),
-                                photo.get('path') or ASSETS / 'preview-youtube-nature.png'),
-            self.picture_button('Retro', '%d pictures' % len(lib) if lib else 'Add pictures from your phone',
-                                use_retro, ('bg', 'retro'), lambda: self.choose_background('retro'),
-                                self.retro.thumb_path(lib[0]['id']) if lib else None),
-        ], columns=2)
-        if lib and use_retro:
+        choices = [
+            ('photos', 'Nature photography', focus_cover or ASSETS / 'preview-youtube-nature.png'),
+            ('retro', '%d pictures' % len(lib) if lib else 'Add pictures from your phone',
+             self.retro.thumb_path(lib[0]['id']) if lib else None),
+        ]
+        for key, description in wallpapers.BUNDLED.items():
+            choices.append((key, description, wallpapers.pictures(key)[0]['path']))
+        self.grid([self.picture_button(wallpapers.NAMES[key], sub, source == key, ('bg', key),
+                                       lambda k=key: self.choose_background(k), cover)
+                   for key, sub, cover in choices], columns=2)
+        if lib and source == "retro":
             off = set(cfg["retro_off"])
             on = {i["id"] for i in lib} - off or {i["id"] for i in lib}
             self.section('Your pictures  ·  %d of %d on' % (len(on), len(lib)))
@@ -621,8 +626,8 @@ class SettingsScreen(Screen):
             self.shell.toast("Add a retro picture from your phone first", 4)
             return
         widgets.save_keys(display.DATA, {"background": source})
-        self.shell.toast("Theme: " + ("Retro" if source == "retro" else "Focus"), 3)
-        self.rerender(("bg", "retro" if source == "retro" else "photos"))
+        self.shell.toast("Theme: " + wallpapers.NAMES[source], 3)
+        self.rerender(("bg", source))
 
     def restore_scroll(self):
         if self.disposed:

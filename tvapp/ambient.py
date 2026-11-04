@@ -5,7 +5,6 @@ Pure data module (GdkPixbuf only for scaling). Network/parse failures are logged
 import json
 import os
 from pathlib import Path
-import random
 import re
 import sys
 import threading
@@ -13,6 +12,8 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta
+
+from wallpapers import Rotation
 
 import gi
 gi.require_version("GdkPixbuf", "2.0")
@@ -95,8 +96,7 @@ class Library:
         self.max_images, self.max_bytes = max_images, max_bytes
         self._lock = threading.Lock()
         self._busy = threading.Lock()
-        self._queue = []
-        self._last = None
+        self.rotation = Rotation()
 
     # ---- index ----
     def _read(self):
@@ -131,18 +131,7 @@ class Library:
 
     def next(self):
         with self._lock:
-            have = {i["path"]: i for i in self.items()}
-            if not have:
-                self._queue = []
-                return None
-            self._queue = [p for p in self._queue if p in have]
-            if not self._queue:
-                self._queue = list(have)
-                random.shuffle(self._queue)
-                if len(self._queue) > 1 and self._queue[0] == self._last:
-                    self._queue.append(self._queue.pop(0))
-            self._last = self._queue.pop(0)
-            return dict(have[self._last])
+            return self.rotation.pick(self.items())
 
     def refresh_async(self, force=False, on_done=None):
         def run():

@@ -1,0 +1,42 @@
+{
+  "earthrise.jpg": {
+    "name": "Earth above the lunar horizon",
+    "credit": "NASA/Goddard/Arizona State University",
+    "url": "https://science.nasa.gov/resource/nasa-releases-new-high-resolution-earthrise-image/"
+  },
+  "mercury.jpg": {
+    "name": "Mercury in grazing light",
+    "credit": "NASA/JPL/USGS",
+    "url": "https://science.nasa.gov/photojournal/planet-mercury/"
+  },
+  "saturn-rings.jpg": {
+    "name": "In Saturn’s shadow",
+    "credit": "NASA/JPL/Space Science Institute",
+    "url": "https://science.nasa.gov/resource/in-saturns-shadow/"
+  },
+  "gusev-sunset.jpg": {
+    "name": "Sunset at Gusev Crater",
+    "credit": "NASA/JPL/Texas A&M/Cornell",
+    "url": "https://science.nasa.gov/resource/sunset-at-mars-gusev-crater-spirit/"
+  },
+  "jupiter.jpg": {
+    "name": "Jupiter from Cassini",
+    "credit": "NASA/JPL/Space Science Institute",
+    "url": "https://science.nasa.gov/resource/cassini-jupiter-portrait/"
+  },
+  "the-blue-marble.jpg": {
+    "name": "The Blue Marble",
+    "credit": "NASA Johnson Space Center, Apollo 17 crew",
+    "url": "https://science.nasa.gov/resource/the-blue-marble/"
+  },
+  "neptune-and-triton.jpg": {
+    "name": "Crescents of Neptune and Triton",
+    "credit": "NASA/JPL",
+    "url": "https://science.nasa.gov/resource/crescents-of-neptune-and-triton/"
+  },
+  "apollo-earthrise.jpg": {
+    "name": "Apollo 8 Earthrise",
+    "credit": "NASA, Bill Anders",
+    "url": "https://science.nasa.gov/resource/the-rising-earth-as-seen-by-apollo-8/"
+  }
+}

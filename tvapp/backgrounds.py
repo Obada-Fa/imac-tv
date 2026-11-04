@@ -8,15 +8,17 @@ version swaps in without losing the selection; Home's contour cache keys on size
 Used by the phone server (import/list/choose) and Home (the provider: `next()` has the same boundary as
 ambient.Library.next, and leaves `reactive_paths` out so Home runs its contour analysis for Retro only).
 """
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
-import random
 import re
 import sys
 import threading
 import time
+
+from wallpapers import Rotation
 
 import gi
 gi.require_version("GdkPixbuf", "2.0")
@@ -88,8 +90,7 @@ class Backgrounds:
         self.thumbs = self.dir / "thumbs"
         self.index_path = self.dir / "index.json"
         self._lock = threading.RLock()
-        self._queue = []
-        self._last = None
+        self.rotation = Rotation()
 
     # ---- index
     def _read(self):
@@ -266,7 +267,10 @@ class Backgrounds:
         removed while newly bundled ones still arrive. Returns how many were added."""
         marker = self.dir / ".seeded.json"
         added = 0
-        with self._lock:
+        self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Home and the phone controller can both start seeding during the same update.
+        with self._lock, (self.dir / ".seed.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 done = set(json.loads(marker.read_text()))
             except (OSError, ValueError, TypeError):
@@ -288,10 +292,12 @@ class Backgrounds:
                     added += self.import_file(f, name, credit=info.get("credit"))["status"] == "added"
                 except Exception as exc:
                     _log("seed %s:" % f.name, exc)
+                    continue
                 done.add(f.name)
             if files:
-                self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-                marker.write_text(json.dumps(sorted(done)))
+                tmp = marker.with_suffix(".tmp")
+                tmp.write_text(json.dumps(sorted(done)))
+                os.replace(tmp, marker)
         return added
 
     # ---- provider boundary (same as ambient.Library)
@@ -307,15 +313,4 @@ class Backgrounds:
 
     def next(self, off=()):
         with self._lock:
-            have = {i["path"]: i for i in self.items(off)}
-            if not have:
-                self._queue = []
-                return None
-            self._queue = [p for p in self._queue if p in have]
-            if not self._queue:
-                self._queue = list(have)
-                random.shuffle(self._queue)
-                if len(self._queue) > 1 and self._queue[0] == self._last:
-                    self._queue.append(self._queue.pop(0))
-            self._last = self._queue.pop(0)
-            return dict(have[self._last])
+            return self.rotation.pick(self.items(off))

@@ -30,6 +30,7 @@ import settings_model
 import updater
 import apps
 import backgrounds
+import wallpapers
 import browser
 import nowplaying
 import phonemic
@@ -1934,7 +1935,7 @@ class Controller:
             off = []                        # nothing left on: Home shows them all
         for i in lib:
             i["on"] = i["id"] not in off
-        return {"source": "retro" if cfg["background"] == "retro" and lib else "photos",
+        return {"source": "photos" if cfg["background"] == "retro" and not lib else cfg["background"],
                 "wanted": cfg["background"], "retro": lib,
                 "formats": backgrounds.supported_formats()}
 
@@ -2010,7 +2011,7 @@ class Controller:
         if action == "background_set":
             source = params.get("source")
             if source not in widgets.BACKGROUNDS:
-                raise ValueError("Choose Focus or Retro")
+                raise ValueError("Unknown background theme")
             if source == "retro" and not self.retro.list():
                 raise ValueError("Add a retro picture first")
             with self.settings_lock:
@@ -2644,12 +2645,16 @@ class Handler(BaseHTTPRequestHandler):
             self._note_presence()
             self.respond(200, CONTROL.settings())
             return
-        if parsed.path == "/api/themes/focus.jpg":
+        theme = re.fullmatch(r"/api/themes/([a-z]+)\.jpg", parsed.path)
+        if theme and (theme[1] == "focus" or theme[1] in wallpapers.BUNDLED):
             if not self.authorised(parsed.query):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
-            import ambient
-            items = ambient.Library(DATA, 320, 180).items()
+            if theme[1] == "focus":
+                import ambient
+                items = ambient.Library(DATA, 320, 180).items()
+            else:
+                items = wallpapers.pictures(theme[1])
             if not items:
                 self.respond(404, {"error": "No Focus photos cached yet"})
                 return

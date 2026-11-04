@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import threading
 
+import wallpapers
+
 DEFAULT_CONFIG = {
     "widgets": ["clock", "weather", "pairing", "continue", "apps"],
     "weather": {},
@@ -26,7 +28,7 @@ DEFAULT_CONFIG = {
     "visualizer": True,
     "qr_style": "glass",
     "clock_style": "glass",      # CLOCK_STYLES below
-    "background": "photos",      # "photos" (Bing/Wikimedia) or "retro" (imported images, with Circuit)
+    "background": "topographic", # used until a theme is explicitly selected
     "retro_off": [],             # retro background ids switched off (everything is on by default)
 }
 STYLES = ("network", "bubbles")
@@ -34,7 +36,7 @@ NODE_SHAPES = ("hexagon", "octagon")
 TILE_SHAPES = ("rounded", "chamfer")
 QR_STYLES = ("glass", "light")
 CLOCK_STYLES = ("glass", "constellation", "analog", "simple", "drift")
-BACKGROUNDS = ("photos", "retro")
+BACKGROUNDS = tuple(wallpapers.NAMES)
 SHAPE_MODES = ("photo", "photo+animals", "off")
 
 REGISTRY = {}

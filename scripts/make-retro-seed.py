@@ -321,6 +321,266 @@ def retro_sun():
     return s
 
 
+# New originals use a 960 × 540 design space, then rasterize to the same 4K canvas as the first set.
+def poster(background):
+    s, c = canvas()
+    c.set_source_rgb(*rgb(background))
+    c.paint()
+    c.scale(W / 960, H / 540)
+    return s, c
+
+
+def polygon(c, points, color):
+    c.move_to(*points[0])
+    for point in points[1:]:
+        c.line_to(*point)
+    c.close_path()
+    c.set_source_rgb(*rgb(color))
+    c.fill()
+
+
+def disc(c, x, y, radius, color):
+    c.arc(x, y, radius, 0, math.tau)
+    c.set_source_rgb(*rgb(color))
+    c.fill()
+
+
+def paper(c, seed):
+    c.identity_matrix()
+    grain(c, random.Random(seed), .047)
+
+
+def chromatic_interchange():
+    """Stacked screen-printed racetrack lanes with contrasting ink traps at crossings."""
+    s, c = poster(0x162D32)
+    cream, red, orange, gold, teal = 0xF1D7A4, 0xDC4A30, 0xE98029, 0xD8AB47, 0x478881
+    lines = [
+        ((-70, 143), [(170, 143, 238, 143, 322, 264), (461, 463, 579, 524, 1005, 462)], [red, orange, gold, cream]),
+        ((411, -68), [(417, 66, 547, 120, 689, 110), (820, 102, 832, 230, 750, 280),
+                      (630, 362, 595, 405, 635, 600)], [teal, cream, gold]),
+        ((-54, 512), [(103, 492, 287, 366, 344, 221), (399, 77, 550, 27, 630, 105),
+                      (731, 215, 759, 304, 1007, 200)], [cream, red, orange, gold, teal]),
+    ]
+    for start, curves, colors in lines:
+        for i, col in enumerate([0x152B30] + colors):
+            c.move_to(*start)
+            for curve in curves:
+                c.curve_to(*curve)
+            c.set_line_width(13 * (len(colors) - i + .5) + (7 if not i else 0))
+            c.set_source_rgb(*rgb(col))
+            c.stroke()
+    # Registration targets printed deep into the empty corners.
+    for x, y in ((71, 60), (899, 487)):
+        c.set_source_rgba(*rgb(cream), .5)
+        c.set_line_width(.8)
+        c.arc(x, y, 10, 0, math.tau)
+        c.move_to(x - 16, y)
+        c.line_to(x + 16, y)
+        c.move_to(x, y - 16)
+        c.line_to(x, y + 16)
+        c.stroke()
+    paper(c, 21)
+    return s
+
+
+def velvet_oscillator():
+    """Vary the spacing and curvature of silk-screen lines to sculpt an anamorphic fold."""
+    s, c = poster(0x1D142B)
+    grad = cairo.LinearGradient(70, 0, 950, 0)
+    palette = ((0, 0x61345F), (.20, 0xBD6487), (.38, 0xF8AC81), (.52, 0xCF465B),
+               (.68, 0xFFDDB4), (.82, 0x996CA7), (1, 0x405982))
+    for pos, col in palette:
+        grad.add_color_stop_rgb(pos, *rgb(col))
+    for k in range(-75, 180):
+        for x in range(-3, 966, 3):
+            # Local phase modulation around two off-centre lenses pinches and opens the grooves.
+            y = k * 5.9
+            dx = (x - 590) / 220
+            dy = (y - 250) / 182
+            bulge = math.exp(-(.9 * dx * dx + .6 * dy * dy))
+            y += 132 * math.sin(dx * 2.0 + .75 * dy) * bulge + 48 * math.sin(x / 217 + k / 27)
+            if x == -3:
+                c.move_to(x, y)
+            else:
+                c.line_to(x, y)
+        c.set_source(grad)
+        c.set_line_width(2.1 + 1.05 * math.sin(k / 18))
+        c.stroke()
+    paper(c, 22)
+    return s
+
+
+def quarter_credit():
+    """Isometric midnight arcade blocks. Project the floors and their windows in one coordinate system."""
+    rng = random.Random(23)
+    s, c = poster(0x17263B)
+    def project(u, v, h):
+        return 472 + 61 * (u - v), -126 + 27 * (u + v) - h
+
+    for depth in range(-2, 38):
+        for u in range(-4, 24):
+            v = depth - u
+            x, y = project(u, v, 0)
+            if not (-90 < x < 1040 and -20 < y < 800):
+                continue
+            height = rng.choice([16, 42, 57, 76, 95, 122, 154])
+            side = rng.uniform(.65, .93)
+            a, b, d, e = (project(u + du, v + dv, height) for du, dv in
+                           ((0, 0), (side, 0), (side, side), (0, side)))
+            bb, dd, ee = (project(u + du, v + dv, 0) for du, dv in ((side, 0), (side, side), (0, side)))
+            top, left, right, light = rng.choice([
+                (0x316D81, 0x253A53, 0x1C2943, 0x84CBCC), (0xC06B75, 0x733758, 0x3A2C4C, 0xF8AB84),
+                (0x5176A6, 0x2C3C65, 0x1C2745, 0xAFBCDB), (0x328584, 0x234B61, 0x163244, 0x74D1B8)])
+            polygon(c, [e, d, dd, ee], left)
+            polygon(c, [d, b, bb, dd], right)
+            polygon(c, [a, b, d, e], top)
+            for z in range(8, height - 4, 10):
+                for j in range(1, 5):
+                    if rng.random() < .38:
+                        t = j * side / 5
+                        polygon(c, [project(u + t, v + side, z), project(u + t + .08, v + side, z),
+                                    project(u + t + .08, v + side, z + 2), project(u + t, v + side, z + 2)], light)
+            if height > 90 and rng.random() < .65:
+                for inset in (.14, .19):
+                    p = [project(u + du, v + dv, height) for du, dv in
+                         ((inset, inset), (side-inset, inset), (side-inset, side-inset), (inset, side-inset))]
+                    polygon(c, p, light if inset == .14 else top)
+    paper(c, 23)
+    return s
+
+
+def palm_motor_inn():
+    """Screen-printed desert motel at blue hour, with breeze blocks, palms and a lit pool."""
+    rng = random.Random(24)
+    s, c = poster(0xDE9579)
+    bg = cairo.LinearGradient(0, 0, 0, 322)
+    bg.add_color_stop_rgb(0, *rgb(0x575379))
+    bg.add_color_stop_rgb(.65, *rgb(0xD5878C))
+    bg.add_color_stop_rgb(1, *rgb(0xF3BC8A))
+    c.set_source(bg)
+    c.paint()
+    disc(c, 673, 132, 65, 0xF7CB92)
+    polygon(c, [(0, 276), (86, 244), (124, 251), (230, 207), (268, 216), (323, 204), (472, 263),
+                (571, 231), (601, 241), (728, 191), (834, 238), (891, 225), (960, 251), (960, 355), (0, 355)], 0x875C76)
+    polygon(c, [(0, 313), (188, 276), (292, 288), (418, 248), (522, 274), (788, 259), (960, 298),
+                (960, 400), (0, 400)], 0x554863)
+    polygon(c, [(0, 335), (960, 291), (960, 540), (0, 540)], 0xC18879)
+    polygon(c, [(-50, 241), (602, 284), (602, 328), (-50, 383)], 0xC68A75)
+    for j in range(10):
+        x = j * 62
+        polygon(c, [(x+4, 254+x*.064), (x+46, 257+x*.064), (x+46, 355-x*.065), (x+4, 358-x*.065)], 0x324554)
+        polygon(c, [(x+7, 257+x*.064), (x+36, 259+x*.064), (x+36, 291), (x+7, 291)], 0xE6AB79 if j%3 else 0x67878C)
+    polygon(c, [(-35, 223), (649, 277), (586, 289), (-35, 251)], 0x40394C)
+    polygon(c, [(-35, 220), (654, 274), (649, 278), (-35, 235)], 0xF3CF9F)
+    pool = [(89, 448), (703, 333), (1001, 360), (1001, 407), (421, 540), (188, 540)]
+    polygon(c, pool, 0xEFE0B5)
+    polygon(c, [(116, 452), (705, 338), (984, 364), (983, 400), (423, 533), (201, 533)], 0x377E83)
+    c.save()
+    for i, point in enumerate([(116, 452), (705, 338), (984, 364), (983, 400), (423, 533), (201, 533)]):
+        (c.move_to if i == 0 else c.line_to)(*point)
+    c.close_path()
+    c.clip()
+    for i in range(550):
+        x, y = rng.uniform(106, 995), rng.uniform(338, 537)
+        c.set_source_rgba(*rgb(0xB4DCB4), rng.uniform(.12, .53))
+        c.set_line_width(rng.uniform(.8, 2))
+        c.move_to(x, y)
+        c.rel_line_to(rng.uniform(2, (y - 300) * .22), rng.uniform(-1, .4))
+        c.stroke()
+    c.restore()
+    for x, y, drift, h in [(834, 305, -12, 171), (927, 319, -22, 223), (58, 370, 33, 255)]:
+        tx, ty = x + drift, y - h
+        polygon(c, [(x-4, y), (x+6, y), (tx+2, ty), (tx-1, ty)], 0x303747)
+        for j in range(12):
+            a = j * math.tau / 12 + rng.uniform(-.09, .09)
+            span = h * rng.uniform(.19, .30)
+            dx, dy = math.cos(a)*span, math.sin(a)*span*.58
+            for k in range(1, 14):
+                t = k / 14
+                px, py = tx+dx*t, ty+dy*t+19*t*t
+                leaf = (1 - .7*t) * h * .09
+                polygon(c, [(px,py), (px+dx/12,py+dy/9+2),
+                            (px+dx*.15,py+leaf+dy*.15)], 0x303747)
+    paper(c, 24)
+    return s
+
+
+def midnight_pinball():
+    """A close-up of bumpers, lighted lanes and the reflected playfield in a steel ball."""
+    s, c = poster(0x18243A)
+    c.translate(502, 257)
+    c.rotate(-.29)
+    for y in (-174, 122):
+        for i, color in enumerate((0xC95065, 0xED885E, 0xEBCB85)):
+            c.set_source_rgb(*rgb(color))
+            c.set_line_width(7)
+            c.move_to(-690, y+13*i)
+            c.curve_to(-230, y+13*i, -240, y-90+13*i, -58, y-90+13*i)
+            c.line_to(620, y-90+13*i)
+            c.stroke()
+    for x, y, r in ((-303, -120, 112), (-58, -30, 92), (-256, 137, 91), (356, 216, 145)):
+        disc(c, x+7, y+12, r+5, 0x0F192A)
+        for fraction, color in ((1,0x9AA8AC), (.964,0x243249), (.90,0xF49C74), (.86,0x88394E), (.78,0xE0C18C), (.75,0xB34658)):
+            disc(c, x, y, r*fraction, color)
+        # Stagger small triangular fins on the cap like a turbine.
+        for j in range(11):
+            a = j*math.tau/11
+            polygon(c, [(x + r*f*math.cos(a+da), y+r*f*math.sin(a+da))
+                        for f,da in ((.21,0),(.66,.15),(.56,.44))], 0xF2BC83)
+        disc(c, x, y, r*.21, 0x53283F)
+        disc(c, x, y, r*.14, 0xD99B75)
+    # Deep polished metal ball: mirror bands represent the ceiling tubes and the dark furniture.
+    x, y, r = 162, 46, 49
+    disc(c, x+6, y+9, r+1, 0x101A2E)
+    sheen = cairo.RadialGradient(x-r*.28, y-r*.38, 0, x, y, r)
+    for t, col in ((0,0xFDF1CD),(.12,0xE3DDC6),(.25,0x738A99),(.45,0x35506C),(.54,0xCBA394),
+                   (.57,0x2B3042),(.71,0x182235),(.87,0x4D5667),(.97,0xB1BBBB),(1,0x5F7581)):
+        sheen.add_color_stop_rgb(t,*rgb(col))
+    c.arc(x,y,r,0,math.tau)
+    c.set_source(sheen)
+    c.fill()
+    for x, y in ((213,-162), (251,-162), (289,-162), (-9,191), (29,191), (67,191)):
+        polygon(c, [(x-11,y+8),(x,y-12),(x+11,y+8)], 0xECC17D)
+    paper(c, 25)
+    return s
+
+
+def phosphor_fantasia():
+    """Long-exposure Lissajous figures on a green phosphor oscilloscope."""
+    s, c = poster(0x071A20)
+    phosphor = cairo.RadialGradient(540, 270, 0, 540, 270, 595)
+    phosphor.add_color_stop_rgb(0, *rgb(0x21473F))
+    phosphor.add_color_stop_rgb(1, *rgb(0x05151F))
+    c.set_source(phosphor)
+    c.paint()
+    c.set_source_rgba(*rgb(0x7ABD9C), .19)
+    c.set_line_width(.65)
+    for x in range(-12, 961, 48):
+        c.move_to(x, 0)
+        c.line_to(x, 540)
+    for y in range(-18, 541, 48):
+        c.move_to(0, y)
+        c.line_to(960, y)
+    c.stroke()
+    for k in range(25):
+        pts = []
+        for j in range(801):
+            t = j*math.tau/800
+            phase = k*.021
+            x = 482 + 310*math.sin(2*t + phase) + 52*math.sin(5*t + phase)
+            y = 260 + 157*math.sin(3*t - phase*.7) + 48*math.cos(t+phase)
+            pts.append((x, y))
+        color = 0xEAD291 if k > 15 else 0x68E2AE
+        glow_line(c, pts, color, 1, ((9,.018),(3,.075),(1,.74)))
+    # Printed scale marks on the screen surround.
+    for x in range(52, 919, 12):
+        c.set_source_rgba(*rgb(0xACCEB2), .42)
+        c.rectangle(x, 493, 1, 8 if (x-52)%60==0 else 3)
+        c.fill()
+    paper(c, 26)
+    return s
+
+
 PICTURES = {
     "Neon Grid Horizon": neon_grid_horizon,
     "Neon Lake Mountains": neon_lake_mountains,
@@ -328,6 +588,12 @@ PICTURES = {
     "Sunburst Scallops": scallops,
     "Wave Bands": wave_bands,
     "Retro Sun": retro_sun,
+    "Chromatic Interchange": chromatic_interchange,
+    "Velvet Oscillator": velvet_oscillator,
+    "Quarter Credit": quarter_credit,
+    "Palm Motor Inn": palm_motor_inn,
+    "Midnight Pinball": midnight_pinball,
+    "Phosphor Fantasia": phosphor_fantasia,
 }
 
 

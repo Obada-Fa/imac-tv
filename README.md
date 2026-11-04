@@ -52,6 +52,7 @@ the generic legacy dialog CSS is not evidence of the current design.
   - Six categories: Appearance, Ambient, Display, Playback, Connections, and System.
   - On TV, use Up/Down in the category rail, OK/Right to enter controls, and Back to return to the rail. Categories remember focus and scroll position.
   - On the phone, the gear opens Settings; the three-dot button opens Quick actions for timers, playback controls, and power-off.
+  - Choose Focus, Retro, Astro, or Topographic in Appearance. Astro rotates mission photography. Topographic is the default for an unconfigured Home and rotates four original relief maps. Both collections work offline. [Preview the wallpapers](tvapp/previews/wallpaper-collections.jpg) · [Astro photo credits](tvapp/assets/astro/credits.json)
   - Upload or replace Retro images from the phone under Appearance. Both devices can enable, disable, or remove images.
   - Network-only controls are disabled in Bubbles layout while retaining their saved values. Display changes still require timed Keep/Revert confirmation.
 

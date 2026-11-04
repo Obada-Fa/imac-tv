@@ -23,6 +23,7 @@ import sys
 import screens
 from screens import Screen, text_label, cover_pixbuf
 import backgrounds
+import wallpapers
 import widgets
 from widgets import network, shapes, contours, volume_hud
 import perflog
@@ -110,7 +111,8 @@ def photo_label(item):
         return "", ""
     cap = (item.get("caption") or "").strip()
     credit = (item.get("credit") or "").strip()
-    src = {"bing": "Bing", "wikimedia": "Wikimedia Commons"}.get(item.get("source"), item.get("source") or "")
+    source = item.get("source") or ""
+    src = {"bing": "Bing", "wikimedia": "Wikimedia Commons", **wallpapers.NAMES}.get(source, source)
     parts = []
     for x in (credit, src):
         if x and x not in parts:
@@ -518,7 +520,8 @@ class AmbientHomeScreen(Screen):
         self.library = ambient.Library(screens.DATA, shell.sw, shell.sh) if ambient else None
         self.retro = backgrounds.Backgrounds(screens.DATA)
         threading.Thread(target=self.retro.seed, args=(backgrounds.SEED_DIR,), daemon=True).start()
-        self.bg_source = self.cfg["background"]      # "photos" | "retro", re-read from home.json when it changes
+        self.collections = {source: wallpapers.Collection(source) for source in wallpapers.BUNDLED}
+        self.bg_source = self.cfg["background"]
         self.bg_off = tuple(self.cfg["retro_off"])
         self.bg_gen = 0                              # bumped on a source change: stale preloads are dropped
         self.home_mtime = self.home_stamp()
@@ -713,6 +716,8 @@ class AmbientHomeScreen(Screen):
         """(provider, switched-off ids) for the chosen background; an empty Retro library falls back to Focus."""
         if self.bg_source == "retro" and self.retro.count():
             return self.retro, self.bg_off
+        if self.bg_source in wallpapers.BUNDLED:
+            return self.collections[self.bg_source], ()
         return self.library, ()
 
     def preload(self):
@@ -741,7 +746,7 @@ class AmbientHomeScreen(Screen):
             GLib.idle_add(self.preloaded, item, surf, gen)
         threading.Thread(target=work, daemon=True).start()
 
-    # ---- background source (photos / retro), changed from the phone or the TV Settings screen
+    # ---- background collection, changed from the phone or the TV Settings screen
     def home_stamp(self):
         try:
             return (screens.DATA / "home.json").stat().st_mtime_ns
@@ -870,9 +875,9 @@ class AmbientHomeScreen(Screen):
             self.now_due = now + NOW_EVERY
             self.poll_now()
         self.sync_background()
-        if self.library and now >= self.photo_due and self.pending:
+        if now >= self.photo_due and self.pending:
             self.swap_photo()
-        elif self.library and now >= self.photo_due and not self.loading and self.canvas.cur is None:
+        elif now >= self.photo_due and not self.loading and self.canvas.cur is None:
             self.preload()
         if self.library and now >= getattr(self, "refresh_due", 1e18):
             self.refresh_due = now + REFRESH_PHOTOS
