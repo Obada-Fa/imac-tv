@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -187,6 +188,80 @@ class ClockTests(unittest.TestCase):
         from widgets import clock
         self.assertEqual(clock.fmt_clock(datetime.datetime(2026, 10, 23, 21, 47)), ("21:47", "Friday 23 October"))
         self.assertEqual(clock.fmt_clock(datetime.datetime(2026, 1, 4, 7, 5)), ("07:05", "Sunday 4 January"))
+
+    def test_every_digit_is_a_star_chart_inside_its_cell(self):
+        from widgets import clock
+        for digit in "0123456789":
+            stars, links, colon, width = clock.star_chart(digit, 0, 0, 56)
+            self.assertGreaterEqual(len(stars), 3, digit)
+            self.assertTrue(links, digit)
+            self.assertIsNone(colon)
+            for x, y in stars:
+                self.assertTrue(0 <= x <= 40 and 0 <= y <= 56, (digit, x, y))
+        stars, links, colon, width = clock.star_chart("20:30", 10, 0, 92)
+        self.assertGreater(colon, 10)
+        self.assertLess(colon, 10 + width)
+
+    def test_the_seconds_light_runs_clockwise_round_the_pill_from_the_top(self):
+        import cairo
+        from widgets import clock
+        cr = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 10, 10))
+        x, y, w, h = 0, 0, 200, 50                     # straight edges 150, ends a half circle of radius 25 each
+        length = 2 * 150 + math.pi * 50
+
+        def head(fraction):
+            cr.new_path()
+            return clock.pill_trace(cr, x, y, w, h, length * fraction)
+        self.assertEqual(head(0), (100, 0))                                 # 0 s: top middle
+        hx, hy = head((75 + math.pi * 25 / 4) / length)                     # 45 degrees round the right end
+        self.assertGreater(hx, 175)
+        self.assertLess(hy, 25)
+        self.assertAlmostEqual(head(0.5)[1], 50, places=3)                  # half way: the bottom edge
+        self.assertAlmostEqual(head(0.5)[0], 100, places=3)
+        self.assertLess(head(0.75)[0], 25)                                  # three quarters: round the left end
+        hx, hy = head(1.0)
+        self.assertAlmostEqual(hx, 100, places=3)
+        self.assertAlmostEqual(hy, 0, places=3)
+
+    def test_only_the_moving_part_is_redrawn_within_a_minute(self):
+        import datetime
+        from unittest import mock
+        from types import SimpleNamespace
+        from widgets import clock
+        shell = SimpleNamespace(px=lambda n: round(n), home_cfg={})
+        face = clock.NexusClock(shell, "glass")
+        face.moving = (0, 0, 300, 70)
+        now = datetime.datetime(2026, 10, 27, 20, 30, 42, 250000)
+        face.drawn_minute = now.replace(second=0, microsecond=0)
+        with mock.patch.object(clock.datetime, "datetime", wraps=datetime.datetime) as dt, \
+                mock.patch.object(face, "queue_draw_area") as area, mock.patch.object(face, "queue_draw") as full:
+            dt.now.return_value = now
+            face.tick()
+            area.assert_called_once_with(0, 0, 300, 70)
+            full.assert_not_called()
+            dt.now.return_value = now.replace(minute=31, second=0)       # a new minute: everything
+            face.tick()
+            full.assert_called_once()
+
+    def test_simple_and_constellation_wait_for_the_next_minute(self):
+        import datetime
+        from unittest import mock
+        from types import SimpleNamespace
+        from widgets import clock
+        shell = SimpleNamespace(px=lambda n: round(n), home_cfg={})
+        for style, longest in (("simple", 60005), ("constellation", 60005), ("glass", 1005), ("analog", 1005)):
+            face = clock.NexusClock(shell, style)
+            now = datetime.datetime(2026, 10, 27, 20, 30, 42, 250000)
+            with mock.patch.object(clock.datetime, "datetime", wraps=datetime.datetime) as dt, \
+                    mock.patch.object(face, "get_mapped", return_value=True), \
+                    mock.patch.object(clock.GLib, "timeout_add", return_value=1) as later:
+                dt.now.return_value = now
+                face.tick()
+            delay = later.call_args[0][0]
+            self.assertLessEqual(delay, longest, style)
+            if style in ("simple", "constellation"):
+                self.assertEqual(delay, 18 * 1000 + 5 - 250, style)       # 20:31:00, not 20:30:43
+            face.timer = 0
 
 
 @unittest.skipIf(widgets is None, "GTK bindings unavailable")

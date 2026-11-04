@@ -20,7 +20,7 @@ STROKES = {
            (-8, 48, 9, 64, 24, 56), (42, 46, 34, 37, 23, 31)]],
     "9": [[(32, 22), (31, -3, 0, 9, 6, 29), (15, 44, 31, 28, 34, 13), (32, 30, 21, 51, 12, 58)]],
 }
-MOTES = 28
+MOTES = 44                  # per digit: dense enough to read as a stroke
 DURATION = 1.6
 
 
@@ -60,7 +60,7 @@ def frame(width, height, clock, previous, progress, phase):
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
     cr = cairo.Context(surface)
     cr.scale(width / 202, height / 72)
-    dots = [(100, 28, 1.15), (100, 44, 1.15)]
+    dots = [(100, 28, 1.6), (100, 44, 1.6)]
     for place, left in zip((0, 1, 3, 4), (3, 48, 110, 155)):
         new, old = samples(clock[place]), samples(previous[place])
         changing = new is not old
@@ -73,11 +73,11 @@ def frame(width, height, clock, previous, progress, phase):
                 x = ox + (x - ox) * t + 5 * arc * math.sin(seed)
                 y = oy + (y - oy) * t - 4 * arc
             dots.append((left + x + .45 * math.sin(seed + phase), 4 + y + .55 * math.cos(seed - phase),
-                         1.45 if i % 4 == 0 else 1.1))
+                         1.6 if i % 4 == 0 else 1.25))
 
     # Composite once onto the widget. A soft underlay keeps the points legible on light photos.
-    for radius, dy, color in ((1.9, .65, (0.05, .08, .12, .30)), (1.4, 0, (.64, .81, 1, .23)),
-                              (1, 0, (.91, .96, 1, .96))):
+    for radius, dy, color in ((1.9, .65, (0.05, .08, .12, .34)), (1.45, 0, (.64, .81, 1, .26)),
+                              (1, 0, (.93, .97, 1, .98))):
         cr.set_source_rgba(*color)
         for x, y, r in dots:
             cr.new_sub_path()

@@ -1,21 +1,26 @@
 """Home's clock, in the style picked in Settings (home.json "clock_style"):
 
-- glass: the time on a frosted glass tile like Home's, the date above it, and the minute filling a lit hairline
-- constellation: the digits drawn as Home's network, lit links between small nodes, the colon breathing
-- analog: a frosted glass dial in Home's node shape, two hands and a seconds bead inside its rim, the day beside it
+- glass: the date in a frosted pill like the status chip, the time large beneath it, and a light running round the
+  pill once a minute like a watch's second hand
+- constellation: each digit a small star chart, stars of different sizes joined by thin lines, a few faint stars
+  around them
+- analog: a round frosted dial with hour bars, minute ticks and a sweeping-by-the-second accent hand, the day beside it
 - simple: the time in a large light weight, the date under it
-- drift: small handwritten digits made of motes that regroup on the minute
+- drift: handwritten digits made of motes that regroup on the minute, the date under them
 
-It redraws its own small area once a second, briefly faster during a Drift minute change. In ambient mode it stays,
-smaller and without the date."""
+Glass, analog and drift redraw once a second (only their moving part where they can), briefly faster during a Drift
+minute change; simple and constellation redraw once a minute. In ambient mode the clock stays, smaller and without
+the date (Glass keeps its pill, which carries the seconds)."""
 import datetime
 import math
+import random
 import sys
 from pathlib import Path
 
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("PangoCairo", "1.0")
+import cairo
 from gi.repository import GLib, Gtk, Pango, PangoCairo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -26,15 +31,26 @@ DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
 GLOW = (0.62, 0.80, 1.0)            # Home's glow colour (network.GLOW)
-SIZES = {"glass": (470, 214), "constellation": (520, 196), "analog": (440, 196), "simple": (460, 190),
-         "drift": (290, 103)}   # at 1080p
+SIZES = {"glass": (400, 200), "constellation": (440, 196), "analog": (490, 216), "simple": (460, 190),
+         "drift": (370, 180)}   # at 1080p
+SECONDS = ("glass", "analog", "drift")     # styles that change every second; the others wait for the next minute
+CAP = 92                            # digit height of the drawn-digit styles (Inter Light 128's cap height)
+DRIFT_FRAME = (round(202 * CAP / 56), round(72 * CAP / 56))     # drift.frame's 202 x 72 grid, digits CAP tall
 AMBIENT = 0.62                      # the clock's size in ambient mode
-# Seven-segment digits: a top, b top right, c bottom right, d bottom, e bottom left, f top left, g middle
-SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd", "6": "afgedc",
-            "7": "abc", "8": "abcdefg", "9": "abcdfg"}
-# Each segment joins two of a digit's six nodes: 0 top left, 1 top right, 2 middle left, 3 middle right,
-# 4 bottom left, 5 bottom right
-LINKS = {"a": (0, 1), "b": (1, 3), "c": (3, 5), "d": (4, 5), "e": (2, 4), "f": (0, 2), "g": (2, 3)}
+# Constellation digits: lines through "stars" on a 40 x 60 grid (digits from y 2 to 58); a digit may have two lines
+GLYPHS = {
+    "0": [[(20, 2), (36, 14), (34, 48), (18, 58), (3, 44), (5, 12), (20, 2)]],
+    "1": [[(8, 14), (23, 2), (23, 58)]],
+    "2": [[(4, 14), (20, 2), (35, 13), (3, 58), (37, 58)]],
+    "3": [[(4, 8), (31, 4), (17, 28), (36, 43), (20, 58), (3, 52)]],
+    "4": [[(27, 2), (3, 40), (38, 40)], [(27, 2), (27, 58)]],
+    "5": [[(35, 2), (9, 2), (6, 26), (31, 28), (34, 48), (18, 58), (3, 52)]],
+    "6": [[(31, 3), (6, 34), (12, 56), (30, 55), (35, 40), (22, 29), (6, 34)]],
+    "7": [[(3, 2), (37, 2), (14, 58)]],
+    "8": [[(20, 29), (7, 15), (20, 2), (33, 15), (20, 29)], [(20, 29), (4, 44), (20, 58), (36, 44), (20, 29)]],
+    "9": [[(34, 22), (18, 30), (4, 20), (9, 5), (25, 2), (34, 10), (34, 22), (26, 40), (14, 58)]],
+}
+MAGNITUDES = (2.3, 2.8, 3.2, 3.8, 4.6)     # star radii at 1080p; the largest also gets a small cross flare
 
 
 def fmt_clock(now):
@@ -55,17 +71,54 @@ def hand_angles(now):
     return hour / 12 * 2 * math.pi, minute / 60 * 2 * math.pi, sec / 60 * 2 * math.pi
 
 
-def lit_links(text):
-    """The node pairs lit for each character of "HH:MM": a set per character (the colon's is empty)."""
-    return [set(LINKS[s] for s in SEGMENTS.get(ch, "")) for ch in text]
+def star_chart(text, x0, top, cap):
+    """Stars [(x, y)] and links [((x, y), (x, y))] for "HH:MM" drawn from x0, the digits cap tall; plus the colon's
+    x and the total width."""
+    s = cap / 56
+    adv, gap, colon_w = 40 * s, 15 * s, 20 * s
+    x, stars, links, colon = x0, {}, [], None
+    for ch in text:
+        if ch == ":":
+            colon = x - gap / 2 + colon_w / 2
+            x += colon_w
+            continue
+        for line in GLYPHS.get(ch, ()):
+            pts = [(x + px * s, top + (py - 2) * s) for px, py in line]
+            links += list(zip(pts, pts[1:]))
+            for pt in pts:
+                stars.setdefault((round(pt[0], 1), round(pt[1], 1)), None)
+        x += adv + gap
+    return list(stars), links, colon, x - gap - x0
 
 
-def hexagon(cr, cx, cy, r):
-    cr.new_path()
-    for i in range(6):
-        a = i * math.pi / 3
-        cr.line_to(cx + r * math.cos(a), cy + r * math.sin(a))
-    cr.close_path()
+def pill_trace(cr, x, y, w, h, length):
+    """Trace `length` px of the pill's outline, clockwise from the middle of its top edge; return the head point."""
+    r = h / 2
+    straight = w - h
+    cx = x + w / 2
+    cr.move_to(cx, y)
+    left = length
+    parts = (("line", straight / 2, (x + w - r, y)),
+             ("arc", math.pi * r, (x + w - r, y + r, -math.pi / 2)),
+             ("line", straight, (x + r, y + h)),
+             ("arc", math.pi * r, (x + r, y + r, math.pi / 2)),
+             ("line", straight / 2, (cx, y)))
+    head = (cx, y)
+    for kind, size, geo in parts:
+        if left <= 0:
+            break
+        t = min(1.0, left / size) if size else 1.0
+        if kind == "line":
+            sx, sy = cr.get_current_point()
+            head = (sx + (geo[0] - sx) * t, sy + (geo[1] - sy) * t)
+            cr.line_to(*head)
+        else:
+            ax, ay, a0 = geo
+            a1 = a0 + math.pi * t
+            cr.arc(ax, ay, r, a0, a1)
+            head = (ax + r * math.cos(a1), ay + r * math.sin(a1))
+        left -= size
+    return head
 
 
 class NexusClock(Gtk.DrawingArea):
@@ -77,6 +130,8 @@ class NexusClock(Gtk.DrawingArea):
         self.timer = 0
         self.previous_digits = None
         self.drift_key = None
+        self.drawn_minute = None
+        self.moving = None              # (x, y, w, h): the part that changes each second, from the last full draw
         self.set_has_window(False)
         self.resize_for(1.0)
         self.connect("draw", self.on_draw)
@@ -86,15 +141,20 @@ class NexusClock(Gtk.DrawingArea):
 
     def resize_for(self, k):
         self.k = k
+        self.drawn_minute = self.moving = None
         w, h = SIZES[self.style]
         self.set_size_request(self.px(w * k), self.px(h * k))
         self.queue_draw()
 
-    # ---- once a second, on the second, while on screen
+    # ---- once a second (or once a minute), on the second, while on screen
     def tick(self):
         self.stop()
         before, self.now = self.now, datetime.datetime.now()
-        delay = 1005 - self.now.microsecond // 1000
+        ms = self.now.microsecond // 1000
+        if self.style in SECONDS:
+            delay = 1005 - ms
+        else:
+            delay = (60 - self.now.second) * 1000 + 5 - ms
         if self.style == "drift":
             elapsed = self.now.second + self.now.microsecond / 1e6
             if not self.cfg("visual_effects", True) or elapsed >= drift.DURATION:
@@ -103,7 +163,11 @@ class NexusClock(Gtk.DrawingArea):
                 self.previous_digits = before.strftime("%H:%M")
             if self.previous_digits:
                 delay = 75
-        self.queue_draw()
+        minute = self.now.replace(second=0, microsecond=0)
+        if self.moving and minute == self.drawn_minute:
+            self.queue_draw_area(*(int(v) for v in self.moving))   # only the pill or the dial changed
+        else:
+            self.queue_draw()
         if self.get_mapped():
             self.timer = GLib.timeout_add(delay, self.tick_again)
 
@@ -175,135 +239,159 @@ class NexusClock(Gtk.DrawingArea):
             cr.fill()
 
     def on_draw(self, _w, cr):
+        if self.moving is None or not self.only_moving(cr):      # a full draw: this minute is now on screen
+            self.drawn_minute = self.now.replace(second=0, microsecond=0)
         getattr(self, "draw_" + self.style)(cr, cr.get_matrix())
         return False
+
+    def only_moving(self, cr):
+        """True when this draw is clipped to the moving part (a seconds-only redraw)."""
+        x1, y1, x2, y2 = cr.clip_extents()
+        mx, my, mw, mh = self.moving
+        return x1 >= mx - 1 and y1 >= my - 1 and x2 <= mx + mw + 1 and y2 <= my + mh + 1
+
+    def date_below(self, cr, x, top):
+        """The date line the drawn-digit styles share with Simple: 32 px Inter Regular under the time."""
+        line = self.layout(cr, fmt_clock(self.now)[1], self.p(32), Pango.Weight.NORMAL)
+        ink, _logical = line.get_pixel_extents()
+        self.show(cr, line, x - ink.x, top - ink.y, 0.88)
 
     # ---- the styles
     def draw_glass(self, cr, base):
         from . import network
-        p, k = self.p, self.k
+        p = self.p
         clock, date = fmt_clock(self.now)
-        x, y = 2, 2
-        w, h = self.get_allocated_width() - 4, self.get_allocated_height() - 4
-        if self.cfg("tile_shape", "rounded") == "chamfer":
-            network.chamfer_rect(cr, x, y, w, h, p(22))
-        else:
-            network.rrect(cr, x, y, w, h, p(30))
+        lay = self.layout(cr, date, p(22), Pango.Weight.MEDIUM)
+        _ink, logical = lay.get_pixel_extents()
+        pad, ph = p(26), p(54)
+        x, y, w = p(10), p(10), logical.width + 2 * p(26)
+        self.moving = (x - p(10), y - p(10), w + p(20), ph + p(20))
+        network.rrect(cr, x, y, w, ph, ph / 2)
         self.glass(cr, base)
-        pad = p(34)
-        if k == 1.0:
-            kicker = self.layout(cr, date.upper(), p(17), Pango.Weight.SEMIBOLD, spacing=p(2.2))
-            self.show(cr, kicker, x + pad, y + p(26), 0.72)
-        time_layout = self.layout(cr, clock, p(108), Pango.Weight.LIGHT, tabular=True)
-        ink, _logical = time_layout.get_pixel_extents()
-        top = y + (p(60) if k == 1.0 else p(24)) - ink.y
-        self.show(cr, time_layout, x + pad - ink.x, top, 0.97)
-        # the minute so far: a lit hairline along the bottom, with a bead at its head
-        line_y, left, right = y + h - p(26), x + pad, x + w - pad
+        self.show(cr, lay, x + pad, y + (ph - logical.height) / 2, 0.94)
+        # the seconds: a light running clockwise round the pill from the top, once a minute
+        length = 2 * (w - ph) + math.pi * ph
         cr.set_line_cap(1)
         cr.set_line_width(max(1.0, p(2.4)))
-        cr.set_source_rgba(1, 1, 1, 0.12)
-        cr.move_to(left, line_y)
-        cr.line_to(right, line_y)
+        cr.set_source_rgba(*GLOW, 0.9)
+        head = pill_trace(cr, x, y, w, ph, length * self.now.second / 60)
         cr.stroke()
-        head = left + (right - left) * self.now.second / 60
-        if head > left:
-            cr.set_source_rgba(*GLOW, 0.9)
-            cr.move_to(left, line_y)
-            cr.line_to(head, line_y)
-            cr.stroke()
-        self.bead(cr, head, line_y)
+        self.bead(cr, *head)
+        time_layout = self.layout(cr, clock, p(128), Pango.Weight.LIGHT, tabular=True)
+        ink, _logical = time_layout.get_pixel_extents()
+        self.show(cr, time_layout, x + p(2) - ink.x, y + ph + p(30) - ink.y, 0.97)
 
     def draw_constellation(self, cr, base):
         p, k = self.p, self.k
-        clock, date = fmt_clock(self.now)
-        dw, dh, gap, colon, lean = p(62), p(112), p(30), p(40), p(10)
-        x, top = p(10), p(16)
-        nodes, links, colon_x = [], [], 0.0
-        for ch, lit in zip(clock, lit_links(clock)):
-            if ch == ":":
-                colon_x = x - gap / 2 + colon / 2 + lean / 2
-                x += colon
-                continue
-            pts = [(x + lean, top), (x + dw + lean, top), (x + lean / 2, top + dh / 2),
-                   (x + dw + lean / 2, top + dh / 2), (x, top + dh), (x + dw, top + dh)]
-            links += [(pts[a], pts[b], (a, b) in lit) for a, b in LINKS.values()]
-            used = {i for pair in lit for i in pair}
-            nodes += [(pt, i in used) for i, pt in enumerate(pts)]
-            x += dw + gap
-        cr.set_line_cap(1)
-        cr.set_source_rgba(1, 1, 1, 0.09)                  # the unlit links, faintly
-        cr.set_line_width(max(1.0, p(1.4)))
-        for a, b, on in links:
-            if not on:
-                cr.move_to(*a)
-                cr.line_to(*b)
-        cr.stroke()
-        for width, colour in ((11, (*GLOW, 0.16)), (5, (*GLOW, 0.35)), (2.6, (1, 1, 1, 0.97))):
-            cr.set_source_rgba(*colour)                    # the lit ones, glowing
-            cr.set_line_width(max(1.0, p(width)))
-            for a, b, on in links:
-                if on:
-                    cr.move_to(*a)
-                    cr.line_to(*b)
+        cap, top, x0 = p(CAP), p(20), p(12)
+        stars, links, colon, width = star_chart(fmt_clock(self.now)[0], x0, top, cap)
+        rng = random.Random(7)                             # a few faint background stars, always in the same place
+        cr.set_source_rgba(1, 1, 1, 1)
+        for _ in range(16):
+            fx, fy = p(4) + rng.random() * (width + p(40)), p(4) + rng.random() * (cap + p(30))
+            cr.set_source_rgba(1, 1, 1, 0.16 + rng.random() * 0.2)
+            cr.arc(fx, fy, p(0.8 + rng.random() * 0.6), 0, 2 * math.pi)
+            cr.fill()
+        cr.set_line_cap(1)                                 # the links stop short of the stars, as on a star chart
+        gap = p(7)
+        for line_w, colour in ((7, (*GLOW, 0.10)), (1.6, (1, 1, 1, 0.62))):
+            cr.set_line_width(max(1.0, p(line_w)))
+            cr.set_source_rgba(*colour)
+            for (ax, ay), (bx, by) in links:
+                d = math.dist((ax, ay), (bx, by))
+                if d < 2 * gap:
+                    continue
+                ux, uy = (bx - ax) / d, (by - ay) / d
+                cr.move_to(ax + ux * gap, ay + uy * gap)
+                cr.line_to(bx - ux * gap, by - uy * gap)
             cr.stroke()
-        for (cx, cy), on in nodes:
-            hexagon(cr, cx, cy, p(5.5 if on else 3.2))
-            if on:
-                cr.set_source_rgba(*GLOW, 1.0)
-                cr.fill_preserve()
-                cr.set_source_rgba(1, 1, 1, 0.95)
-                cr.set_line_width(max(1.0, p(1.2)))
-                cr.stroke()
-            else:
-                cr.set_source_rgba(1, 1, 1, 0.18)
-                cr.fill()
-        bright = 1.0 if self.now.second % 2 == 0 else 0.4  # the colon breathes with the seconds
-        for cy in (top + dh * 0.3, top + dh * 0.7):
-            for rad, a in ((11, 0.14), (6, 1.0)):
-                hexagon(cr, colon_x, cy, p(rad))
-                cr.set_source_rgba(*GLOW, a * bright)
-                cr.fill()
+        for i, (sx, sy) in enumerate(stars):
+            mag = (i * 3 + int(sx / k) // 7) % len(MAGNITUDES)
+            self.star(cr, sx, sy, p(MAGNITUDES[mag]), flare=mag == len(MAGNITUDES) - 1)
+        if colon is not None:
+            for cy in (top + cap * 0.32, top + cap * 0.72):
+                self.star(cr, colon, cy, p(3.2))
         if k == 1.0:
-            line = self.layout(cr, date, p(28), Pango.Weight.NORMAL)
-            self.show(cr, line, p(4), top + dh + p(22), 0.86)
+            self.date_below(cr, x0 - p(1), top + cap + p(30))
+
+    def star(self, cr, x, y, r, flare=False):
+        halo = cairo.RadialGradient(x, y, 0, x, y, r * 3)
+        halo.add_color_stop_rgba(0, *GLOW, 0.30)
+        halo.add_color_stop_rgba(1, *GLOW, 0.0)
+        cr.set_source(halo)
+        cr.arc(x, y, r * 3, 0, 2 * math.pi)
+        cr.fill()
+        if flare:
+            cr.set_line_width(max(1.0, self.p(1)))
+            for dx, dy in ((1, 0), (0, 1)):
+                span = cairo.LinearGradient(x - dx * r * 4, y - dy * r * 4, x + dx * r * 4, y + dy * r * 4)
+                span.add_color_stop_rgba(0, 1, 1, 1, 0)
+                span.add_color_stop_rgba(0.5, 1, 1, 1, 0.55)
+                span.add_color_stop_rgba(1, 1, 1, 1, 0)
+                cr.set_source(span)
+                cr.move_to(x - dx * r * 4, y - dy * r * 4)
+                cr.line_to(x + dx * r * 4, y + dy * r * 4)
+                cr.stroke()
+        cr.set_source_rgba(1, 1, 1, 0.98)
+        cr.arc(x, y, r, 0, 2 * math.pi)
+        cr.fill()
 
     def draw_analog(self, cr, base):
-        from . import network
         p, k = self.p, self.k
-        r = p(90)
+        r = p(100)
         cx, cy = r + p(6), r + p(6)
-        network.poly_path(cr, network.poly_points(self.cfg("node_shape", "hexagon"), r, cx, cy))
+        self.moving = (0, 0, cx + r + p(6), cy + r + p(6))
+        cr.new_path()
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
         self.glass(cr, base, rim=0.32)
+        cr.set_line_cap(0)
+        for i in range(60):                                # hour bars, quarters a little heavier, minute ticks
+            a = i / 60 * 2 * math.pi - math.pi / 2
+            ux, uy = math.cos(a), math.sin(a)
+            if i % 15 == 0:
+                inner, width, alpha = 0.74, 4.4, 0.97
+            elif i % 5 == 0:
+                inner, width, alpha = 0.78, 3.4, 0.9
+            else:
+                inner, width, alpha = 0.875, 1.3, 0.38
+            cr.set_source_rgba(1, 1, 1, alpha)
+            cr.set_line_width(max(1.0, p(width)))
+            cr.move_to(cx + ux * r * inner, cy + uy * r * inner)
+            cr.line_to(cx + ux * r * 0.92, cy + uy * r * 0.92)
+            cr.stroke()
         hour, minute, second = hand_angles(self.now)
-        for i in range(12):                                # twelve beads, the quarters larger
-            a = i / 12 * 2 * math.pi - math.pi / 2
-            d = r * 0.68
-            cr.set_source_rgba(1, 1, 1, 0.85 if i % 3 == 0 else 0.4)
-            cr.arc(cx + d * math.cos(a), cy + d * math.sin(a), p(3.2 if i % 3 == 0 else 2), 0, 2 * math.pi)
-            cr.fill()
         cr.set_line_cap(1)
-        for angle, length, width in ((hour, 0.40, 6.5), (minute, 0.60, 3.6)):
+        for angle, tail, length, width in ((hour, 0.08, 0.50, 8), (minute, 0.10, 0.78, 5)):
             a = angle - math.pi / 2
-            for dy, colour in ((p(2), (0, 0, 0, 0.3)), (0, (1, 1, 1, 0.97))):
+            ux, uy = math.cos(a), math.sin(a)
+            for dy, colour in ((p(2), (0, 0, 0, 0.32)), (0, (1, 1, 1, 0.97))):
                 cr.set_source_rgba(*colour)
                 cr.set_line_width(max(1.5, p(width)))
-                cr.move_to(cx, cy + dy)
-                cr.line_to(cx + r * length * math.cos(a), cy + dy + r * length * math.sin(a))
+                cr.move_to(cx - ux * r * tail, cy + dy - uy * r * tail)
+                cr.line_to(cx + ux * r * length, cy + dy + uy * r * length)
                 cr.stroke()
-        a = second - math.pi / 2                           # the seconds: a bead running round inside the rim
-        self.bead(cr, cx + r * 0.82 * math.cos(a), cy + r * 0.82 * math.sin(a))
+        a = second - math.pi / 2                           # the seconds hand, in Home's glow, with a counterweight
+        ux, uy = math.cos(a), math.sin(a)
         cr.set_source_rgba(*GLOW, 1.0)
-        cr.arc(cx, cy, p(5), 0, 2 * math.pi)
+        cr.set_line_width(max(1.0, p(2)))
+        cr.move_to(cx - ux * r * 0.20, cy - uy * r * 0.20)
+        cr.line_to(cx + ux * r * 0.86, cy + uy * r * 0.86)
+        cr.stroke()
+        cr.arc(cx - ux * r * 0.16, cy - uy * r * 0.16, p(4.5), 0, 2 * math.pi)
+        cr.fill()
+        cr.arc(cx, cy, p(7), 0, 2 * math.pi)
+        cr.fill()
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.arc(cx, cy, p(2.6), 0, 2 * math.pi)
         cr.fill()
         if k == 1.0:                                       # the day beside the dial, quietly
             day, rest = fmt_clock(self.now)[1].split(" ", 1)
-            big = self.layout(cr, day, p(40), Pango.Weight.LIGHT)
-            small = self.layout(cr, rest, p(26), Pango.Weight.NORMAL)
+            big = self.layout(cr, day, p(46), Pango.Weight.LIGHT)
+            small = self.layout(cr, rest, p(30), Pango.Weight.NORMAL)
             bh, sh = big.get_pixel_size()[1], small.get_pixel_size()[1]
-            x, y = cx + r + p(34), cy - (bh + sh) / 2
-            self.show(cr, big, x, y, 0.95)
-            self.show(cr, small, x, y + bh, 0.72)
+            x, y = cx + r + p(36), cy - (bh + sh) / 2
+            self.show(cr, big, x, y, 0.96)
+            self.show(cr, small, x + p(1), y + bh, 0.80)
 
     def draw_drift(self, cr, base):
         clock = self.now.strftime("%H:%M")
@@ -311,13 +399,15 @@ class NexusClock(Gtk.DrawingArea):
         seconds = self.now.second + self.now.microsecond / 1e6
         progress = min(1.0, seconds / drift.DURATION) if self.previous_digits else 1.0
         phase = math.tau * seconds / 60 if self.cfg("visual_effects", True) else 0.0
-        w, h = SIZES["drift"]
+        w, h = DRIFT_FRAME
         key = (self.px(w * self.k), self.px(h * self.k), clock, before, progress, phase)
         if key != self.drift_key:
             self.drift_frame = drift.frame(*key)
             self.drift_key = key
         cr.set_source_surface(self.drift_frame, 0, 0)
         cr.paint()
+        if self.k == 1.0:
+            self.date_below(cr, self.p(8), key[1] * 62 / 72 + self.p(26))
 
     def draw_simple(self, cr, base):
         p, k = self.p, self.k
