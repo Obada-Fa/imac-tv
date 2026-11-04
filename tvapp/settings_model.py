@@ -11,7 +11,7 @@ FIELDS = [
     ('widgets', 'Appearance', 'Visible widgets', 'multi', ['clock', 'weather', 'pairing', 'continue', 'apps'], False),
     ('node_shape', 'Appearance', 'Node shape', 'choice', ['hexagon', 'octagon'], True),
     ('tile_shape', 'Appearance', 'Tile shape', 'choice', ['rounded', 'chamfer'], True),
-    ('clock_style', 'Appearance', 'Clock', 'choice', ['glass', 'constellation', 'analog', 'simple'], False),
+    ('clock_style', 'Appearance', 'Clock', 'choice', ['glass', 'constellation', 'analog', 'simple', 'drift'], False),
     ('qr_style', 'Appearance', 'Pairing QR style', 'choice', ['glass', 'light'], False),
     ('interval', 'Ambient', 'Background rotation (seconds)', 'number', [10, 3600], False),
     ('idle', 'Ambient', 'Idle delay (seconds)', 'number', [10, 7200], False),

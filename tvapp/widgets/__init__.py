@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
     "shapes": "photo",
     "visualizer": True,
     "qr_style": "glass",
-    "clock_style": "glass",      # widgets/clock.py STYLES
+    "clock_style": "glass",      # CLOCK_STYLES below
     "background": "photos",      # "photos" (Bing/Wikimedia) or "retro" (imported images, with Circuit)
     "retro_off": [],             # retro background ids switched off (everything is on by default)
 }
@@ -33,7 +33,7 @@ STYLES = ("network", "bubbles")
 NODE_SHAPES = ("hexagon", "octagon")
 TILE_SHAPES = ("rounded", "chamfer")
 QR_STYLES = ("glass", "light")
-CLOCK_STYLES = ("glass", "constellation", "analog", "simple")
+CLOCK_STYLES = ("glass", "constellation", "analog", "simple", "drift")
 BACKGROUNDS = ("photos", "retro")
 SHAPE_MODES = ("photo", "photo+animals", "off")
 

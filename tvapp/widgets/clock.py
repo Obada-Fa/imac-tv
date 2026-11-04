@@ -4,8 +4,9 @@
 - constellation: the digits drawn as Home's network, lit links between small nodes, the colon breathing
 - analog: a frosted glass dial in Home's node shape, two hands and a seconds bead inside its rim, the day beside it
 - simple: the time in a large light weight, the date under it
+- drift: small handwritten digits made of motes that regroup on the minute
 
-It redraws once a second, only its own small area, and only while it is on screen. In ambient mode it stays,
+It redraws its own small area once a second, briefly faster during a Drift minute change. In ambient mode it stays,
 smaller and without the date."""
 import datetime
 import math
@@ -18,15 +19,15 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import GLib, Gtk, Pango, PangoCairo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from . import Widget, register  # noqa: E402
+from . import CLOCK_STYLES, Widget, drift, register  # noqa: E402
 
 
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
-STYLES = ("glass", "constellation", "analog", "simple")
 GLOW = (0.62, 0.80, 1.0)            # Home's glow colour (network.GLOW)
-SIZES = {"glass": (470, 214), "constellation": (520, 196), "analog": (440, 196), "simple": (460, 190)}   # at 1080p
+SIZES = {"glass": (470, 214), "constellation": (520, 196), "analog": (440, 196), "simple": (460, 190),
+         "drift": (290, 103)}   # at 1080p
 AMBIENT = 0.62                      # the clock's size in ambient mode
 # Seven-segment digits: a top, b top right, c bottom right, d bottom, e bottom left, f top left, g middle
 SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd", "6": "afgedc",
@@ -43,7 +44,7 @@ def fmt_clock(now):
 
 def clock_style(shell):
     style = (getattr(shell, "home_cfg", None) or {}).get("clock_style")
-    return style if style in STYLES else STYLES[0]
+    return style if style in CLOCK_STYLES else CLOCK_STYLES[0]
 
 
 def hand_angles(now):
@@ -74,6 +75,8 @@ class NexusClock(Gtk.DrawingArea):
         self.k = 1.0
         self.now = datetime.datetime.now()
         self.timer = 0
+        self.previous_digits = None
+        self.drift_key = None
         self.set_has_window(False)
         self.resize_for(1.0)
         self.connect("draw", self.on_draw)
@@ -90,9 +93,19 @@ class NexusClock(Gtk.DrawingArea):
     # ---- once a second, on the second, while on screen
     def tick(self):
         self.stop()
-        self.now = datetime.datetime.now()
+        before, self.now = self.now, datetime.datetime.now()
+        delay = 1005 - self.now.microsecond // 1000
+        if self.style == "drift":
+            elapsed = self.now.second + self.now.microsecond / 1e6
+            if not self.cfg("visual_effects", True) or elapsed >= drift.DURATION:
+                self.previous_digits = None
+            elif before.minute != self.now.minute and 0 < (self.now - before).total_seconds() < 2:
+                self.previous_digits = before.strftime("%H:%M")
+            if self.previous_digits:
+                delay = 75
         self.queue_draw()
-        self.timer = GLib.timeout_add(1005 - self.now.microsecond // 1000, self.tick_again)
+        if self.get_mapped():
+            self.timer = GLib.timeout_add(delay, self.tick_again)
 
     def tick_again(self):
         self.timer = 0
@@ -291,6 +304,20 @@ class NexusClock(Gtk.DrawingArea):
             x, y = cx + r + p(34), cy - (bh + sh) / 2
             self.show(cr, big, x, y, 0.95)
             self.show(cr, small, x, y + bh, 0.72)
+
+    def draw_drift(self, cr, base):
+        clock = self.now.strftime("%H:%M")
+        before = self.previous_digits or clock
+        seconds = self.now.second + self.now.microsecond / 1e6
+        progress = min(1.0, seconds / drift.DURATION) if self.previous_digits else 1.0
+        phase = math.tau * seconds / 60 if self.cfg("visual_effects", True) else 0.0
+        w, h = SIZES["drift"]
+        key = (self.px(w * self.k), self.px(h * self.k), clock, before, progress, phase)
+        if key != self.drift_key:
+            self.drift_frame = drift.frame(*key)
+            self.drift_key = key
+        cr.set_source_surface(self.drift_frame, 0, 0)
+        cr.paint()
 
     def draw_simple(self, cr, base):
         p, k = self.p, self.k
