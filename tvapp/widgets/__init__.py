@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "shapes": "photo",
     "visualizer": True,
     "qr_style": "glass",
+    "clock_style": "glass",      # widgets/clock.py STYLES
     "background": "photos",      # "photos" (Bing/Wikimedia) or "retro" (imported images, with Circuit)
     "retro_off": [],             # retro background ids switched off (everything is on by default)
 }
@@ -32,6 +33,7 @@ STYLES = ("network", "bubbles")
 NODE_SHAPES = ("hexagon", "octagon")
 TILE_SHAPES = ("rounded", "chamfer")
 QR_STYLES = ("glass", "light")
+CLOCK_STYLES = ("glass", "constellation", "analog", "simple")
 BACKGROUNDS = ("photos", "retro")
 SHAPE_MODES = ("photo", "photo+animals", "off")
 
@@ -95,7 +97,8 @@ def parse_config(raw):
            "ambient": dict(DEFAULT_CONFIG["ambient"]), "style": DEFAULT_CONFIG["style"],
            "node_shape": DEFAULT_CONFIG["node_shape"], "tile_shape": DEFAULT_CONFIG["tile_shape"],
            "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
-           "qr_style": DEFAULT_CONFIG["qr_style"], "background": DEFAULT_CONFIG["background"],
+           "qr_style": DEFAULT_CONFIG["qr_style"], "clock_style": DEFAULT_CONFIG["clock_style"],
+           "background": DEFAULT_CONFIG["background"],
            "retro_off": []}
     cfg.update(transparency=True, visual_effects=True)
     if not isinstance(raw, dict):
@@ -109,6 +112,8 @@ def parse_config(raw):
         cfg["node_shape"] = raw["node_shape"]
     if raw.get("qr_style") in QR_STYLES:
         cfg["qr_style"] = raw["qr_style"]
+    if raw.get("clock_style") in CLOCK_STYLES:
+        cfg["clock_style"] = raw["clock_style"]
     if raw.get("background") in BACKGROUNDS:
         cfg["background"] = raw["background"]
     off = raw.get("retro_off")

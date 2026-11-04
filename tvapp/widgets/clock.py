@@ -1,14 +1,17 @@
-"""Home's clock: a frosted glass dial beside the time in a large light weight, with the date under it.
+"""Home's clock, in the style picked in Settings (home.json "clock_style"):
 
-The dial's hands sit on a small hexagon, like Home's nodes, and the seconds run round its rim as a lit arc that
-fades behind its head. It redraws once a second, only its own small area, and only while it is on screen. In
-ambient mode it stays, smaller and without the date."""
+- glass: the time on a frosted glass tile like Home's, the date above it, and the minute filling a lit hairline
+- constellation: the digits drawn as Home's network, lit links between small nodes, the colon breathing
+- analog: a frosted glass dial in Home's node shape, two hands and a seconds bead inside its rim, the day beside it
+- simple: the time in a large light weight, the date under it
+
+It redraws once a second, only its own small area, and only while it is on screen. In ambient mode it stays,
+smaller and without the date."""
 import datetime
 import math
 import sys
 from pathlib import Path
 
-import cairo
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("PangoCairo", "1.0")
@@ -21,15 +24,26 @@ from . import Widget, register  # noqa: E402
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
           "October", "November", "December")
+STYLES = ("glass", "constellation", "analog", "simple")
 GLOW = (0.62, 0.80, 1.0)            # Home's glow colour (network.GLOW)
-# At 1080p: the dial, the gap after it, the time's and the date's sizes, and the whole clock's room
-DIAL, GAP, TIME_PX, DATE_PX, WIDTH, HEIGHT = 188, 40, 124, 30, 640, 200
+SIZES = {"glass": (470, 214), "constellation": (520, 196), "analog": (440, 196), "simple": (460, 190)}   # at 1080p
 AMBIENT = 0.62                      # the clock's size in ambient mode
+# Seven-segment digits: a top, b top right, c bottom right, d bottom, e bottom left, f top left, g middle
+SEGMENTS = {"0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc", "5": "afgcd", "6": "afgedc",
+            "7": "abc", "8": "abcdefg", "9": "abcdfg"}
+# Each segment joins two of a digit's six nodes: 0 top left, 1 top right, 2 middle left, 3 middle right,
+# 4 bottom left, 5 bottom right
+LINKS = {"a": (0, 1), "b": (1, 3), "c": (3, 5), "d": (4, 5), "e": (2, 4), "f": (0, 2), "g": (2, 3)}
 
 
 def fmt_clock(now):
     """English on purpose (the rest of the UI is), whatever the system locale says."""
     return now.strftime("%H:%M"), f"{DAYS[now.weekday()]} {now.day} {MONTHS[now.month - 1]}"
+
+
+def clock_style(shell):
+    style = (getattr(shell, "home_cfg", None) or {}).get("clock_style")
+    return style if style in STYLES else STYLES[0]
 
 
 def hand_angles(now):
@@ -40,14 +54,26 @@ def hand_angles(now):
     return hour / 12 * 2 * math.pi, minute / 60 * 2 * math.pi, sec / 60 * 2 * math.pi
 
 
+def lit_links(text):
+    """The node pairs lit for each character of "HH:MM": a set per character (the colon's is empty)."""
+    return [set(LINKS[s] for s in SEGMENTS.get(ch, "")) for ch in text]
+
+
+def hexagon(cr, cx, cy, r):
+    cr.new_path()
+    for i in range(6):
+        a = i * math.pi / 3
+        cr.line_to(cx + r * math.cos(a), cy + r * math.sin(a))
+    cr.close_path()
+
+
 class NexusClock(Gtk.DrawingArea):
-    def __init__(self, shell):
+    def __init__(self, shell, style="glass"):
         super().__init__()
-        self.shell, self.px = shell, shell.px
+        self.shell, self.px, self.style = shell, shell.px, style
         self.k = 1.0
         self.now = datetime.datetime.now()
         self.timer = 0
-        self.layouts = {}
         self.set_has_window(False)
         self.resize_for(1.0)
         self.connect("draw", self.on_draw)
@@ -57,7 +83,8 @@ class NexusClock(Gtk.DrawingArea):
 
     def resize_for(self, k):
         self.k = k
-        self.set_size_request(self.px(WIDTH * k), self.px(HEIGHT * k))
+        w, h = SIZES[self.style]
+        self.set_size_request(self.px(w * k), self.px(h * k))
         self.queue_draw()
 
     # ---- once a second, on the second, while on screen
@@ -78,170 +105,202 @@ class NexusClock(Gtk.DrawingArea):
             GLib.source_remove(self.timer)
             self.timer = 0
 
-    # ---- drawing
-    def layout(self, cr, text, size, weight, tabular=False):
+    # ---- shared pieces
+    def p(self, n):
+        return self.px(n) * self.k
+
+    def cfg(self, key, default):
+        return (getattr(self.shell, "home_cfg", None) or {}).get(key, default)
+
+    @staticmethod
+    def layout(cr, text, size, weight, tabular=False, spacing=0):
         layout = PangoCairo.create_layout(cr)
         desc = Pango.FontDescription("Inter")
         desc.set_absolute_size(size * Pango.SCALE)
         desc.set_weight(weight)
         layout.set_font_description(desc)
+        attrs = Pango.AttrList()
         if tabular:                             # the digits keep their width, so the time never jiggles
-            attrs = Pango.AttrList()
             attrs.insert(Pango.attr_font_features_new("tnum"))
-            layout.set_attributes(attrs)
+        if spacing:
+            attrs.insert(Pango.attr_letter_spacing_new(int(spacing * Pango.SCALE)))
+        layout.set_attributes(attrs)
         layout.set_text(text, -1)
         return layout
 
     @staticmethod
     def show(cr, layout, x, y, alpha):
         """Text with a soft shadow, so it reads over any photo."""
-        for dx, dy, a in ((0, 2, 0.30), (0, 1, 0.35)):
-            cr.move_to(x + dx, y + dy)
+        for dy, a in ((2, 0.28), (1, 0.32)):
+            cr.move_to(x, y + dy)
             cr.set_source_rgba(0, 0, 0, a * alpha)
             PangoCairo.show_layout(cr, layout)
         cr.move_to(x, y)
         cr.set_source_rgba(1, 1, 1, alpha)
         PangoCairo.show_layout(cr, layout)
 
-    def on_draw(self, _w, cr):
-        p = lambda n: self.px(n) * self.k  # noqa: E731
-        h = self.get_allocated_height()
-        base = cr.get_matrix()
-        r = p(DIAL) / 2
-        cx, cy = r + 2, h / 2
-        self.dial(cr, base, cx, cy, r)
-        clock, date = fmt_clock(self.now)
-        x = cx + r + p(GAP)
-        time_layout = self.layout(cr, clock, p(TIME_PX), Pango.Weight.ULTRALIGHT, tabular=True)
-        ink, logical = time_layout.get_pixel_extents()
-        show_date = self.k == 1.0
-        date_layout = self.layout(cr, date, p(DATE_PX), Pango.Weight.NORMAL) if show_date else None
-        date_h = date_layout.get_pixel_size()[1] if date_layout else 0
-        block = ink.height + (p(14) + date_h if date_layout else 0)
-        top = cy - block / 2 - ink.y               # the digits' ink, not the font's line, centred on the dial
-        self.show(cr, time_layout, x - ink.x, top, 0.97)
-        if date_layout:
-            self.show(cr, date_layout, x, top + ink.y + ink.height + p(14), 0.86)
-        return False
-
-    @staticmethod
-    def hand(cr, length, width, tail):
-        """A hand pointing up from the origin: widest near the hub, narrowing to a rounded tip, with a short tail."""
-        w, tip = width / 2, width * 0.16
-        cr.new_path()
-        cr.move_to(-w * 0.55, tail)
-        cr.line_to(-w, 0)
-        cr.line_to(-tip, -length + tip)
-        cr.arc(0, -length + tip, tip, math.pi, 0)
-        cr.line_to(w, 0)
-        cr.line_to(w * 0.55, tail)
-        cr.close_path()
-
-    def dial(self, cr, base, cx, cy, r):
-        k = self.k
-        # glass: frosted from the photo behind, tinted, with a light rim that is brighter towards the top left
-        cr.save()
-        cr.arc(cx, cy, r, 0, 2 * math.pi)
-        cr.clip_preserve()
+    def glass(self, cr, base, rim=0.22):
+        """Fill the path just traced with Home's frosted glass and draw its rim. Uses up the path."""
         from . import network             # here: widgets.network imports the widget registry
+        cr.save()
+        cr.clip_preserve()
         network.paint_frost(cr, base, self, getattr(self.shell, "photo_canvas", None))
         cr.set_source_rgba(0.015, 0.025, 0.05, 0.30)
         cr.paint()
-        sheen = cairo.LinearGradient(cx - r, cy - r, cx + r, cy + r)
-        sheen.add_color_stop_rgba(0, 1, 1, 1, 0.12)
-        sheen.add_color_stop_rgba(0.55, 1, 1, 1, 0.02)
-        sheen.add_color_stop_rgba(1, 1, 1, 1, 0.0)
-        cr.set_source(sheen)
+        cr.set_source_rgba(1, 1, 1, 0.06)
         cr.paint()
         cr.restore()
-        rim = cairo.LinearGradient(cx - r, cy - r, cx + r, cy + r)
-        rim.add_color_stop_rgba(0, 1, 1, 1, 0.55)
-        rim.add_color_stop_rgba(0.5, 1, 1, 1, 0.16)
-        rim.add_color_stop_rgba(1, 1, 1, 1, 0.30)
-        cr.set_source(rim)
-        cr.set_line_width(max(1.0, 1.4 * k))
-        cr.arc(cx, cy, r - 0.7, 0, 2 * math.pi)
+        cr.set_source_rgba(1, 1, 1, rim)
+        cr.set_line_width(max(1.0, 1.2 * self.k))
         cr.stroke()
 
-        hour, minute, second = hand_angles(self.now)
-        ring = r - self.px(9) * k
-        # the seconds: a faint track, and a lit arc from 12 that brightens towards its head
-        cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        cr.set_line_width(max(1.5, self.px(3) * k))
-        cr.set_source_rgba(1, 1, 1, 0.08)
-        cr.arc(cx, cy, ring, 0, 2 * math.pi)
-        cr.stroke()
-        if second > 0:
-            steps = max(1, round(second / (2 * math.pi) * 60))
-            for i in range(steps):
-                a0 = -math.pi / 2 + second * i / steps
-                a1 = -math.pi / 2 + second * (i + 1) / steps
-                t = (i + 1) / steps
-                cr.set_source_rgba(*GLOW, 0.05 + 0.85 * t ** 2.2)
-                cr.arc(cx, cy, ring, a0, a1)
-                cr.stroke()
-        head = -math.pi / 2 + second
-        hx, hy = cx + ring * math.cos(head), cy + ring * math.sin(head)
-        for rad, a in ((10, 0.10), (6.5, 0.22)):
-            cr.set_source_rgba(*GLOW, a)
-            cr.arc(hx, hy, self.px(rad) * k, 0, 2 * math.pi)
+    def bead(self, cr, x, y):
+        """A lit bead: a soft glow round a white core."""
+        for rad, colour in ((8, (*GLOW, 0.16)), (5, (*GLOW, 0.32)), (3, (1, 1, 1, 1.0))):
+            cr.set_source_rgba(*colour)
+            cr.arc(x, y, self.p(rad), 0, 2 * math.pi)
             cr.fill()
-        cr.set_source_rgba(1, 1, 1, 0.98)
-        cr.arc(hx, hy, self.px(3.6) * k, 0, 2 * math.pi)
-        cr.fill()
 
-        # ticks: twelve hour marks, the quarters longest; minute dots between them
-        outer = ring - self.px(10) * k
-        for i in range(60):
-            a = i / 60 * 2 * math.pi - math.pi / 2
-            ca, sa = math.cos(a), math.sin(a)
-            if i % 5:
-                cr.set_source_rgba(1, 1, 1, 0.28)
-                cr.arc(cx + outer * ca, cy + outer * sa, max(0.8, self.px(1.1) * k), 0, 2 * math.pi)
-                cr.fill()
-                continue
-            length = self.px(16 if i % 15 == 0 else 10) * k
-            cr.set_line_width(max(1.2, self.px(3 if i % 15 == 0 else 2) * k))
-            cr.set_source_rgba(1, 1, 1, 0.92 if i % 15 == 0 else 0.62)
-            cr.move_to(cx + outer * ca, cy + outer * sa)
-            cr.line_to(cx + (outer - length) * ca, cy + (outer - length) * sa)
-            cr.stroke()
+    def on_draw(self, _w, cr):
+        getattr(self, "draw_" + self.style)(cr, cr.get_matrix())
+        return False
 
-        # tapered hands with a soft shadow under them; the minute hand carries a lit line
-        for angle, length, width, lit in ((hour, 0.50, 9.0, False), (minute, 0.74, 6.0, True)):
-            for dy, colour in ((self.px(2.5) * k, (0, 0, 0, 0.32)), (0, (1, 1, 1, 0.97))):
-                cr.save()
-                cr.translate(cx, cy + dy)
-                cr.rotate(angle)
-                self.hand(cr, r * length, self.px(width) * k, self.px(12) * k)
-                cr.set_source_rgba(*colour)
-                cr.fill()
-                cr.restore()
-            if lit:
-                cr.save()
-                cr.translate(cx, cy)
-                cr.rotate(angle)
-                cr.set_line_width(max(1.0, self.px(1.6) * k))
-                cr.set_source_rgba(*GLOW, 0.95)
-                cr.move_to(0, -r * length * 0.22)
-                cr.line_to(0, -r * length * 0.86)
-                cr.stroke()
-                cr.restore()
-        # the hub: a small lit hexagon, like Home's nodes
-        hub = self.px(8.5) * k
-        cr.new_path()
-        for i in range(6):
-            a = math.pi / 6 + i * math.pi / 3
-            cr.line_to(cx + hub * math.cos(a), cy + hub * math.sin(a))
-        cr.close_path()
-        cr.set_source_rgba(*GLOW, 1.0)
-        cr.fill_preserve()
-        cr.set_source_rgba(1, 1, 1, 0.9)
-        cr.set_line_width(max(1.0, 1.4 * k))
+    # ---- the styles
+    def draw_glass(self, cr, base):
+        from . import network
+        p, k = self.p, self.k
+        clock, date = fmt_clock(self.now)
+        x, y = 2, 2
+        w, h = self.get_allocated_width() - 4, self.get_allocated_height() - 4
+        if self.cfg("tile_shape", "rounded") == "chamfer":
+            network.chamfer_rect(cr, x, y, w, h, p(22))
+        else:
+            network.rrect(cr, x, y, w, h, p(30))
+        self.glass(cr, base)
+        pad = p(34)
+        if k == 1.0:
+            kicker = self.layout(cr, date.upper(), p(17), Pango.Weight.SEMIBOLD, spacing=p(2.2))
+            self.show(cr, kicker, x + pad, y + p(26), 0.72)
+        time_layout = self.layout(cr, clock, p(108), Pango.Weight.LIGHT, tabular=True)
+        ink, _logical = time_layout.get_pixel_extents()
+        top = y + (p(60) if k == 1.0 else p(24)) - ink.y
+        self.show(cr, time_layout, x + pad - ink.x, top, 0.97)
+        # the minute so far: a lit hairline along the bottom, with a bead at its head
+        line_y, left, right = y + h - p(26), x + pad, x + w - pad
+        cr.set_line_cap(1)
+        cr.set_line_width(max(1.0, p(2.4)))
+        cr.set_source_rgba(1, 1, 1, 0.12)
+        cr.move_to(left, line_y)
+        cr.line_to(right, line_y)
         cr.stroke()
-        cr.set_source_rgba(1, 1, 1, 1)
-        cr.arc(cx, cy, hub * 0.32, 0, 2 * math.pi)
+        head = left + (right - left) * self.now.second / 60
+        if head > left:
+            cr.set_source_rgba(*GLOW, 0.9)
+            cr.move_to(left, line_y)
+            cr.line_to(head, line_y)
+            cr.stroke()
+        self.bead(cr, head, line_y)
+
+    def draw_constellation(self, cr, base):
+        p, k = self.p, self.k
+        clock, date = fmt_clock(self.now)
+        dw, dh, gap, colon, lean = p(62), p(112), p(30), p(40), p(10)
+        x, top = p(10), p(16)
+        nodes, links, colon_x = [], [], 0.0
+        for ch, lit in zip(clock, lit_links(clock)):
+            if ch == ":":
+                colon_x = x - gap / 2 + colon / 2 + lean / 2
+                x += colon
+                continue
+            pts = [(x + lean, top), (x + dw + lean, top), (x + lean / 2, top + dh / 2),
+                   (x + dw + lean / 2, top + dh / 2), (x, top + dh), (x + dw, top + dh)]
+            links += [(pts[a], pts[b], (a, b) in lit) for a, b in LINKS.values()]
+            used = {i for pair in lit for i in pair}
+            nodes += [(pt, i in used) for i, pt in enumerate(pts)]
+            x += dw + gap
+        cr.set_line_cap(1)
+        cr.set_source_rgba(1, 1, 1, 0.09)                  # the unlit links, faintly
+        cr.set_line_width(max(1.0, p(1.4)))
+        for a, b, on in links:
+            if not on:
+                cr.move_to(*a)
+                cr.line_to(*b)
+        cr.stroke()
+        for width, colour in ((11, (*GLOW, 0.16)), (5, (*GLOW, 0.35)), (2.6, (1, 1, 1, 0.97))):
+            cr.set_source_rgba(*colour)                    # the lit ones, glowing
+            cr.set_line_width(max(1.0, p(width)))
+            for a, b, on in links:
+                if on:
+                    cr.move_to(*a)
+                    cr.line_to(*b)
+            cr.stroke()
+        for (cx, cy), on in nodes:
+            hexagon(cr, cx, cy, p(5.5 if on else 3.2))
+            if on:
+                cr.set_source_rgba(*GLOW, 1.0)
+                cr.fill_preserve()
+                cr.set_source_rgba(1, 1, 1, 0.95)
+                cr.set_line_width(max(1.0, p(1.2)))
+                cr.stroke()
+            else:
+                cr.set_source_rgba(1, 1, 1, 0.18)
+                cr.fill()
+        bright = 1.0 if self.now.second % 2 == 0 else 0.4  # the colon breathes with the seconds
+        for cy in (top + dh * 0.3, top + dh * 0.7):
+            for rad, a in ((11, 0.14), (6, 1.0)):
+                hexagon(cr, colon_x, cy, p(rad))
+                cr.set_source_rgba(*GLOW, a * bright)
+                cr.fill()
+        if k == 1.0:
+            line = self.layout(cr, date, p(28), Pango.Weight.NORMAL)
+            self.show(cr, line, p(4), top + dh + p(22), 0.86)
+
+    def draw_analog(self, cr, base):
+        from . import network
+        p, k = self.p, self.k
+        r = p(90)
+        cx, cy = r + p(6), r + p(6)
+        network.poly_path(cr, network.poly_points(self.cfg("node_shape", "hexagon"), r, cx, cy))
+        self.glass(cr, base, rim=0.32)
+        hour, minute, second = hand_angles(self.now)
+        for i in range(12):                                # twelve beads, the quarters larger
+            a = i / 12 * 2 * math.pi - math.pi / 2
+            d = r * 0.68
+            cr.set_source_rgba(1, 1, 1, 0.85 if i % 3 == 0 else 0.4)
+            cr.arc(cx + d * math.cos(a), cy + d * math.sin(a), p(3.2 if i % 3 == 0 else 2), 0, 2 * math.pi)
+            cr.fill()
+        cr.set_line_cap(1)
+        for angle, length, width in ((hour, 0.40, 6.5), (minute, 0.60, 3.6)):
+            a = angle - math.pi / 2
+            for dy, colour in ((p(2), (0, 0, 0, 0.3)), (0, (1, 1, 1, 0.97))):
+                cr.set_source_rgba(*colour)
+                cr.set_line_width(max(1.5, p(width)))
+                cr.move_to(cx, cy + dy)
+                cr.line_to(cx + r * length * math.cos(a), cy + dy + r * length * math.sin(a))
+                cr.stroke()
+        a = second - math.pi / 2                           # the seconds: a bead running round inside the rim
+        self.bead(cr, cx + r * 0.82 * math.cos(a), cy + r * 0.82 * math.sin(a))
+        cr.set_source_rgba(*GLOW, 1.0)
+        cr.arc(cx, cy, p(5), 0, 2 * math.pi)
         cr.fill()
+        if k == 1.0:                                       # the day beside the dial, quietly
+            day, rest = fmt_clock(self.now)[1].split(" ", 1)
+            big = self.layout(cr, day, p(40), Pango.Weight.LIGHT)
+            small = self.layout(cr, rest, p(26), Pango.Weight.NORMAL)
+            bh, sh = big.get_pixel_size()[1], small.get_pixel_size()[1]
+            x, y = cx + r + p(34), cy - (bh + sh) / 2
+            self.show(cr, big, x, y, 0.95)
+            self.show(cr, small, x, y + bh, 0.72)
+
+    def draw_simple(self, cr, base):
+        p, k = self.p, self.k
+        clock, date = fmt_clock(self.now)
+        time_layout = self.layout(cr, clock, p(128), Pango.Weight.ULTRALIGHT, tabular=True)
+        ink, _logical = time_layout.get_pixel_extents()
+        self.show(cr, time_layout, p(2) - ink.x, p(8) - ink.y, 0.97)
+        if k == 1.0:
+            line = self.layout(cr, date, p(32), Pango.Weight.NORMAL)
+            self.show(cr, line, p(4), p(8) + ink.height + p(22), 0.88)
 
 
 @register
@@ -253,7 +312,7 @@ class ClockWidget(Widget):
     order = 0
 
     def build(self):
-        self.face = NexusClock(self.shell)
+        self.face = NexusClock(self.shell, clock_style(self.shell))
         self.box = self.face
         return self.face
 

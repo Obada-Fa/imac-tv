@@ -162,6 +162,22 @@ def main():
             page.dispose()
             shell.destroy()
 
+            for style in homescreen.widgets.CLOCK_STYLES:
+                shell = Shell(height)
+                with mock.patch.object(homescreen.widgets, "load_config", side_effect=lambda data, style=style: dict(homescreen.widgets.DEFAULT_CONFIG, clock_style=style)):
+                    page = homescreen.AmbientHomeScreen(shell)
+                shell.page = page
+                shell.root.add(page)
+                page.canvas.show_surface(bg, blur, animate=False)
+                page.canvas.extra = None
+                face = next(w for w in page.items if w.id == "clock").face
+                face.tick = lambda: None
+                face.stop()
+                face.now = datetime.datetime(2026, 10, 27, 20, 30, 42)
+                capture(shell, "clock-" + style, page.first_focus([]))
+                page.dispose()
+                shell.destroy()
+
             def sample(app_id, name, description=None, kind="desktop", builtin=None, favorite=False):
                 return dict(id=app_id, name=name, kind=kind, favorite=favorite, icon=None, builtin_kind=builtin,
                             description=description, utility=bool(description))

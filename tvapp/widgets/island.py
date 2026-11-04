@@ -635,3 +635,65 @@ class NoticeIsland(Gtk.DrawingArea):
         cr.move_to(x, top)
         cr.set_source_rgba(1, 1, 1, alpha)
         PangoCairo.show_layout(cr, layout)
+
+
+class UpdateIsland(NoticeIsland):
+    """A TV update on Home's island. It stays while an update waits, and the remote can reach it: up from Home's
+    first row, OK installs. While the TV updates it says so and can't be pressed. Other notices and the volume
+    island have the edge first; it steps aside for them and comes back after."""
+
+    def __init__(self, shell, on_activate):
+        super().__init__(shell)
+        self.on_activate = on_activate
+        self.state = None
+        self.set_can_focus(True)
+        self.connect("key-press-event", self.on_key)
+        self.connect("button-press-event", lambda *_: self.press())
+        self.connect("focus-in-event", lambda *_: self.words() or False)
+        self.connect("focus-out-event", lambda *_: self.words() or False)
+
+    def show_update(self, state):
+        """state: "available", "checking", "updating", or None to tuck the island away."""
+        if state == self.state:
+            return
+        self.state = state
+        self.set_sensitive(state == "available")
+        if state is None:
+            self.pending = None
+            self.close()
+            return
+        self.words()
+
+    def words(self):
+        if self.state is None:
+            return
+        text = {"available": "Update available · Press OK to install" if self.has_focus() else "Update available",
+                "checking": "Checking for updates…", "updating": "Updating the TV…"}[self.state]
+        self.say(text, None, "update")
+
+    def keep(self, secs):
+        if secs is None or secs == float("inf"):    # it stays for as long as the update waits
+            self.cancel_hold()
+            self.until = float("inf")
+            return
+        super().keep(secs)
+
+    def press(self):
+        if self.state == "available" and self.on_activate:
+            self.on_activate()
+        return True
+
+    def on_key(self, _w, event):
+        if Gdk.keyval_name(event.keyval) in ("Return", "KP_Enter", "space", "Select"):
+            return self.press()
+        return False
+
+    def on_draw(self, w, cr):
+        super().on_draw(w, cr)
+        if self.has_focus() and self.trace(cr):     # focused: a lit rim, like Home's nodes
+            for width, alpha in ((7, 0.22), (2.2, 0.95)):
+                self.trace(cr)
+                cr.set_source_rgba(*network.GLOW, alpha)
+                cr.set_line_width(self.px(width))
+                cr.stroke()
+        return False

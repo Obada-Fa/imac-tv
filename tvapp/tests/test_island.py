@@ -11,7 +11,7 @@ import home
 import overlays
 import server
 from widgets import island, volume_hud
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 
 def shell():
@@ -279,15 +279,62 @@ class OutlineTests(unittest.TestCase):
         self.assertIn("C", svg)
 
 
+class UpdateIslandTests(unittest.TestCase):
+    def setUp(self):
+        self.pressed = []
+        self.island = island.UpdateIsland(shell(), lambda: self.pressed.append(1))
+
+    def test_stays_while_the_update_waits_and_ok_installs_it(self):
+        u = self.island
+        u.show_update("available")
+        self.assertEqual((u.phase, u.text, u.kind), ("open", "Update available", "update"))
+        self.assertEqual(u.hold_timer, 0)                   # no timer tucks it away
+        self.assertTrue(u.get_sensitive())
+        enter = mock.Mock(keyval=Gdk.keyval_from_name("Return"))
+        self.assertTrue(u.on_key(u, enter))
+        self.assertEqual(self.pressed, [1])
+        u.stop()
+
+    def test_while_updating_it_cannot_be_pressed(self):
+        u = self.island
+        u.show_update("updating")
+        self.assertEqual(u.text, "Updating the TV…")
+        self.assertFalse(u.get_sensitive())
+        u.press()
+        self.assertEqual(self.pressed, [])
+        u.show_update(None)
+        self.assertEqual(u.phase, "close")
+        u.stop()
+
+    def test_steps_aside_and_comes_back_for_good(self):
+        u = self.island
+        u.show_update("available")
+        u.hold()
+        self.assertEqual(u.pending[0], "Update available")
+        u.vanish()
+        u.release()
+        self.assertEqual(u.phase, "open")
+        self.assertEqual(u.until, float("inf"))
+        u.stop()
+
+    def test_state_from_the_controller(self):
+        self.assertEqual(home.update_state({}), None)
+        self.assertEqual(home.update_state({"available": True, "can_update": True}), "available")
+        self.assertEqual(home.update_state({"available": True, "busy": True}), "checking")
+        self.assertEqual(home.update_state({"status": "updating"}), "updating")
+        self.assertEqual(home.update_state({"available": True, "can_update": False}), None)
+
+
 class ShellTests(unittest.TestCase):
     def make(self, prev_app="home", buffering=False):
         return SimpleNamespace(prev_app=prev_app, buffering=mock.Mock(get_visible=lambda: buffering),
-                               notice=mock.Mock(), notice_overlay=mock.Mock())
+                               notice=mock.Mock(), notice_overlay=mock.Mock(), update_notice=mock.Mock())
 
     def test_on_home_the_notice_joins_homes_glass(self):
         for state in (self.make("home"), self.make(None), self.make("player", buffering=True)):
             home.Home.toast(state, "Phone connected", 3)
             state.notice.say.assert_called_once_with("Phone connected", 3, None)
+            state.update_notice.hold.assert_called_once()   # a waiting update steps aside for it
             state.notice_overlay.dismiss.assert_called_once()
 
     def test_over_an_app_the_notice_gets_its_own_window(self):

@@ -16,7 +16,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - `~/.local/share/imactv/media.json`: autoplay_next, auto_skip_intro, still_watching_*.
 
 ## Current state (2026-11-04)
-- **Ambient Home:** layout as before the 2026-11-03 redesign (floating Continue watching tiles, top-right status chip, apps row ends with All apps, Search, Settings; no Search/System buttons anywhere). The clock (`widgets/clock.py` `NexusClock`) is a frosted glass dial (tapered hands, hexagon hub, seconds as a lit arc on the rim) beside the large time and date; it redraws once a second only while mapped, and shrinks without the date in ambient.
+- **Ambient Home:** layout as before the 2026-11-03 redesign (floating Continue watching tiles, top-right status chip, apps row ends with All apps, Search, Settings; no Search/System buttons anywhere). The clock (`widgets/clock.py` `NexusClock`) has four styles, picked in Settings → Appearance → Clock (home.json `clock_style`): glass (default: time on a frosted tile, date kicker, the minute as a lit hairline), constellation (digits as lit network links between hexagon nodes), analog (frosted dial in the node shape, day beside it), simple (large light digits). It redraws once a second only while mapped, and shrinks without the date in ambient. A waiting TV update is `island.UpdateIsland` on Home's top edge: it stays, the remote reaches it (up from the top row) and OK installs; it steps aside for notices and the volume island. Not verified on the real TV.
   - changing Bing/Wikimedia photo, clock, weather
   - network style (default): hexagon nodes and frosted tiles; bubbles is the alternative style
   - glass QR drop-down when no phone is connected

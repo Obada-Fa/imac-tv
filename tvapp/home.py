@@ -104,11 +104,20 @@ window {{ background: #000; color: #f5f6f8; font-family: "Inter", "Noto Sans", "
 .progress progress {{ min-height: {round(6 * scale)}px; background: #fff; }}
 .tv-scrollbar {{ opacity: 0; }}
 button {{ outline: none; }}
-.update-notice {{ background: #182c43; color: #e1efff; border: {round(2 * scale)}px solid #82baff;
-  border-radius: {round(18 * scale)}px; padding: {round(12 * scale)}px {round(24 * scale)}px; font-size: {round(22 * scale)}px; }}
-.update-notice:focus {{ background: #285077; box-shadow: 0 0 0 {round(3 * scale)}px #c3dfff; }}
 """.encode() + screens.build_css(scale).encode() + home_css(scale).encode() + settings_css(scale).encode() + theme_css(scale, preferences).encode()
 
+
+
+def update_state(updates):
+    """What the update island shows for the controller's update status: "updating", "checking", "available" (one
+    that can be installed now), or None."""
+    if updates.get('status') in ('queued', 'updating', 'restarting'):
+        return 'updating'
+    if not updates.get('available'):
+        return None
+    if updates.get('busy'):
+        return 'checking'
+    return 'available' if updates.get('can_update') else None
 
 
 class Home(Gtk.Window):
@@ -180,21 +189,15 @@ class Home(Gtk.Window):
         self.header = self.make_header()
         self.header.set_valign(Gtk.Align.START)
         root.add_overlay(self.header)
-        self.update_notice = Gtk.Button(label='Update available · Update now')
-        self.update_notice.get_style_context().add_class('update-notice')
-        self.update_notice.set_halign(Gtk.Align.CENTER)
-        self.update_notice.set_valign(Gtk.Align.START)
-        self.update_notice.set_margin_top(self.px(104))
-        self.update_notice.set_no_show_all(True)
-        self.update_notice.set_tooltip_text('Install the update and restart the TV app. Playback will stop.')
-        self.update_notice.connect('clicked', lambda *_: self.install_update())
-        root.add_overlay(self.update_notice)
         self.buffering = BufferingOverlay(self)
         self.buffering.connect("map", lambda *_: self.covered(True))
         self.buffering.connect("unmap", lambda *_: self.covered(False))
         root.add_overlay(self.buffering)
         self.notice = island.NoticeIsland(self)    # notices, on the island at the top edge, like the volume
+        self.notice.on_hidden = self.notice_hidden
         root.add_overlay(self.notice)
+        self.update_notice = island.UpdateIsland(self, self.install_update)   # a waiting TV update, on the same edge
+        root.add_overlay(self.update_notice)
         self.notice_overlay = None      # the notice island above other apps; made the first time it is needed
         self.volume_pill = volume_hud.VolumePill(self)
         self.volume_pill.on_hidden = self.volume_hidden
@@ -283,7 +286,6 @@ class Home(Gtk.Window):
             settings.remember()
         self.sw, self.sh = w, h
         self.scale = ui_scale(h)
-        self.update_notice.set_margin_top(self.px(104))
         self.close_sheet()
         self.load_css()
         for child in list(self.stack.get_children()):
@@ -380,7 +382,14 @@ class Home(Gtk.Window):
         else:
             if self.notice_overlay:
                 self.notice_overlay.dismiss()
+            self.update_notice.hold()       # a waiting update steps aside, and comes back after the notice
             self.notice.say(text, secs, kind)
+
+    def notice_hidden(self):
+        """Home's notice tucked away: a waiting update gets the edge back, unless the volume island has it."""
+        pills = (self.volume_pill, self.volume_overlay.pill if self.volume_overlay else None)
+        if not any(pill is not None and pill.phase != "closed" for pill in pills):
+            self.update_notice.release()
 
     def notice_islands(self):
         return [n for n in (self.notice, self.notice_overlay.island if self.notice_overlay else None) if n]
@@ -389,6 +398,7 @@ class Home(Gtk.Window):
         """The volume island takes the top edge: a notice there steps aside until it is gone."""
         for notice in self.notice_islands():
             notice.hold()
+        self.update_notice.hold()
 
     def volume_hidden(self):
         """A volume island tucked away: once none shows, a notice that stepped aside gets the edge back."""
@@ -399,6 +409,8 @@ class Home(Gtk.Window):
             return
         for notice in self.notice_islands():
             notice.release()
+        if self.notice.phase == "closed" and not self.notice.pending:
+            self.update_notice.release()
 
     # ---- header
     def make_header(self):
@@ -948,14 +960,7 @@ class Home(Gtk.Window):
             return False
         self.settings_status = state
         updates = state.get('updates') or {}
-        self.update_notice.set_visible(bool(updates.get('available') or updates.get('status') in ('queued', 'updating', 'restarting')))
-        self.update_notice.set_sensitive(bool(updates.get('can_update')) and not updates.get('busy'))
-        self.update_notice.set_label('Updating TV…' if updates.get('status') in ('queued', 'updating', 'restarting')
-                                     else 'Checking for updates…' if updates.get('busy') else 'Update available · Update now')
-        target = updates.get('latest')
-        if updates.get('available') and target != getattr(self, 'update_seen', None):
-            self.update_seen = target
-            self.toast('A TV update is available. Select Update now on Home to install it.', 8, 'update')
+        self.update_notice.show_update(update_state(updates))
         settings = self.tops.get("settings")
         if settings and settings.category == "System":
             settings.update_system_status(state)
@@ -1026,7 +1031,7 @@ class Home(Gtk.Window):
             self.playback_prompt = PlaybackSuggestion(prompt, respond, self.scale)
 
     def install_update(self):
-        self.update_notice.set_sensitive(False)
+        self.update_notice.show_update("updating")
 
         def work():
             result = screens.cmd('update_install', timeout=15)
@@ -1044,7 +1049,7 @@ class Home(Gtk.Window):
             return
         self.settings_stamp = stamp
         cfg = widgets.load_config(DATA)
-        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'shapes', 'visualizer', 'transparency', 'visual_effects')
+        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'clock_style', 'shapes', 'visualizer', 'transparency', 'visual_effects')
         if not any(cfg[k] != home.cfg[k] for k in structural):
             home.cfg = cfg
             self.home_cfg = cfg
