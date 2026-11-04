@@ -1779,6 +1779,9 @@ class Controller:
         if value and nowplaying.track_key(value):
             mode, reason, _pending = self._youtube_classify(value)
             value = dict(value, youtube_mode=mode, youtube_reason=reason)
+        if value and value.get("status") != "Open" and not str(value.get("art") or "").startswith(("http://", "https://")):
+            vid = nowplaying.video_id(value)   # the phone can't load file:// art: use YouTube's own thumbnail
+            value = dict(value, art=f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else None)
         with self.lock:
             self._yt_cache = (time.monotonic(), value)
         return value

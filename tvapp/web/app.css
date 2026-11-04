@@ -138,7 +138,7 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .yt{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:10px 12px}
 .yt[hidden],.yt [hidden]{display:none!important}
 .yt-main{flex:1 1 100%;min-width:0;display:flex;align-items:center;gap:12px;background:none;border:0;padding:0;text-align:left;min-height:44px;box-shadow:none!important}
-.yt-main img{width:42px;height:42px;object-fit:cover;border-radius:10px;flex:none;border:1px solid var(--hair-soft)}
+.yt-main img{width:84px;height:48px;object-fit:cover;border-radius:10px;flex:none;border:1px solid var(--hair-soft)}
 .yt-text{display:flex;flex-direction:column;min-width:0;gap:2px}.yt-text b,.yt-text small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .yt-text b{font-weight:500;font-size:15px}.yt-text small{font-size:12px;color:var(--ink3)}
 .yt-seek{flex:1 1 100%;display:flex;align-items:center;gap:10px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--ink3)}
@@ -435,8 +435,6 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .home-head{align-items:center}
 .home-head h1.eyebrow{font-size:11px}
 #remote-activity{display:contents}
-#activity-slot:not([hidden]){display:grid;gap:10px}
-#activity-slot .phone-media{margin:0}
 #remote:not(.media-first){
   height:100vh;height:100dvh;min-height:0;
   padding:calc(env(safe-area-inset-top) + 8px) max(var(--gut),env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 75px) max(var(--gut),env(safe-area-inset-left));
@@ -481,3 +479,14 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 #ime-dock button{flex:1;min-width:0;min-height:44px;padding:0 2px;border:0;background:transparent;font-size:13px}
 #ime-tray button{flex:0 0 46px}
 #ime-dock [aria-pressed=true],#ime-dock [aria-expanded=true]{background:var(--accent);color:var(--navy)}
+
+/* YouTube overview on the main remote: compact on short phones so the pad keeps a usable size. */
+#remote:not(.media-first) .phone-media{margin-bottom:0;min-height:42px}
+@media(max-height:760px){
+  #remote:not(.media-first) .phone-media{min-height:36px}
+  #remote:not(.media-first) .yt{padding:6px 10px;gap:2px 8px}
+  #remote:not(.media-first) .yt-main{min-height:36px}
+  #remote:not(.media-first) .yt-main img{width:64px;height:36px;border-radius:8px}
+  #remote:not(.media-first) .yt-ctl .hb{width:42px}#remote:not(.media-first) .yt-ctl #yt-play{width:50px}
+  #remote:not(.media-first) .yt-mode{display:none!important}
+}

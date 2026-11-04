@@ -53,7 +53,7 @@
     return true;
   }
   const PRESSABLE = 'button, [role=switch], label.row, .ptile';
-  const SCROLLS = '.pane, #sheet-content, #activity-slot, .hrow, #settings-tabs';
+  const SCROLLS = '.pane, #sheet-content, .hrow, #settings-tabs';
   document.addEventListener('pointerdown', e => {
     felt = null;
     const el = e.target.closest(PRESSABLE);
@@ -284,7 +284,6 @@
   }
 
   function showPair() {
-    $('activity-slot').hidden = true;
     $('connection').hidden = true; pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
     connected(false, 'Pair this phone');
     updateTabbar();
@@ -535,21 +534,6 @@
     $('remote').classList.toggle('media-first', view !== 'browse');
     renderYoutube(s.youtube_now, view);
     renderViz(s.visualizer, view);
-    // In the main controller these variable-height panels share one sheet.
-    const activity = $('remote-activity'), slot = $('activity-slot'), opener = $('activity-open');
-    const inMenu = view === 'browse';
-    const suggestion = $('playback-help');
-    if (inMenu && activity.parentElement !== slot) {
-      activity.prepend(suggestion);
-      slot.append(activity);
-    }
-    if (!inMenu && activity.parentElement !== remote) {
-      c.prepend(suggestion);
-      remote.insertBefore(activity, remote.querySelector('.topbar'));
-    }
-    opener.hidden = !inMenu || !activity.querySelector(':scope > :not([hidden])');
-    opener.textContent = help ? 'Playback help' : !$('update-notice').hidden ? 'TV update' : !$('yt').hidden ? 'YouTube media' : 'Media';
-    if (opener.hidden && sheetName === 'activity') closeSheet();
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
     $('buffer').hidden = view !== 'buffering';
@@ -776,11 +760,9 @@
   function openSheet(name) {
     keyboard.close();
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('activity-slot').hidden = name !== 'activity';
-    $('sheet-title').textContent = {activity: 'TV activity', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
-    if (name === 'activity') { content.replaceChildren(); return; }
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'others') { renderOthersSheet(); return; }
     if (name === 'web') { renderWebSheet(); return; }
@@ -931,8 +913,7 @@
     row.replaceChildren(...parts);
   }
 
-  function closeSheet() { $('activity-slot').hidden = true; sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
-  $('activity-open').onclick = () => openSheet('activity');
+  function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }
   $('sheet-close').onclick = closeSheet;
   $('mode').onclick = () => setMode(mode === 'pointer' ? 'dpad' : 'pointer');
   $('mic-mute').onclick = () => send('mic_mute').then(r => {

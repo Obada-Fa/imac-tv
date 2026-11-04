@@ -107,7 +107,7 @@
     </div>
     <div class="volume"><button data-action="volume" data-direction="-1" type="button" class="hb" aria-label="Volume down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10"/></svg></button><button data-action="mute" id="volume-label" type="button" class="vol-label" aria-label="Mute or unmute">Volume</button><button data-action="volume" data-direction="1" type="button" class="hb" aria-label="Volume up"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10M12 7v10"/></svg></button></div>
   </section>
-  <footer id="foot"><button id="mode" type="button" class="quiet" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open" type="button" class="quiet">Keyboard</button><button id="activity-open" type="button" class="quiet" hidden>Media</button><button id="settings-open" type="button" class="quiet" hidden>Settings</button></footer>
+  <footer id="foot"><button id="mode" type="button" class="quiet" aria-label="Switch between pointer and directional controls">Pointer</button><button id="type-open" type="button" class="quiet">Keyboard</button><button id="settings-open" type="button" class="quiet" hidden>Settings</button></footer>
 </main>
 
 <main id="browser" class="shell" hidden>
@@ -187,7 +187,7 @@
 
 <section id="pair" class="pair" hidden><div class="pair-card glass"><small class="eyebrow">IMAC TV</small><h1>Connect your phone</h1><p class="meta">Enter the six-digit code shown on your TV.</p><form id="pair-form"><input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" aria-label="Six-digit pairing code" required><button type="submit" class="go">Connect</button></form><p id="pair-error" role="alert"></p></div></section>
 
-<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" type="button" class="hb" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg></button></div><div id="sheet-content"></div><div id="activity-slot" hidden></div></div></section>
+<section id="sheet" class="sheet" hidden><div class="sheet-card"><div class="sheet-head"><h2 id="sheet-title">More</h2><button id="sheet-close" type="button" class="hb" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 8 8 8M16 8l-8 8"/></svg></button></div><div id="sheet-content"></div></div></section>
 <form id="ime-dock" role="group" aria-label="TV keyboard shortcuts" hidden>
   <input id="ime-field" type="text" enterkeyhint="enter" autocomplete="off" aria-label="Type directly on the TV" tabindex="-1">
   <div id="ime-tray" hidden></div><div id="ime-row"></div>

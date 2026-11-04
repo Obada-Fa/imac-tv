@@ -60,6 +60,7 @@ class Preview(SimpleHTTPRequestHandler):
     max_favorites = 6
     apps_rev = 1
     desktop_app = None   # id of a "running" desktop app, for the touchpad view
+    youtube = False      # pretend YouTube plays in the background (the Remote tab's YouTube overview)
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "tvapp/web"), **kwargs)
 
@@ -116,6 +117,10 @@ class Preview(SimpleHTTPRequestHandler):
             extra = {}
             if self.desktop_app:
                 extra = {"app": self.desktop_app, "app_name": next((a["name"] for a in self.apps if a["id"] == self.desktop_app), "App")}
+            if self.youtube:
+                extra["youtube_now"] = {"status": "Playing", "title": "Northern lights over the Lofoten islands, 4K",
+                                        "artist": "Nature Relaxation Films", "art": "/api/yt-thumb.jpg", "source": "youtube",
+                                        "length": 1520, "position": 312, "can_seek": True, "youtube_mode": "video"}
             self.json({**{"apps_rev": self.apps_rev}, "app": "home", "phase": "ready", "gui": True, "playback": {"active": False},
                        "volume": 45, "muted": False, "brightness": {"level": 80, "available": True},
                        "fullscreen": True, "screen_off": False, "timer": {"active": False},
@@ -145,6 +150,13 @@ class Preview(SimpleHTTPRequestHandler):
         elif path in {f"/api/themes/{key}.jpg" for key in wallpapers.BUNDLED}:
             source = Path(path).stem
             body = Path(wallpapers.pictures(source)[0]["path"]).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif path == "/api/yt-thumb.jpg":
+            body = Path(wallpapers.pictures(next(iter(wallpapers.BUNDLED)))[0]["path"]).read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", "image/jpeg")
             self.send_header("Content-Length", str(len(body)))
@@ -219,10 +231,12 @@ if __name__ == "__main__":
     ap.add_argument("--native-bridge", type=Path, help="Preview the Flutter app's bridge with inert native controls")
     ap.add_argument("--apps", type=int, default=12, help="How many sample PC apps the Apps sheet lists")
     ap.add_argument("--max-favorites", type=int, default=6)
+    ap.add_argument("--youtube", action="store_true", help="Pretend YouTube plays on the TV (the Remote tab's YouTube overview)")
     ap.add_argument("--desktop-app", action="store_true", help="Pretend a desktop app is selected on the TV (touchpad view)")
     args = ap.parse_args()
     Preview.apps = sample_apps(args.apps)
     Preview.max_favorites = args.max_favorites
+    Preview.youtube = args.youtube
     if args.desktop_app:
         Preview.desktop_app = next(a["id"] for a in Preview.apps if a["kind"] == "desktop")
     if args.native_bridge:
