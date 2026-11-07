@@ -1,0 +1,11 @@
+{
+  "name": "nexus-music-cast",
+  "private": true,
+  "description": "Nexus TV music receiver: cast from the YouTube Music app, the TV plays audio only through mpv",
+  "type": "module",
+  "main": "receiver.mjs",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "yt-cast-receiver": "2.1.0"
+  }
+}

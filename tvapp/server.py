@@ -33,6 +33,7 @@ import backgrounds
 import wallpapers
 import browser
 import nowplaying
+import music_cast
 import phonemic
 import audio_output
 import phonespeaker
@@ -698,6 +699,8 @@ class Controller:
                 LOG.info("Paused %s for the movie", name)
         except Exception:
             LOG.exception("Could not pause other players")
+        if music_cast.pause(DATA):
+            LOG.info("Paused cast music for the movie")
         try:
             win = window_for("youtube")
             if win:
@@ -1952,6 +1955,7 @@ class Controller:
                                    (gpu_temp is not None and gpu_temp >= 85),
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "visualizer": self.visualizer_state(),
+                "music_cast": music_cast.now(DATA),
                 "phone_audio": self.phone_audio(),
                 "discord": app == "discord" or (gui and discord_in_front()),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
@@ -2338,6 +2342,8 @@ class Controller:
                 return {"ok": True}
             if action == "youtube_mode":
                 return self.set_youtube_mode(params.get("mode"))
+            if action == "music_toggle":
+                return {"ok": music_cast.toggle(DATA)}
             if action == "youtube_media":
                 cmd = params.get("cmd")
                 if cmd not in nowplaying.COMMANDS:
@@ -3000,6 +3006,7 @@ def serve():
     for handler in logging.getLogger().handlers:
         handler.addFilter(_RedactFilter())
     CONTROL = Controller()
+    music_cast.Supervisor(DATA).start()       # "Nexus TV" in the YouTube Music cast menu, sound only
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
     LOG.info("Listening on port %d", PORT)

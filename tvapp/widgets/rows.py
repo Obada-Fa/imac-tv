@@ -105,6 +105,12 @@ class RowWidget(Widget):
             self.row.animate(dt, now)
 
 
+def toggle_cast():
+    """Play/pause the music cast from the phone; the phone's player follows."""
+    import threading
+    threading.Thread(target=lambda: screens.cmd("music_toggle"), daemon=True).start()
+
+
 def GLib_idle(fn):
     from gi.repository import GLib
     GLib.idle_add(lambda: fn() and False)
@@ -126,7 +132,11 @@ class ContinueWidget(RowWidget):
     def items(self):
         out = []
         st = self.now_state
-        if st:
+        if st and st.get("source") == "cast":     # cast from the phone, sound only: OK plays/pauses it
+            out.append({"key": "music", "source": "cast", "title": st.get("title") or "Music", "sub": st.get("artist") or "",
+                        "art_url": st.get("art"), "poster_url": st.get("art") or "", "now": st.get("status") or "Open",
+                        "on_activate": toggle_cast})
+        elif st:
             out.append({"key": "youtube", "title": st.get("title") or "YouTube", "sub": st.get("artist") or "",
                         "art_url": st.get("art"), "poster_url": st.get("art") or "", "now": st.get("status") or "Open",
                         "on_activate": lambda: self.shell.open_app("youtube")})

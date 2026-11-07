@@ -229,6 +229,9 @@ else
   bash "$ROOT_DIR/scripts/install-engine.sh" ${ENGINE_URL:+"$ENGINE_URL"}
 fi
 
+# Music casting: "Nexus TV" in the YouTube Music cast menu, sound only (Node.js, yt-dlp, receiver packages)
+bash "$ROOT_DIR/scripts/install-music-cast.sh" || printf "${YELLOW}Music casting setup failed; the TV works without it.${NC}\n"
+
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
 printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"
 if [ "$SKIP_PRIVILEGES" = true ]; then
@@ -268,6 +271,7 @@ printf "     The TV Home screen displays a 6-digit code and a QR code.\n"
 printf "     Scan the QR code or enter the code on your phone to connect!\n\n"
 printf "  ${BOLD}Installed:${NC}\n"
 printf "     - ${BOLD}VacuumTube:${NC} YouTube Leanback TV interface with adblocker and remote/gamepad nav\n"
+printf "     - ${BOLD}Music casting:${NC} cast from the YouTube Music app to \"Nexus TV\" (sound only, Premium not needed)\n"
 printf "     - ${BOLD}Movies & series:${NC} built-in catalog (Cinemeta/Torrentio add-ons) played with mpv\n"
 if [ -n "${ENGINE_URL:-}" ]; then
     printf "     - ${BOLD}Engine:${NC} existing Stremio server at %s\n" "$ENGINE_URL"

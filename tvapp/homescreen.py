@@ -43,6 +43,10 @@ try:
 except Exception:  # pragma: no cover
     nowplaying = None
 try:
+    import music_cast
+except Exception:  # pragma: no cover
+    music_cast = None
+try:
     import ambient
 except Exception:  # pragma: no cover - data service missing: gradient only
     ambient = None
@@ -908,6 +912,12 @@ class AmbientHomeScreen(Screen):
                     state = dict(state, youtube_mode=mode)
             except Exception:
                 state = None
+            try:            # music cast from the phone (sound only) counts unless YouTube itself is playing
+                cast = music_cast.now(screens.DATA) if music_cast else None
+            except Exception:
+                cast = None
+            if cast and not (state and state.get("status") == "Playing"):
+                state = cast
             GLib.idle_add(self.set_now, state)
         threading.Thread(target=work, daemon=True).start()
 

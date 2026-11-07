@@ -31,6 +31,12 @@ GLOW = (0.62, 0.80, 1.0)
 
 # ---------------------------------------------------------------- pure math
 
+def now_kicker(now, source=None):
+    """The small label on the Now playing tile: what plays it (YouTube, or music cast from the phone) and how."""
+    what = "MUSIC" if source == "cast" else "YOUTUBE"
+    return what + " · " + ("PLAYING" if now == "Playing" else "PAUSED" if now == "Paused" else "OPEN")
+
+
 def drift(t, seed, amp):
     """Slow independent sin/cos wander, periods 2.5-3.5 s: (dx, dy) in px."""
     rng = random.Random(seed * 977 + 13)
@@ -292,7 +298,7 @@ class TileNode(Node):
         self.now = state.get("status")
         self.title = state.get("title") or self.title
         self.sub = state.get("artist") or ""
-        self.kicker = "YOUTUBE · " + ("PLAYING" if self.now == "Playing" else "PAUSED" if self.now == "Paused" else "OPEN")
+        self.kicker = now_kicker(self.now, state.get("source"))
 
     def inside(self, x, y):
         k = 1 + (FOCUS_SCALE - 1) * max(self.focus_amt, 0.4)
@@ -422,8 +428,7 @@ class NodeRow(RowBase):
                 now = spec.get("now")
                 node = TileNode(shell, w, h, title=spec["title"], sub=spec.get("sub") or "",
                                 art_url=spec.get("art_url"), progress=spec.get("progress"), eq=now,
-                                kicker=("YOUTUBE · " + ("PLAYING" if now == "Playing" else "PAUSED" if now == "Paused"
-                                                        else "OPEN")) if now else "",
+                                kicker=now_kicker(now, spec.get("source")) if now else "",
                                 on_activate=spec["on_activate"], seed=seed * 17 + i, chamfer=chamfer)
             self.add_node(node, round(p["cx"] - node.cx), round(p["cy"] - node.cy))
 
