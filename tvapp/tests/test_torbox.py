@@ -230,7 +230,7 @@ class HttpAuthTests(TorboxCase):
 
     def test_command_log_line_has_only_the_action(self):
         import inspect
-        src = inspect.getsource(server.Handler.do_POST)
+        src = inspect.getsource(server.Handler._do_post)
         line = [l for l in src.splitlines() if "Command from" in l][0]
         self.assertIn("self.client_address[0], action)", line)
 

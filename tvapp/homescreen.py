@@ -58,6 +58,7 @@ REFRESH_PHOTOS = 6 * 3600
 NOW_EVERY = 3.0          # seconds between YouTube now-playing polls (only while Home is visible)
 SHAPE_MS = 66            # ~15 fps while a shape is morphing or the visualizer is running
 FIELD_MS = 110           # ~9 fps: the quiet floating particles drift a few px/s
+SETTLE_S = 6.0           # calm Home: tiles drift this long after input, then hold still (no timer, ~0% CPU)
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
 MUSIC_DIM = 0.22         # how far the photo darkens behind the visualizer
 DIM_FADE = 1.6           # seconds for the photo to darken when the visualizer starts
@@ -513,6 +514,9 @@ class AmbientHomeScreen(Screen):
         self.chrome = 1.0
         self.anim_id = 0
         self.last_anim = time.monotonic()
+        self.drift_t = self.last_anim       # the tiles' drift clock: runs only while Home animates, so it resumes
+        self.stir_until = self.last_anim + SETTLE_S     # without a jump after the tiles settled
+        self.links_key = None
         self.photo_due = 0.0
         self.pending = None
         self.loading = False
@@ -688,8 +692,12 @@ class AmbientHomeScreen(Screen):
     # ---- ambient mode / input
     def poke(self, key=False):
         """Register user input; True when it only woke the screen from ambient mode (swallow the key)."""
-        woke = self.idle.touch(time.monotonic())
-        if woke:
+        now = time.monotonic()
+        woke = self.idle.touch(now)
+        self.stir_until = max(getattr(self, "stir_until", 0.0), now + SETTLE_S)   # input: the tiles drift a while
+        if not woke:
+            self.start_anim()
+        else:
             self.volume_line.reserve(False)
             self.canvas.ambient = False
             self.canvas.queue_draw()
@@ -885,6 +893,7 @@ class AmbientHomeScreen(Screen):
         self.sync_shapes(now)
         self.sync_field()
         self.start_anim()
+        self.settled_check()
         return True
 
     def poll_now(self):
@@ -942,10 +951,14 @@ class AmbientHomeScreen(Screen):
                 if p:
                     nodes.append((p[0], p[1], p[2], False))
         dust = [] if self.morph.target is not None else self.dust     # the morph draws the dots while it owns them
+        key = (tuple(nodes), now, len(dust))
+        if key == self.links_key and not self.canvas.fading():
+            return False                    # nothing moved: no new geometry, no repaint
+        self.links_key = key
         self.geom = network.compute_geometry(self.shell, nodes, dust, now)
         if self.canvas.fading():
             self.canvas.queue_draw()
-            return
+            return True
         cells = network.geometry_cells(self.geom) | self.prev_cells
         self.prev_cells = network.geometry_cells(self.geom)
         region = cairo.Region()
@@ -953,6 +966,7 @@ class AmbientHomeScreen(Screen):
         for gx, gy in cells:
             region.union(cairo.RectangleInt(gx * c, gy * c, c, c))
         self.canvas.queue_draw_region(region)
+        return True
 
     def draw_links(self, cr):
         owned = self.morph.target is not None        # the morph draws the dots while it owns them
@@ -1629,9 +1643,35 @@ class AmbientHomeScreen(Screen):
             target = 0.0 if self.idle.ambient else 1.0
             return self.canvas.fading() or self.chrome != target or self.widget_fading()
         fading = self.canvas.fading() and not (self.idle.ambient and self.shape_drives())
-        return ((not self.idle.ambient) or fading or self.chrome > 0.0
+        if not self.idle.ambient:           # calm Home: move only for a while after input, then settle
+            return (fading or self.stirred() or self.chrome < 1.0 or self.widget_fading() or self.morph.moving
+                    or (self.style == "network" and self.dust_amt < 1.0))
+        return (fading or self.chrome > 0.0
                 or (self.style == "network" and self.dust_amt > 0.0 and self.morph.target is None
                     and not self.shape_candidate()))
+
+    def stir(self, secs=SETTLE_S):
+        """Let calm Home's tiles drift (and finish easing focus, leaning, dodging) for `secs` from now."""
+        self.stir_until = max(self.stir_until, time.monotonic() + secs)
+        self.start_anim()
+
+    def stirred(self):
+        """Calm Home keeps moving: just after input, or while a tile shows live "now playing" bars."""
+        if time.monotonic() < self.stir_until:
+            return True
+        return any(getattr(n, "now", None) == "Playing"
+                   for w in getattr(self, "items", ()) if w.slot == "row" for n in w.focus_items())
+
+    def settled_check(self):
+        """1 s, while calm Home holds still: wake the tiles when something moved them without input (a row
+        rebuilt, focus moved, the QR drop-down opened or closed), so links, focus and dodging catch up."""
+        if self.anim_id or self.idle.ambient or not self.cfg["visual_effects"]:
+            return
+        pw = next((w for w in getattr(self, "items", ()) if hasattr(w, "drop_rect")), None)
+        if (pw.drop_rect() if pw else None) != self.shell.avoid_rect:
+            self.stir(2.0)
+        elif self.style == "network" and self.update_links(self.drift_t):
+            self.stir(2.0)
 
     def start_anim(self):
         if not self.anim_id and self.active() and self.needs_anim():
@@ -1659,6 +1699,7 @@ class AmbientHomeScreen(Screen):
             self.anim_id = 0
             return False
         self.canvas.step(dt)
+        self.drift_t += dt
         target = 0.0 if self.idle.ambient else 1.0
         if self.chrome != target:
             self.chrome = fade_step(self.chrome, target, dt, CHROME_FADE)
@@ -1671,9 +1712,9 @@ class AmbientHomeScreen(Screen):
         self.shell.avoid_rect = pw.drop_rect() if pw else None
         if self.chrome > 0.0 and self.cfg["visual_effects"]:
             for w in self.items:
-                w.animate(dt, now)
+                w.animate(dt, self.drift_t)
         if self.style == "network":
-            self.update_links(now if self.cfg["visual_effects"] else 0.0)
+            self.update_links(self.drift_t if self.cfg["visual_effects"] else 0.0)
             if self.morph.target is not None and not self.shape_id:
                 self.step_shape(dt, now)           # waking up: the dots are gliding back to their drift
             self.begin_shapes(now)

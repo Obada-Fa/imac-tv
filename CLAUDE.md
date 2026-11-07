@@ -22,6 +22,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - glass QR drop-down when no phone is connected
   - YouTube Now playing node
   - ambient mode after 120 s, or 30 s while YouTube plays: drifting particles and sky-line trace, weather line, and a music visualizer led by the edge-flow style
+- **Calm Home holds still (2026-11-07):** the tiles drift for `SETTLE_S` (6 s) after input, then the 20 fps timer stops (idle Home ~14% → ~1% of a core on Xvfb); a playing tile, fades, focus moves and the QR drop-down wake it. `/api/state` answers are shared for 1 s between the TV and phones (`Controller.shared_status`, any POST invalidates), wmctrl runs once per answer and xdpyinfo every 5 s. Not verified on the real TV.
 - **Phone:**
   - tabs drive the TV screens
   - search scoped to the current tab

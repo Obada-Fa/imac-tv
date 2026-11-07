@@ -113,7 +113,32 @@ def command(argv, *, timeout=3, env=None, check=True):
     return result.stdout.strip()
 
 
+_SNAPSHOT = threading.local()       # status() lists the windows once and every lookup in it reuses that list
+
+
+class window_snapshot:
+    """Within this block, windows() on this thread runs wmctrl at most once."""
+    def __enter__(self):
+        self.outer = getattr(_SNAPSHOT, "wins", False)
+        if self.outer is False:
+            _SNAPSHOT.wins = None
+        return self
+
+    def __exit__(self, *_):
+        if self.outer is False:
+            _SNAPSHOT.wins = False
+
+
 def windows():
+    snap = getattr(_SNAPSHOT, "wins", False)
+    if snap is False:
+        return _list_windows()
+    if snap is None:
+        _SNAPSHOT.wins = snap = _list_windows()
+    return snap
+
+
+def _list_windows():
     try:
         lines = command(["wmctrl", "-lpGx"], timeout=2).splitlines()
     except Exception:
@@ -1850,7 +1875,42 @@ class Controller:
                 command(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text], timeout=10)
         return {"applied": True}
 
+    STATUS_TTL = 1.0         # s: the TV and every phone poll /api/state; requests this close together share one answer
+    GUI_TTL = 5.0            # s between xdpyinfo checks that the X server is up
+
+    def shared_status(self):
+        """status() for /api/state. One answer runs ~6 helper processes (pactl, wmctrl, xset, ...) and the TV
+        (every 1-3 s) and each phone (every 2 s) ask for it, so requests within STATUS_TTL get the same answer.
+        Any POST bumps status_gen, so the first poll after a command is always fresh."""
+        now = time.monotonic()
+        gen = getattr(self, "status_gen", 0)
+        hit = getattr(self, "status_cache", None)
+        if hit and hit[1] == gen and now - hit[0] < self.STATUS_TTL:
+            return hit[2]
+        state = self.status()
+        self.status_cache = (now, gen, state)
+        return state
+
+    def status_changed(self):
+        self.status_gen = getattr(self, "status_gen", 0) + 1
+
+    def _gui_up(self):
+        now = time.monotonic()
+        seen = getattr(self, "gui_seen", None)
+        if seen and now - seen[0] < self.GUI_TTL:
+            return seen[1]
+        try:
+            gui = bool(command(["xdpyinfo"], timeout=1, check=False))
+        except Exception:
+            gui = False
+        self.gui_seen = (now, gui)
+        return gui
+
     def status(self):
+        with window_snapshot():
+            return self._status()
+
+    def _status(self):
         with self.lock:
             app, phase, error = self.app, self.phase, self.error
             buffering = dict(self.buffering) if self.buffering and phase == "buffering" else None
@@ -1858,10 +1918,7 @@ class Controller:
             deadline = self.timer.get("deadline")
         percent, muted = self._system_volume()  # one system volume, also while mpv plays
         cpu_temp, gpu_temp = sysinfo.temps()
-        try:
-            gui = bool(command(["xdpyinfo"], timeout=1, check=False))
-        except Exception:
-            gui = False
+        gui = self._gui_up()
         player = playback()
         yt_now = self.youtube_now()
         win = window_for(app) if gui else None
@@ -2695,7 +2752,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
             self._note_presence()
-            self.respond(200, CONTROL.status())
+            self.respond(200, CONTROL.shared_status())
             return
         if parsed.path == "/api/text-focus":
             if not self.authorised(parsed.query):
@@ -2855,6 +2912,15 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def do_POST(self):
+        if CONTROL:
+            CONTROL.status_changed()        # a command may change the state: no shared /api/state answer from before it
+        try:
+            self._do_post()
+        finally:
+            if CONTROL:
+                CONTROL.status_changed()
+
+    def _do_post(self):
         parsed = urlsplit(self.path)
         origin = self.headers.get("Origin")
         host = self.headers.get("Host", "")
