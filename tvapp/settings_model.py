@@ -17,6 +17,7 @@ FIELDS = [
     ('idle', 'Ambient', 'Idle delay (seconds)', 'number', [10, 7200], False),
     ('idle_music', 'Ambient', 'Music idle delay (seconds)', 'number', [10, 7200], False),
     ('visualizer', 'Ambient', 'Music visualizer', 'bool', [], True),
+    ('gpu_viz', 'Ambient', 'Smooth visualizer (GPU)', 'choice', ['auto', 'on', 'off'], True),
     ('shapes', 'Ambient', 'Ambient shapes', 'choice', ['photo', 'photo+animals', 'off'], True),
     ('sub_default', 'Playback', 'Default subtitle language', 'language', [], False),
     ('sub_langs', 'Playback', 'Subtitle language order', 'languages', [], False),
@@ -29,7 +30,7 @@ FIELDS = [
 MEDIA_KEYS = {f[0] for f in FIELDS if f[1] == 'Playback'}
 AMBIENT_KEYS = {'interval', 'idle', 'idle_music'}
 LABELS = {'photo': 'Photo outlines', 'photo+animals': 'Photo outlines and animals', 'off': 'Off',
-          'network': 'Network', 'bubbles': 'Bubbles', 'ara': 'Arabic', 'dut': 'Nederlands', 'eng': 'English'}
+          'auto': 'Auto', 'on': 'On', 'network': 'Network', 'bubbles': 'Bubbles', 'ara': 'Arabic', 'dut': 'Nederlands', 'eng': 'English'}
 
 
 def label(value):

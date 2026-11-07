@@ -3,6 +3,8 @@
 # usage: scripts/viz-bench.sh [tvapp_dir=tvapp] [secs_per_mode=30] [mode ...=edgeflow ridge constellation terrain prism]
 # env:   SHOT_DIR=<dir> keeps one screenshot per mode (default: discarded with the scratch dir)
 # env:   BENCH_IMAGE=<local image> fixes the background (required for circuit); no network image refresh.
+# env:   IMACTV_GPU_VIZ=1 forces the GPU renderer (gl_ambient.py; Xvfb has only llvmpipe, so its own CPU is
+#        printed separately as "renderer" and says nothing about a real GPU), =0 forces cairo.
 # Never touches DISPLAY :0 or ~/.local/share/imactv. Kills only the PIDs it started.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -93,6 +95,11 @@ PYSEED
   sleep $((SECS - SECS/2))
   C1=$(python3 "$HELPER" cpu "$PPID_" "$XPID"); W1=$(date +%s.%N); T1=$(python3 "$HELPER" now "$D/perf.jsonl")
   read -r P0 X0 <<<"$C0"; read -r P1 X1 <<<"$C1"
+  RPID=$(pgrep -P "$PPID_" -f gl_ambient.py | head -1)
+  if [ -n "$RPID" ]; then
+    R0=$(python3 "$HELPER" cpu "$RPID"); sleep 5; R1=$(python3 "$HELPER" cpu "$RPID")
+    echo "$mode: GPU renderer pid $RPID: $(python3 -c "print(round(($R1-$R0)/5*100,1))")% of a core (llvmpipe on Xvfb)"
+  fi
   WALL=$(python3 -c "print($W1-$W0)")
   python3 "$HELPER" row "$TVAPP" "$D/perf.jsonl" "$T0" "$T1" "$mode" \
       "$(python3 -c "print($P1-$P0)")" "$(python3 -c "print($X1-$X0)")" "$WALL" | tee -a "$ROOT/rows"

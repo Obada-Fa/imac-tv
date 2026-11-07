@@ -1463,7 +1463,7 @@
     $('settings-tabs').append(b);
   });
   selectCategory(settingsCategory);
-  const settingLabel = v => ({network: 'Network', bubbles: 'Bubbles', rounded: 'Rounded', chamfer: 'Chamfer', hexagon: 'Hexagon', octagon: 'Octagon', glass: 'Glass', light: 'Light', photo: 'Photo outlines', 'photo+animals': 'Photo outlines and animals', off: 'Off'}[v] || String(v));
+  const settingLabel = v => ({network: 'Network', bubbles: 'Bubbles', rounded: 'Rounded', chamfer: 'Chamfer', hexagon: 'Hexagon', octagon: 'Octagon', glass: 'Glass', light: 'Light', photo: 'Photo outlines', 'photo+animals': 'Photo outlines and animals', off: 'Off', auto: 'Auto', on: 'On'}[v] || String(v));
   function orderPicker(key, title, value, languages, save) {
     let ordered = [...value];
     sheetName = 'setting'; sheet.hidden = false; updateTabbar();

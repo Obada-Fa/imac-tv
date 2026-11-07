@@ -11,6 +11,11 @@ import time
 import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+try:
+    gi.require_version("GdkX11", "3.0")
+    from gi.repository import GdkX11
+except (ValueError, ImportError):
+    GdkX11 = None
 
 import datetime
 import hashlib
@@ -24,8 +29,10 @@ import screens
 from screens import Screen, text_label, cover_pixbuf
 import backgrounds
 import wallpapers
+import gl_ambient
+import gpu
 import widgets
-from widgets import network, shapes, contours, volume_hud
+from widgets import network, shapes, contours, volume_hud, vizpaint
 import perflog
 
 PERF = perflog.from_env()       # IMACTV_PERF_LOG=path: per-frame timings (None, and free, when unset)
@@ -62,6 +69,7 @@ REFRESH_PHOTOS = 6 * 3600
 NOW_EVERY = 3.0          # seconds between YouTube now-playing polls (only while Home is visible)
 SHAPE_MS = 66            # ~15 fps while a shape is morphing
 VIZ_MS = 100             # 10 fps for the music visualizer: it repaints ~40% of the screen in software each frame
+GL_SIM_MS = gl_ambient.SIM_MS   # ~30 Hz simulation while the GPU draws the visualizer (gpu.py, gl_ambient.py)
 FIELD_MS = 200           # 5 fps: the quiet floating particles drift a few px/s (each frame repaints ~25% of the screen)
 SETTLE_S = 6.0           # calm Home: tiles drift this long after input, then hold still (no timer, ~0% CPU)
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
@@ -323,8 +331,23 @@ class PhotoCanvas(Gtk.DrawingArea):
         self.dim = 0.0          # drawn darkness 0..1, in 1/DIM_STEPS steps (the screen eases it)
         self.fb = None          # the client-side framebuffer the lines are drawn into (see on_draw)
         self.dark = None        # (photo, dim, the photo pre-darkened to that dim)
+        self.only = None        # cairo.Region: while the GPU draws the visualizer, repaint only these holes
         self.set_has_window(False)
         self.connect("draw", self.on_draw)
+
+    def queue_draw(self):
+        if self.only is not None:
+            self.queue_draw_region(self.only)
+        else:
+            Gtk.DrawingArea.queue_draw(self)
+
+    def queue_draw_region(self, region):
+        if self.only is not None:
+            region = region.copy()
+            region.intersect(self.only)
+            if region.is_empty():
+                return
+        Gtk.DrawingArea.queue_draw_region(self, region)
 
     def show_surface(self, surf, blur=None, animate=True):
         self.prev, self.cur = self.cur, surf
@@ -434,19 +457,7 @@ def clip_rects(cr, w, h):
     return [(0, 0, w, h)]
 
 
-def batch_segments(segs, alpha_steps=8, amax=1.0):
-    """Group line segments so each (colour, alpha, width) is one stroke. segs: (rgb, alpha, width, x0, y0, x1, y1).
-    Alpha is quantized to alpha_steps levels over 0..amax (never to zero for a visible segment), width to 0.5 px;
-    segments with alpha <= 0 are dropped.
-    Returns [(rgb, alpha, width, [(x0, y0, x1, y1), ...])] in first-seen order."""
-    groups = {}
-    for rgb, a, wd, x0, y0, x1, y1 in segs:
-        if a <= 0:
-            continue
-        qa = max(1, round(min(a, amax) / amax * alpha_steps)) * amax / alpha_steps
-        key = (tuple(rgb), qa, max(0.5, round(wd * 2) / 2))
-        groups.setdefault(key, []).append((x0, y0, x1, y1))
-    return [(k[0], k[1], k[2], v) for k, v in groups.items()]
+batch_segments = vizpaint.batch_segments
 
 
 def stroke_batches(cr, batches):
@@ -457,6 +468,33 @@ def stroke_batches(cr, batches):
             cr.move_to(x0, y0)
             cr.line_to(x1, y1)
         cr.stroke()
+
+
+class CairoPainter:
+    """vizpaint's painter on a cairo context (the software path)."""
+
+    def __init__(self, cr, sprite, r):
+        self.cr, self.sprite, self.r = cr, sprite, r
+
+    def segs(self, segs, steps, amax):
+        stroke_batches(self.cr, batch_segments(segs, steps, amax))
+
+    def fill(self, poly, rgb, a):
+        cr = self.cr
+        network.poly_path(cr, poly)
+        cr.set_source_rgba(*rgb, a)
+        cr.fill()
+
+    def outline(self, poly, rgb, a, wd):
+        cr = self.cr
+        network.poly_path(cr, poly)
+        cr.set_source_rgba(*rgb, a)
+        cr.set_line_width(wd)
+        cr.stroke()
+
+    def glow(self, x, y, rgb, a):
+        self.cr.set_source_rgba(*rgb, a)
+        self.cr.mask_surface(self.sprite, x - self.r, y - self.r)
 
 
 def dimmed(canvas):
@@ -484,15 +522,8 @@ def dimmed(canvas):
     return surf
 
 
-def viz_base_alpha(lv):
-    """The visualizer's link opacity before per-link weights: a background, music modulates, never dominates."""
-    gain = 0.55 + 0.45 * min(1.0, lv["bass"] + lv["mid"])
-    return (0.11 + 0.06 * lv["mid"] + 0.10 * lv["beat"]) * gain
-
-
-def viz_link_alpha(base_a, la, alphas, depth, i, j):
-    dd = (depth[i] + depth[j]) / 2 if depth else 0.75
-    return base_a * la * min(alphas[i], alphas[j]) * (0.30 + 0.70 * dd)
+viz_base_alpha = vizpaint.viz_base_alpha
+viz_link_alpha = vizpaint.viz_link_alpha
 
 
 def dim_level(progress):
@@ -583,7 +614,12 @@ class AmbientHomeScreen(Screen):
         self.extra_origin = []
         self.disposed = False
 
+        self.gl = None                 # gl_ambient.GLLink while the GPU draws the visualizer (gpu.use_gpu_viz)
+        self.gl_on = False             # its window is up: cairo paints the visualizer only inside the holes
+        self.gl_sent = set()           # photo keys the renderer has
+        self.gl_holes = None           # [(x, y, w, h)] where GTK widgets show through the GPU window
         overlay = Gtk.Overlay()
+        self.overlay = overlay
         self.pack_start(overlay, True, True, 0)
         if PERF:
             overlay.connect("draw", self.perf_draw_begin)
@@ -703,6 +739,8 @@ class AmbientHomeScreen(Screen):
         if not woke:
             self.start_anim()
         else:
+            self.gl_hide()
+            self.ambient_cursor(False)
             self.volume_line.reserve(False)
             self.canvas.ambient = False
             self.canvas.queue_draw()
@@ -714,7 +752,19 @@ class AmbientHomeScreen(Screen):
             self.start_anim()
         return woke
 
+    def ambient_cursor(self, hidden):
+        """No mouse pointer over ambient Home; it comes back with the first key or move that wakes it."""
+        win = self.get_toplevel().get_window() if self.get_toplevel() else None
+        if win is None:
+            return
+        try:
+            win.set_cursor(Gdk.Cursor.new_for_display(win.get_display(), Gdk.CursorType.BLANK_CURSOR)
+                           if hidden else None)
+        except Exception as exc:                       # noqa: BLE001 - a cursor is never worth a crash
+            print("ambient cursor:", exc)
+
     def enter_ambient(self):
+        self.ambient_cursor(True)
         self.volume_line.reserve(True)
         self.canvas.ambient = True
         self.canvas.queue_draw()
@@ -851,6 +901,8 @@ class AmbientHomeScreen(Screen):
     def dispose(self):
         """The shell is rebuilding (resolution change): stop everything this screen started."""
         self.disposed = True
+        self.gl_stop()
+        self.ambient_cursor(False)
         if display:
             display.unsubscribe(self.on_screen)
         self.stop_anim()
@@ -1059,11 +1111,13 @@ class AmbientHomeScreen(Screen):
     def shape_drives(self):
         """The 15 fps shape timer is running: it also steps the particles and the photo crossfade, so the
         screen gets one repaint per frame instead of one per timer."""
-        return bool(self.shape_id) and self.shape_period in (SHAPE_MS, VIZ_MS)
+        return bool(self.shape_id) and self.shape_period in (SHAPE_MS, VIZ_MS, GL_SIM_MS)
 
     def lively_period(self):
         """Frame period while something moves: the visualizer runs slower than a morph."""
-        return VIZ_MS if self.viz is not None and not self.morph.moving else SHAPE_MS
+        if self.viz is not None and not self.morph.moving:
+            return GL_SIM_MS if getattr(self, "gl_on", False) else VIZ_MS
+        return SHAPE_MS
 
     def start_field_timer(self):
         if self.field_id or not self.active() or self.shape_drives():
@@ -1359,9 +1413,10 @@ class AmbientHomeScreen(Screen):
         self.last_shape = now
         if not self.active():
             self.shape_id = 0
+            self.gl_hide()
             return False
         self.step_shape(dt, now)
-        if self.shape_period in (SHAPE_MS, VIZ_MS):        # one master timer: the particles and the crossfade ride along
+        if self.shape_period in (SHAPE_MS, VIZ_MS, GL_SIM_MS):        # one master timer: the particles and the crossfade ride along
             if not self.field_id and self.style == "network" and (
                     self.field_target() > 0.0 or (self.field is not None and self.field.amt > 0.0)):
                 self.step_field(dt, now)
@@ -1423,6 +1478,7 @@ class AmbientHomeScreen(Screen):
                 self.canvas.dim = level
                 self.canvas.queue_draw()
         if m.target is None:
+            self.gl_hide()
             self.viz = None
             self.viz_prev = None
             if self.shape_geom is not None:
@@ -1452,6 +1508,7 @@ class AmbientHomeScreen(Screen):
                 m.release()
         elif (not m.moving and self.shape_geom is not None and max(self.lv.values()) < 0.01
               and not (self.fake_levels and now >= self.fake_from)):
+            self.gl_hide()
             return                                  # holding still and silent: nothing to repaint
         s = self.shell.scale
         pts = m.positions(self.origin, now)
@@ -1465,7 +1522,8 @@ class AmbientHomeScreen(Screen):
             links = fr["links"]
         tails = None
         if fr is not None and fr["trail"] > 0.02 and self.viz_prev and len(self.viz_prev) == len(pts):
-            tails = [(x - 4 * (x - px), y - 4 * (y - py)) for (x, y), (px, py) in zip(pts, self.viz_prev)]
+            k = min(12.0, 0.4 / max(dt, 0.02))      # 0.4 s of motion whatever the frame rate (4 at 10 fps)
+            tails = [(x - k * (x - px), y - k * (y - py)) for (x, y), (px, py) in zip(pts, self.viz_prev)]
         self.viz_prev = pts if fr is not None else None
         if fr is not None:
             links, geom = self.viz_drawn(pts, alphas, links, fr, tails)
@@ -1475,6 +1533,7 @@ class AmbientHomeScreen(Screen):
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
                            "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
                            "tails": tails, "beat": beat}
+        self.gl_sync()
         cells = network.geometry_cells(geom, margin=round(22 * s))
         dirty = cells | self.shape_cells
         self.shape_cells = cells
@@ -1502,13 +1561,134 @@ class AmbientHomeScreen(Screen):
         return links, {"pts": geo_pts, "n": len(geo_pts), "links": geo}
 
     def invalidate_cells(self, cells):
+        if self.gl_on:                               # cairo only fills the holes under the clock: 10 fps is plenty
+            self.gl_cells = getattr(self, "gl_cells", set()) | cells
+            self.gl_tick = (getattr(self, "gl_tick", 0) + 1) % 3
+            if self.gl_tick:
+                return
+            cells, self.gl_cells = self.gl_cells, set()
         if not cells:
             return
         region = cairo.Region()
         c = network.CELL
         for gx, gy in cells:
             region.union(cairo.RectangleInt(gx * c, gy * c, c, c))
-        self.canvas.queue_draw_region(region)
+        self.canvas.queue_draw_region(region)        # PhotoCanvas keeps it to the holes while the GPU draws
+
+    # ---- the GPU visualizer (gl_ambient.py)
+    def gl_wanted(self):
+        """The visualizer's stage is fully set (ambient, photo dimmed, music on) and the GPU should draw it."""
+        return (self.viz is not None and not self.viz_stop and self.idle.ambient and self.canvas.dim >= 1.0
+                and self.shape_geom is not None and self.shape_geom.get("viz") is not None
+                and not gl_ambient.GLLink.failed and self.active() and gpu.use_gpu_viz(self.cfg))
+
+    def gl_start(self):
+        win = self.get_toplevel().get_window()
+        if win is None or GdkX11 is None or not isinstance(win, GdkX11.X11Window):
+            gl_ambient.GLLink.failed = True
+            return
+        try:
+            self.gl = gl_ambient.GLLink(win.get_xid(), self.shell.sw, self.shell.sh,
+                                        win.get_display().get_name())
+        except OSError as exc:
+            print("gpu visualizer:", exc)
+            gl_ambient.GLLink.failed = True
+        self.gl_sent = set()
+        self.gl_holes = None
+
+    def gl_hide(self):
+        if self.gl_on:
+            self.gl_on = False
+            self.gl_holes = None                     # sent again (and the canvas clip rebuilt) when it comes back
+            self.canvas.only = None
+            if self.gl is not None:
+                self.gl.show(False)
+            self.canvas.queue_draw()                 # cairo takes the whole visualizer back
+
+    def gl_stop(self):
+        self.gl_hide()
+        if self.gl is not None:
+            self.gl.stop()
+            self.gl = None
+
+    def gl_sync(self):
+        """Once per simulation step: hand the frame to the GPU renderer, or take the visualizer back."""
+        if not self.gl_wanted():
+            self.gl_hide()
+            return
+        if self.gl is None:
+            self.gl_start()
+            if self.gl is None:
+                return
+        if not self.gl.alive():
+            print("gpu visualizer stopped, drawing with cairo:", self.gl.error or "exit %s" % self.gl.proc.poll())
+            gl_ambient.GLLink.failed = True
+            self.gl_stop()
+            return
+        if not self.gl.ready:
+            return                                     # still starting: cairo keeps drawing
+        cv = self.canvas
+        keys = []
+        for surf in (cv.cur, cv.prev if cv.fading() else None):
+            key = id(surf) if surf is not None else None
+            keys.append(key)
+            if surf is not None and key not in self.gl_sent:
+                surf.flush()
+                self.gl.send(("photo", key, surf.get_width(), surf.get_height(), surf.get_stride(),
+                              bytes(surf.get_data())))
+                self.gl_sent.add(key)
+        self.gl_sent &= set(keys)
+        holes = self.gl_hole_rects()
+        if holes != self.gl_holes:
+            self.gl_holes = holes
+            self.gl.send(("holes", holes))
+            region = cairo.Region()
+            for x, y, w, h in holes:
+                region.union(cairo.RectangleInt(x, y, w, h))
+            cv.only = region
+        g = self.shape_geom
+        self.gl.frame({"t": g["t"], "scale": g["scale"], "pts": g["pts"], "tails": g["tails"],
+                       "alphas": g["alphas"], "links": g["links"], "lv": g["lv"], "viz": g["viz"],
+                       "fade": cv.fade, "dim": cv.dim, "cur": keys[0], "prev": keys[1],
+                       "pal": list(self.viz.palette) if self.viz else list(shapes.DEFAULT_PALETTE),
+                       "hub": self.cfg["node_shape"], "glow_r": self.glow_sprite()[1]})
+        if not self.gl_on:
+            self.gl_on = True
+            cv.only = cv.only if self.gl_holes else cairo.Region()
+            self.gl.show(True)
+
+    def gl_hole_rects(self):
+        """[(x, y, w, h)] of the GTK widgets showing over Home (the clock, islands, notices), in window pixels."""
+        top = self.get_toplevel()
+        sw, sh = self.shell.sw, self.shell.sh
+        out = []
+
+        def visit(w):
+            if not w.get_mapped() or w.get_opacity() < 0.01:
+                return
+            a = w.get_allocation()
+            if a.width <= 1 or a.height <= 1:
+                return
+            if a.width * a.height > 0.25 * sw * sh:          # a layout box: its children are what shows
+                if isinstance(w, Gtk.Container):
+                    for c in w.get_children():
+                        visit(c)
+                return
+            co = w.translate_coordinates(top, 0, 0)
+            if co is None:
+                return
+            x, y = co[0] - 2, co[1] - 2
+            out.append((max(0, x), max(0, y), a.width + 4 + min(0, x), a.height + 4 + min(0, y)))
+
+        for c in self.overlay.get_children():
+            if c is not self.canvas:
+                visit(c)
+        root, stack = getattr(self.shell, "root", None), getattr(self.shell, "stack", None)
+        if isinstance(root, Gtk.Container):
+            for c in root.get_children():
+                if c is not stack:
+                    visit(c)
+        return sorted(out)
 
     def draw_shape(self, cr):
         g = self.shape_geom
@@ -1563,94 +1743,11 @@ class AmbientHomeScreen(Screen):
         return self.glow
 
     def draw_viz(self, cr, g):
-        s, t, pts, lv, fr = g["scale"], g["t"], g["pts"], g["lv"], g["viz"]
-        alphas, depth, glyph = g["alphas"], fr["depth"], fr.get("glyph")
+        sprite, r = self.glow_sprite()
         pal = self.viz.palette if self.viz else shapes.DEFAULT_PALETTE
-        k = fr["colour"]
-        line, spark, halo = pal[k % len(pal)], pal[(k + 1) % len(pal)], pal[(k + 2) % len(pal)]
-        bass, mid, beat = lv["bass"], lv["mid"], lv["beat"]
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        if g["tails"]:
-            tr = fr["trail"]
-            wd = max(1.0, 1.6 * s)
-            segs = []
-            for i, (x, y) in enumerate(pts):
-                a = alphas[i] * 0.15 * tr
-                if a > 0.01:
-                    tx, ty = g["tails"][i]
-                    segs.append((halo, a, wd, x, y, tx, ty))
-            stroke_batches(cr, batch_segments(segs, 6, 0.15))
-        gain = 0.55 + 0.45 * min(1.0, bass + mid)          # a background: music modulates, never dominates
-        base_a = viz_base_alpha(lv)
-        segs = []
-        for i, j, la in g["links"]:
-            dd = (depth[i] + depth[j]) / 2 if depth else 0.75
-            a = viz_link_alpha(base_a, la, alphas, depth, i, j)
-            if a < 0.01:
-                continue
-            segs.append((line, min(0.8, a), max(1.0, 1.1 * s * (0.6 + 0.6 * dd)), *pts[i], *pts[j]))
-        stroke_batches(cr, batch_segments(segs, 8, 0.8))
-        if fr["pulses"]:
-            wd = max(1.6, 2.4 * s)
-            segs = [(spark, 0.6 * a, wd, x0, y0, x1, y1) for x0, y0, x1, y1, a in fr["pulses"]]
-            stroke_batches(cr, batch_segments(segs, 6, 0.6))
-        sprite, r = self.glow_sprite()
-        hub = self.cfg["node_shape"]
-        outlines = []                   # the white glyph outlines, stroked in batches after the loop
-        for i, (x, y) in enumerate(pts):
-            a = alphas[i]
-            if a < 0.02:
-                continue
-            dd = depth[i] if depth else 0.75
-            tw = shapes.twinkle(i, t, lv["treble"]) if lv["treble"] > 0.02 else 0.0
-            if i % 5 == 0 and dd > 0.45 and (beat > 0.05 or tw > 0.3):
-                cr.set_source_rgba(*halo, min(0.5, (0.35 * beat + 0.25 * tw) * a * dd))
-                cr.mask_surface(sprite, x - r, y - r)
-            if fr.get("heads") and fr["heads"][i] > 0.01:
-                cr.set_source_rgba(*spark, (0.22 + 0.35 * beat) * a * fr["heads"][i])
-                cr.mask_surface(sprite, x - r, y - r)
-            d = (2.0 + 2.2 * dd) * s * (1 + 0.18 * bass + 0.5 * tw)
-            gl = glyph[i] if glyph else (4 if i % 5 == 0 else 0)
-            if gl in (1, 2, 3):
-                ang = fr["ang"][i]
-                al = min(0.7, (0.30 + 0.35 * dd + 0.3 * tw) * a * gain)
-                wd = max(1.0, 1.1 * s)
-                if gl == 3:
-                    dx, dy = math.cos(ang) * d * 2.4, math.sin(ang) * d * 2.4
-                    outlines.append((WHITE, al, wd, x - dx, y - dy, x + dx, y + dy))
-                else:
-                    gr = d * (2.2 if gl == 1 else 1.9)     # not r: that is the glow sprite's radius
-                    n = 3 if gl == 1 else 6
-                    ring = [(x + gr * math.cos(ang + 6.2832 * q / n), y + gr * math.sin(ang + 6.2832 * q / n))
-                            for q in range(n)]
-                    cr.move_to(*ring[0])
-                    for p in ring[1:]:
-                        cr.line_to(*p)
-                    cr.close_path()
-                    cr.set_source_rgba(*line, 0.07 * a * gain)
-                    cr.fill()
-                    outlines.extend((WHITE, al, wd, *ring[q - 1], *ring[q]) for q in range(n))
-            elif gl == 4:
-                poly = network.poly_points(hub, d * 2.0, x, y)
-                network.poly_path(cr, poly)
-                cr.set_source_rgba(*line, min(0.22, 0.06 + 0.10 * mid + 0.06 * tw) * a)
-                cr.fill_preserve()
-                cr.set_source_rgba(1, 1, 1, min(0.6, (0.35 + 0.30 * dd) * a))
-                cr.set_line_width(max(1.0, 1.3 * s))
-                cr.stroke()
-            else:
-                cr.set_source_rgba(1, 1, 1, min(0.8, (0.30 + 0.40 * dd + 0.3 * tw) * a * gain))
-                cr.move_to(x, y - d)
-                cr.line_to(x + d, y)
-                cr.line_to(x, y + d)
-                cr.line_to(x - d, y)
-                cr.close_path()
-                cr.fill()
-        stroke_batches(cr, batch_segments(outlines, 8, 0.7))
-        for _x0, _y0, x1, y1, a in fr["pulses"]:
-            cr.set_source_rgba(*spark, 0.45 * a)
-            cr.mask_surface(sprite, x1 - r, y1 - r)
+        vizpaint.paint(CairoPainter(cr, sprite, r), g, pal, self.cfg["node_shape"])
         cr.restore()
 
     def needs_anim(self):

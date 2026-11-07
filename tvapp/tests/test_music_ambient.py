@@ -89,7 +89,7 @@ class AmbientMusicTests(unittest.TestCase):
                                  items=[], audio=audio, shaped=True, dust_amt=1.0,
                                  morph=mock.Mock(), start_shape_timer=mock.Mock(),
                                  start_anim=mock.Mock(), update_bottom_label=mock.Mock(),
-                                 volume_line=mock.Mock())
+                                 volume_line=mock.Mock(), gl_hide=mock.Mock(), ambient_cursor=mock.Mock())
         screen.idle.touch.return_value = True
         screen.stop_audio = mock.Mock(side_effect=lambda: setattr(screen, "audio", None))
         screen.wake_shapes = lambda: homescreen.AmbientHomeScreen.wake_shapes(screen)
@@ -98,6 +98,8 @@ class AmbientMusicTests(unittest.TestCase):
         screen.stop_audio.assert_called_once()
         screen.morph.release.assert_called_once()
         screen.update_bottom_label.assert_called_once()
+        screen.gl_hide.assert_called_once()                   # the GPU visualizer gives the screen back
+        screen.ambient_cursor.assert_called_once_with(False)  # and the pointer returns
 
     def test_song_replaces_photo_label_and_stale_title_clears(self):
         screen = SimpleNamespace(idle=SimpleNamespace(ambient=False),

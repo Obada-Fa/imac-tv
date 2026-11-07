@@ -17,6 +17,7 @@ import audio_output  # noqa: E402
 import backgrounds  # noqa: E402
 import wallpapers  # noqa: E402
 import display  # noqa: E402
+import gpu
 import settings_model
 import widgets  # noqa: E402
 from widgets import glass, pairing, vitals  # noqa: E402
@@ -714,7 +715,8 @@ class SettingsScreen(Screen):
             elif kind == 'bool':
                 b = self.button(title, '', False, ('setting', key), action, toggle=bool(value))
             else:
-                b = self.button(title, '', False, ('setting', key), action, value=settings_model.label(value))
+                sub = gpu.describe(cfg) if key == 'gpu_viz' else ''
+                b = self.button(title, sub, False, ('setting', key), action, value=settings_model.label(value))
             b.set_sensitive(not disabled)
             self.grid([b])
 

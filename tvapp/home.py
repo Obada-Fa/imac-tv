@@ -17,6 +17,7 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from text_focus import TextFocus
+import gpu
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
                      BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
@@ -1051,7 +1052,7 @@ class Home(Gtk.Window):
             return
         self.settings_stamp = stamp
         cfg = widgets.load_config(DATA)
-        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'clock_style', 'shapes', 'visualizer', 'transparency', 'visual_effects')
+        structural = ('style', 'widgets', 'node_shape', 'tile_shape', 'qr_style', 'clock_style', 'shapes', 'visualizer', 'gpu_viz', 'transparency', 'visual_effects')
         if not any(cfg[k] != home.cfg[k] for k in structural):
             home.cfg = cfg
             self.home_cfg = cfg
@@ -1111,5 +1112,6 @@ if __name__ == "__main__":
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit(0)
+    gpu.start_detection()          # hardware GL or not: where the ambient visualizer is drawn (home.json gpu_viz)
     Home()
     Gtk.main()

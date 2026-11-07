@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "tile_shape": "rounded",
     "shapes": "photo",
     "visualizer": True,
+    "gpu_viz": "auto",           # GPU_VIZ below: auto = draw the visualizer on the GPU when one is found
     "qr_style": "glass",
     "clock_style": "glass",      # CLOCK_STYLES below
     "background": "topographic", # used until a theme is explicitly selected
@@ -38,6 +39,7 @@ QR_STYLES = ("glass", "light")
 CLOCK_STYLES = ("glass", "constellation", "analog", "simple", "drift")
 BACKGROUNDS = tuple(wallpapers.NAMES)
 SHAPE_MODES = ("photo", "photo+animals", "off")
+GPU_VIZ = ("auto", "on", "off")
 
 REGISTRY = {}
 
@@ -99,6 +101,7 @@ def parse_config(raw):
            "ambient": dict(DEFAULT_CONFIG["ambient"]), "style": DEFAULT_CONFIG["style"],
            "node_shape": DEFAULT_CONFIG["node_shape"], "tile_shape": DEFAULT_CONFIG["tile_shape"],
            "shapes": DEFAULT_CONFIG["shapes"], "visualizer": DEFAULT_CONFIG["visualizer"],
+           "gpu_viz": DEFAULT_CONFIG["gpu_viz"],
            "qr_style": DEFAULT_CONFIG["qr_style"], "clock_style": DEFAULT_CONFIG["clock_style"],
            "background": DEFAULT_CONFIG["background"],
            "retro_off": []}
@@ -125,6 +128,8 @@ def parse_config(raw):
         cfg["shapes"] = raw["shapes"]
     if isinstance(raw.get("visualizer"), bool):
         cfg["visualizer"] = raw["visualizer"]
+    if raw.get("gpu_viz") in GPU_VIZ:
+        cfg["gpu_viz"] = raw["gpu_viz"]
     if raw.get("tile_shape") in TILE_SHAPES:
         cfg["tile_shape"] = raw["tile_shape"]
     ws = raw.get("widgets")
