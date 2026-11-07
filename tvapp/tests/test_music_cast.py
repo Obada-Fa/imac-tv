@@ -96,11 +96,18 @@ class Supervision(unittest.TestCase):
             self.assertFalse(sup.start())
             sup.popen.assert_not_called()
 
-    def test_old_node_does_not_count(self):
+    def test_node_18_19_does_not_count(self):
+        # Zorin ships Node 18.19.1, which can't load youtubei.js (import attributes): the receiver crashed with it.
+        local = str(music_cast.LOCAL / "node/bin/node")
+        versions = {"/usr/bin/node": (18, 19), local: (22, 23)}
         with mock.patch.object(music_cast.shutil, "which", return_value="/usr/bin/node"), \
                 mock.patch.object(music_cast.Path, "is_file", return_value=True), \
-                mock.patch.object(music_cast, "node_version", side_effect=lambda b: 12 if b == "/usr/bin/node" else 22):
-            self.assertTrue(music_cast.node_bin().endswith("node/bin/node"))
+                mock.patch.object(music_cast, "node_version", side_effect=lambda b: versions.get(b, (0, 0))):
+            self.assertEqual(music_cast.node_bin(), local)
+            versions[local] = (0, 0)                          # no downloaded Node: 18.19 still isn't enough
+            self.assertIsNone(music_cast.node_bin())
+            versions["/usr/bin/node"] = (20, 11)
+            self.assertEqual(music_cast.node_bin(), "/usr/bin/node")
 
     def test_the_receiver_gets_the_tv_data_dir_socket_and_ytdlp(self):
         sup = music_cast.Supervisor("/data/tv")

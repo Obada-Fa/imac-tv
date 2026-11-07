@@ -26,20 +26,22 @@ NOW_FILE = "music_cast_now.json"
 SOCK_NAME = "music-mpv.sock"
 PORT = int(os.environ.get("IMACTV_MUSIC_PORT", "8766"))
 MAX_AGE = 20.0          # s: the receiver rewrites the file every 5 s while a song is loaded
-MIN_NODE = 18
+MIN_NODE = (20, 10)    # youtubei.js (pulled in by yt-cast-receiver) uses import attributes: Node 18.19 can't load it
 
 
 def node_version(binary):
+    """(major, minor) of a Node.js binary, (0, 0) when it doesn't run."""
     try:
         out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5).stdout
-        return int(out.strip().lstrip("v").split(".")[0])
+        major, minor = out.strip().lstrip("v").split(".")[:2]
+        return int(major), int(minor)
     except (OSError, ValueError, subprocess.SubprocessError):
-        return 0
+        return 0, 0
 
 
 def node_bin():
-    """A Node.js of at least MIN_NODE: the system's, else the one the installer unpacked."""
-    for cand in (shutil.which("node"), str(LOCAL / "node/bin/node")):
+    """A Node.js of at least MIN_NODE: the one the installer unpacked first, else the system's."""
+    for cand in (str(LOCAL / "node/bin/node"), shutil.which("node")):
         if cand and Path(cand).is_file() and node_version(cand) >= MIN_NODE:
             return cand
     return None
@@ -66,7 +68,7 @@ def missing():
     """What the receiver still needs, as words for a log line; empty when it can run."""
     need = []
     if not node_bin():
-        need.append(f"Node.js {MIN_NODE}+")
+        need.append("Node.js %d.%d+" % MIN_NODE)
     if not (APP_DIR / "node_modules/yt-cast-receiver").is_dir():
         need.append("music_cast/node_modules (npm ci)")
     if not shutil.which("mpv"):
