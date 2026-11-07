@@ -56,7 +56,8 @@ CHROME_FADE = 1.0       # seconds, bubbles+widgets fading out/in
 PHOTO_FADE = 1.5        # seconds, crossfade
 REFRESH_PHOTOS = 6 * 3600
 NOW_EVERY = 3.0          # seconds between YouTube now-playing polls (only while Home is visible)
-SHAPE_MS = 66            # ~15 fps while a shape is morphing or the visualizer is running
+SHAPE_MS = 66            # ~15 fps while a shape is morphing
+VIZ_MS = 100             # 10 fps for the music visualizer: it repaints ~40% of the screen in software each frame
 FIELD_MS = 110           # ~9 fps: the quiet floating particles drift a few px/s
 SETTLE_S = 6.0           # calm Home: tiles drift this long after input, then hold still (no timer, ~0% CPU)
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
@@ -1048,7 +1049,11 @@ class AmbientHomeScreen(Screen):
     def shape_drives(self):
         """The 15 fps shape timer is running: it also steps the particles and the photo crossfade, so the
         screen gets one repaint per frame instead of one per timer."""
-        return bool(self.shape_id) and self.shape_period == SHAPE_MS
+        return bool(self.shape_id) and self.shape_period in (SHAPE_MS, VIZ_MS)
+
+    def lively_period(self):
+        """Frame period while something moves: the visualizer runs slower than a morph."""
+        return VIZ_MS if self.viz is not None and not self.morph.moving else SHAPE_MS
 
     def start_field_timer(self):
         if self.field_id or not self.active() or self.shape_drives():
@@ -1326,8 +1331,8 @@ class AmbientHomeScreen(Screen):
         if (self.morph.target is not None or self.viz is not None
                 or ((self.audio or self.fake_levels) and self.idle.ambient)):
             self.last_shape = time.monotonic()
-            self.shape_period = SHAPE_MS
-            self.shape_id = GLib.timeout_add(SHAPE_MS, self.shape_tick)
+            self.shape_period = self.lively_period()
+            self.shape_id = GLib.timeout_add(self.shape_period, self.shape_tick)
 
     def shape_tick(self):
         if PERF:
@@ -1346,7 +1351,7 @@ class AmbientHomeScreen(Screen):
             self.shape_id = 0
             return False
         self.step_shape(dt, now)
-        if self.shape_period == SHAPE_MS:        # one master timer: the particles and the crossfade ride along
+        if self.shape_period in (SHAPE_MS, VIZ_MS):        # one master timer: the particles and the crossfade ride along
             if not self.field_id and self.style == "network" and (
                     self.field_target() > 0.0 or (self.field is not None and self.field.amt > 0.0)):
                 self.step_field(dt, now)
@@ -1358,7 +1363,7 @@ class AmbientHomeScreen(Screen):
             return False
         lively = (self.morph.moving or self.fake_levels and now >= self.fake_from or self.viz is not None
                   or self.canvas.dim > 0.0 or max(self.lv.values()) > 0.01)
-        period = SHAPE_MS if lively else 500          # audio is on but silent: just keep an eye on the levels
+        period = self.lively_period() if lively else 500          # audio is on but silent: just keep an eye on the levels
         if period != self.shape_period:
             self.shape_period = period
             self.shape_id = GLib.timeout_add(period, self.shape_tick)
@@ -1705,6 +1710,9 @@ class AmbientHomeScreen(Screen):
             self.chrome = fade_step(self.chrome, target, dt, CHROME_FADE)
             for w in self.chrome_widgets:
                 w.set_opacity(self.chrome)
+                # Faded out: unmap it but keep its place. GTK still draws a widget at opacity 0 wherever the
+                # visualizer repaints, which was ~45% of each visualizer frame.
+                w.set_child_visible(self.chrome > 0.0)
         if self.style == "network":
             hold = self.idle.ambient and self.shape_candidate()
             self.dust_amt = fade_step(self.dust_amt, 1.0 if hold else target, dt, 2.2)

@@ -68,11 +68,11 @@ def resolve_app_command(app):
     if app == "youtube":
         bin_path = shutil.which("vacuumtube") or shutil.which("VacuumTube")
         if bin_path:
-            return [bin_path, youtube_volume.FLAG]
+            return [bin_path, *youtube_volume.FLAGS]
         opt_bin = Path("/opt/VacuumTube/vacuumtube")
         if opt_bin.is_file() and os.access(opt_bin, os.X_OK):
-            return [str(opt_bin), youtube_volume.FLAG]
-        return ["flatpak", "run", "rocks.shy.VacuumTube", youtube_volume.FLAG]
+            return [str(opt_bin), *youtube_volume.FLAGS]
+        return ["flatpak", "run", "rocks.shy.VacuumTube", *youtube_volume.FLAGS]
     if app.startswith("desktop:"):
         argv = apps.launch_argv(app)
         if not argv:
@@ -846,6 +846,7 @@ class Controller:
                 self._yt_home_until = time.monotonic() + 6
                 self._yt_pending_mode = None
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": app})
+        self.youtube_link.set_video(app == "youtube")
         self._stop_proc()
         if app == "home":
             self._ui_request("home")
@@ -928,6 +929,7 @@ class Controller:
         try:
             youtube_volume.enforce()
             self.youtube_link.ensure()
+            self.youtube_link.set_video(self.app == "youtube")    # behind Home YouTube only plays sound
             with self.lock:
                 generation = self.generation
             state = self.youtube_now()
@@ -977,6 +979,7 @@ class Controller:
             self._yt_popped = key
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "youtube"})
             LOG.info("YouTube is playing a video; showing it")
+            self.youtube_link.set_video(True)
             activate(win)
         return True
 

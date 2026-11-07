@@ -23,6 +23,7 @@ General orchestrator rules live in `~/.claude/CLAUDE.md` ("Orchestrator mode").
   - YouTube Now playing node
   - ambient mode after 120 s, or 30 s while YouTube plays: drifting particles and sky-line trace, weather line, and a music visualizer led by the edge-flow style
 - **Calm Home holds still (2026-11-07):** the tiles drift for `SETTLE_S` (6 s) after input, then the 20 fps timer stops (idle Home ~14% → ~1% of a core on Xvfb); a playing tile, fades, focus moves and the QR drop-down wake it. `/api/state` answers are shared for 1 s between the TV and phones (`Controller.shared_status`, any POST invalidates), wmctrl runs once per answer and xdpyinfo every 5 s. Not verified on the real TV.
+- **YouTube decodes only what's seen (2026-11-07):** VacuumTube starts with `--enable-blink-features=AudioVideoTracks` (also in its flags.txt); while it plays behind Home, `youtube_volume.Link.set_video(False)` unselects the video track so Chromium stops decoding the picture (sound plays on); a YouTube started before the flag gets 144p instead. Pages also report VP9/AV1 as unsupported, so YouTube streams H.264. Checked in headless Chrome (MSE: 0 frames decoded while off); not verified in real VacuumTube or on the TV. The visualizer runs at 10 fps (`VIZ_MS`) and faded-out Home widgets are unmapped in ambient (`set_child_visible`): edge-flow 11.8% → 5.3% of a core on Xvfb.
 - **Phone:**
   - tabs drive the TV screens
   - search scoped to the current tab

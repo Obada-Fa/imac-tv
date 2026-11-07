@@ -132,7 +132,7 @@ class ControllerTests(unittest.TestCase):
         with mock.patch.object(server.shutil, "which", return_value=None), \
                 mock.patch.object(server.Path, "is_file", return_value=False):
             self.assertEqual(server.resolve_app_command("youtube"),
-                             ["flatpak", "run", "rocks.shy.VacuumTube", server.youtube_volume.FLAG])
+                             ["flatpak", "run", "rocks.shy.VacuumTube", *server.youtube_volume.FLAGS])
 
     def test_youtube_volume_lock_reaches_pages_only(self):
         targets = [{"id": "a", "type": "page"}, {"id": "b", "type": "service_worker"}]

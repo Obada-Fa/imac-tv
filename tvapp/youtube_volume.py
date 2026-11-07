@@ -24,6 +24,8 @@ import browser
 LOG = logging.getLogger("imactv.youtube_volume")
 PORT = int(os.environ.get("IMACTV_YOUTUBE_PORT", "9334"))
 FLAG = f"--remote-debugging-port={PORT}"
+VIDEO_FLAG = "--enable-blink-features=AudioVideoTracks"   # lets the page switch the picture off (VIDEO below)
+FLAGS = [FLAG, VIDEO_FLAG]
 BINDING = "__imactvVolume"
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 LOCK_LEVEL = """(() => {
@@ -62,6 +64,59 @@ LOCK_LEVEL = """(() => {
   }
   hideIndicator();
   return level || mute;
+})()"""
+VIDEO = """(() => {
+  // Music behind Home: nobody sees the picture, so stop decoding it (the sound plays on). With
+  // AudioVideoTracks, unselecting the video track makes Chromium skip video decoding entirely; a YouTube
+  // started before that flag gets the smallest picture instead.
+  if (window.__imactvVideo) return false;
+  let want = true, timer = 0, lowered = false;
+  const smallest = (on) => {
+    const p = document.querySelector("#movie_player, .html5-video-player");
+    if (!p || typeof p.setPlaybackQualityRange !== "function" || on === !lowered) return;
+    try { on ? p.setPlaybackQualityRange("auto", "auto") : p.setPlaybackQualityRange("tiny", "tiny"); lowered = !on; }
+    catch (e) {}
+  };
+  const apply = () => {
+    let tracks = false;
+    document.querySelectorAll("video").forEach((v) => {
+      const list = v.videoTracks;
+      if (!list) return;
+      tracks = true;
+      if (!want) { for (let i = 0; i < list.length; i++) if (list[i].selected) list[i].selected = false; }
+      else if (list.length && !Array.prototype.some.call(list, (t) => t.selected)) list[0].selected = true;
+    });
+    if (!tracks) smallest(want);
+  };
+  window.__imactvVideo = (on) => {
+    want = !!on;
+    apply();
+    clearInterval(timer);
+    timer = want ? 0 : setInterval(apply, 1000);   // the next track starts with its picture on: switch it off too
+    return want;
+  };
+  return true;
+})()"""
+H264 = """(() => {
+  // Prefer H.264 over VP9/AV1: far cheaper to decode on a laptop CPU, and the one YouTube codec most GPUs
+  // decode. YouTube picks from what the page says it can play.
+  if (window.__imactvH264) return false;
+  window.__imactvH264 = true;
+  const heavy = (type) => /vp0?9|av01/i.test(String(type));
+  const ms = window.MediaSource;
+  if (ms && ms.isTypeSupported) {
+    const real = ms.isTypeSupported.bind(ms);
+    ms.isTypeSupported = (type) => !heavy(type) && real(type);
+  }
+  const canPlay = HTMLMediaElement.prototype.canPlayType;
+  HTMLMediaElement.prototype.canPlayType = function (type) { return heavy(type) ? "" : canPlay.call(this, type); };
+  const mc = navigator.mediaCapabilities;
+  if (mc && mc.decodingInfo) {
+    const info = mc.decodingInfo.bind(mc);
+    mc.decodingInfo = (cfg) => heavy(cfg && cfg.video && cfg.video.contentType)
+      ? Promise.resolve({supported: false, smooth: false, powerEfficient: false}) : info(cfg);
+  }
+  return true;
 })()"""
 HOOK = """(() => {
   // YouTube resolves the phone's volume as a command, which VacuumTube's own wrapper swallows: wrap
@@ -131,8 +186,9 @@ def ensure_flag(home=None):
             if not folder.is_dir():
                 continue
             text = path.read_text() if path.exists() else ""
-            if "remote-debugging-port" not in text:
-                path.write_text((text.rstrip() + " " + FLAG).strip() + "\n")
+            missing = [f for f in FLAGS if f.split("=")[0] not in text]
+            if missing:
+                path.write_text(" ".join([text.strip(), *missing]).strip() + "\n")
         except OSError:
             continue
 
@@ -246,6 +302,13 @@ class Link:
         self._page = None
         self._thread = None
         self._next_id = 0
+        self.video_on = True         # False while YouTube only plays sound behind Home
+
+    def set_video(self, on):
+        """Decode YouTube's picture (True) or only its sound (False). Kept for the next page and reconnect."""
+        self.video_on = bool(on)
+        self._send("Runtime.evaluate", {"expression": f"window.__imactvVideo && window.__imactvVideo("
+                                                      f"{json.dumps(self.video_on)})"})
 
     def ensure(self, timeout=0.5):
         if self._thread and self._thread.is_alive():
@@ -286,6 +349,7 @@ class Link:
             self._sock, self._page = sock, page_id
         try:
             self._send("Runtime.addBinding", {"name": BINDING})
+            self._send("Page.addScriptToEvaluateOnNewDocument", {"source": H264})   # before YouTube's own scripts
             self._send("Runtime.enable")   # lists the page's contexts now, and each new one after a reload
             while True:
                 message = frames.next()
@@ -311,7 +375,9 @@ class Link:
             context = params.get("context") or {}
             aux = context.get("auxData") or {}
             if aux.get("isDefault") and aux.get("frameId") == self._page and "id" in context:
-                self._send("Runtime.evaluate", {"expression": LOCK_LEVEL + ";\n" + HOOK, "contextId": context["id"]})
+                self._send("Runtime.evaluate", {"expression": ";\n".join((LOCK_LEVEL, HOOK, H264, VIDEO,
+                                                                         f"window.__imactvVideo({json.dumps(self.video_on)})")),
+                                                "contextId": context["id"]})
                 try:
                     self.push(*self.current())
                 except Exception:

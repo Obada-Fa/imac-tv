@@ -138,3 +138,64 @@ class SharedStatus(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(homescreen is None, "GTK bindings unavailable")
+class VisualizerIsLighter(unittest.TestCase):
+    def test_visualizer_runs_at_ten_fps_and_morphs_stay_smooth(self):
+        H = homescreen.AmbientHomeScreen
+        self.assertEqual(H.lively_period(SimpleNamespace(viz=object(), morph=SimpleNamespace(moving=False))),
+                         homescreen.VIZ_MS)
+        self.assertEqual(H.lively_period(SimpleNamespace(viz=object(), morph=SimpleNamespace(moving=True))),
+                         homescreen.SHAPE_MS)
+        self.assertEqual(H.lively_period(SimpleNamespace(viz=None, morph=SimpleNamespace(moving=False))),
+                         homescreen.SHAPE_MS)
+        self.assertGreaterEqual(homescreen.VIZ_MS, 100)
+
+    def test_the_slower_visualizer_timer_still_drives_particles_and_crossfade(self):
+        H = homescreen.AmbientHomeScreen
+        self.assertTrue(H.shape_drives(SimpleNamespace(shape_id=3, shape_period=homescreen.VIZ_MS)))
+        self.assertFalse(H.shape_drives(SimpleNamespace(shape_id=3, shape_period=500)))
+
+
+class YouTubeOnlyDecodesWhatIsSeen(unittest.TestCase):
+    def link(self):
+        yv = server.youtube_volume
+        link = yv.Link(lambda change: None, lambda: (50, False))
+        link._send = mock.Mock(return_value=True)
+        return yv, link
+
+    def test_set_video_reaches_the_page_and_is_remembered(self):
+        _yv, link = self.link()
+        link.set_video(False)
+        self.assertFalse(link.video_on)
+        self.assertIn("__imactvVideo(false)", link._send.call_args[0][1]["expression"])
+
+    def test_a_new_page_gets_the_scripts_and_the_current_picture_state(self):
+        yv, link = self.link()
+        link._page = "PAGE"
+        link.video_on = False
+        link.handle({"method": "Runtime.executionContextCreated",
+                     "params": {"context": {"id": 4, "auxData": {"isDefault": True, "frameId": "PAGE"}}}})
+        expr = link._send.call_args_list[0][0][1]["expression"]
+        for part in (yv.VIDEO, yv.H264, "window.__imactvVideo(false)"):
+            self.assertIn(part, expr)
+
+    def test_youtube_starts_with_the_video_track_switch(self):
+        self.assertIn("--enable-blink-features=AudioVideoTracks", server.youtube_volume.FLAGS)
+        with mock.patch.object(server.shutil, "which", return_value=None), \
+                mock.patch.object(server.Path, "is_file", return_value=False):
+            argv = server.resolve_app_command("youtube")
+        self.assertIn(server.youtube_volume.VIDEO_FLAG, argv)
+
+    def test_the_picture_is_on_only_while_youtube_is_in_front(self):
+        import inspect
+        src = inspect.getsource(server.Controller.select)
+        self.assertIn('self.youtube_link.set_video(app == "youtube")', src)
+        self.assertIn("set_video(True)", inspect.getsource(server.Controller._pop_youtube))
+        self.assertIn('set_video(self.app == "youtube")', inspect.getsource(server.Controller._youtube_tick))
+
+    def test_h264_is_preferred_over_vp9_and_av1(self):
+        js = server.youtube_volume.H264
+        self.assertIn("isTypeSupported", js)
+        self.assertIn("vp0?9|av01", js)

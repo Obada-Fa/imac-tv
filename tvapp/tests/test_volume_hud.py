@@ -84,7 +84,7 @@ class YoutubeLockTests(unittest.TestCase):
             (config / "flags.txt").write_text("--disable-gpu\n")
             server.youtube_volume.ensure_flag(folder)
             server.youtube_volume.ensure_flag(folder)
-            self.assertEqual((config / "flags.txt").read_text(), "--disable-gpu " + server.youtube_volume.FLAG + "\n")
+            self.assertEqual((config / "flags.txt").read_text(), "--disable-gpu " + " ".join(server.youtube_volume.FLAGS) + "\n")
             self.assertFalse(Path(folder, ".var").exists())     # an install that isn't there stays untouched
 
     def test_running_youtube_without_the_port_is_replaced(self):
