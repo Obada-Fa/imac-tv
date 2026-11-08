@@ -574,3 +574,32 @@ class PhaseTwoTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(screens is None, "GTK bindings unavailable")
+class BrowseSearchChipTests(unittest.TestCase):
+    def test_search_chip_one_up_from_the_titles(self):
+        import time
+        fake = [{"type": "series", "id": f"tt{i}", "name": f"Show {i}", "poster": None} for i in range(4)]
+        shell = StubShell(720)
+        shell.open_search = mock.Mock()
+        shell.open_details = mock.Mock()
+        with mock.patch.object(screens, "catalog_items", lambda kind, genre=None: fake):
+            screen = screens.BrowseScreen(shell, "series")
+            shell.page = screen
+            shell.root.add(screen)
+            shell.show_all()
+            for rail in screen.rails[:2]:
+                rail.start()
+            deadline = time.time() + 5
+            while time.time() < deadline and len(screen.focus_groups()) < 2:
+                pump()
+                time.sleep(0.02)
+        groups = screen.focus_groups()
+        self.assertEqual(len(groups[0]), 1)                 # the chip alone on top
+        self.assertIn(screen.first_focus([]), groups[1])    # focus starts on the titles
+        screen.activate({"browse_search": True})
+        shell.open_search.assert_called_once_with("series")
+        screen.activate(fake[0])
+        shell.open_details.assert_called_once()
+        shell.destroy()

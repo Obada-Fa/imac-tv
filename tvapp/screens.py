@@ -850,12 +850,23 @@ class BrowseScreen(RailsScreen):
         self.kind = kind
         self.sname = "movies" if kind == "movie" else "series"
         noun = "movies" if kind == "movie" else "series"
+        chip = {"type": "", "kicker": noun.upper(), "name": "Search " + noun, "browse_search": True,
+                "description": "Find a title by name, in English or Arabic. You can also type in the phone's Search tab."}
+        self.make_rail(None, lambda: [chip], kind="pill")
         self.make_rail("Popular " + noun, lambda: catalog_items(kind))
         for g in GENRES[kind]:
             self.make_rail(g, lambda g=g: catalog_items(kind, g))
 
+    def activate(self, item):
+        if item.get("browse_search"):
+            self.shell.open_search(self.kind)
+        else:
+            super().activate(item)
+
     def first_focus(self, flat):
         groups = self.focus_groups()
+        if len(groups) > 1:
+            return groups[1][0]                 # start on the titles; the search chip is one Up away
         return groups[0][0] if groups else None
 
 

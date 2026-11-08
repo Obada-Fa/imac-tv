@@ -109,14 +109,19 @@ def rank(sources, cfg):
     return sorted(good, key=key)
 
 
-def best(sources, cfg, prefer_arabic=None):
-    """The source to play without asking. Arabic releases only when preferred (setting, or the episode before was
-    Arabic) or when nothing else is playable: they take TorBox a while to fetch."""
+def best(sources, cfg, prefer_arabic=None, lang=None):
+    """The source to play without asking. Arabic releases only when preferred (the show is remembered as Arabic,
+    the setting, or the episode before was Arabic) or when nothing else is playable: TorBox takes a while to fetch
+    them. lang ('dub' / 'subs' / 'arabic') picks that kind first."""
     ranked = rank(sources, cfg)
     if prefer_arabic is None:
-        prefer_arabic = bool(cfg.get("prefer_arabic"))
+        prefer_arabic = bool(lang) or bool(cfg.get("prefer_arabic"))
     if not prefer_arabic:
         others = [s for s in ranked if not s.get("site")]
         if others:
             return others[0]
+    if lang:
+        same = [s for s in ranked if s.get("site") and s.get("lang") == lang]
+        if same:
+            return same[0]
     return ranked[0] if ranked else None

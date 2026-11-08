@@ -99,6 +99,48 @@ def enabled():
     return bool(account()) and bool(config.read_key())
 
 
+# ---------- which shows play in Arabic ($DATA/arabic_shows.json) ----------
+SHOWS_FILE = "arabic_shows.json"
+LANGS = ("dub", "subs", "arabic")
+
+
+def _shows():
+    try:
+        data = json.loads((config.data_dir() / SHOWS_FILE).read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def remember_language(show_id, lang, soft=False):
+    """lang: 'dub' / 'subs' / 'arabic', or None for "this show plays normal sources". A soft choice (found by
+    searching in Arabic) never replaces one the user made by picking a source."""
+    if not isinstance(show_id, str) or not re.match(r"^tt\d+$", show_id) or lang not in LANGS + (None,):
+        return
+    shows = _shows()
+    old = shows.get(show_id)
+    if soft and isinstance(old, dict) and not old.get("soft"):
+        return
+    if old == {"lang": lang, "soft": soft}:
+        return
+    shows.pop(show_id, None)
+    shows[show_id] = {"lang": lang, "soft": soft}
+    shows = dict(list(shows.items())[-500:])
+    try:
+        directory = config.data_dir()
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        tmp = directory / (SHOWS_FILE + ".tmp")
+        tmp.write_text(json.dumps(shows))
+        tmp.replace(directory / SHOWS_FILE)
+    except OSError:
+        pass
+
+
+def preferred_language(show_id):
+    entry = _shows().get(show_id)
+    return entry.get("lang") if isinstance(entry, dict) and entry.get("lang") in LANGS else None
+
+
 # ---------- small disk cache ----------
 def _cache_dir():
     return config.data_dir() / "cache" / "arabic"
@@ -345,8 +387,44 @@ def arabic_names(kind, imdb_id):
     return names or []
 
 
+# Wikidata "instance of" classes: which titles are series and which are films (anything else, like games,
+# episodes and seasons, is left out; an unknown class is kept and Cinemeta decides).
+SERIES_CLASSES = {"Q5398426", "Q63952888", "Q581714", "Q117467246", "Q1259759", "Q526877", "Q15416", "Q100269041",
+                  "Q1366112"}
+FILM_CLASSES = {"Q11424", "Q20650540", "Q202866", "Q24869", "Q506240", "Q24862", "Q229390", "Q1054574", "Q130232",
+                "Q17517379", "Q93204", "Q645928", "Q2484376"}
+NOT_TITLES = {"Q7889", "Q21191270", "Q1983062", "Q3464665", "Q70990126", "Q5", "Q8274", "Q747381", "Q1004", "Q7725634",
+              "Q95074", "Q15632617", "Q838795", "Q571", "Q47461344"}
+
+
+def _wikidata_titles(query, limit):
+    """[(imdb_id, kind or None)] best match first: Arabic label search, then full-text search."""
+    hits = _json(WIKIDATA + urllib.parse.urlencode({"action": "wbsearchentities", "search": query, "language": "ar",
+                                                    "uselang": "ar", "type": "item", "limit": 30, "format": "json"}))
+    qids = [x["id"] for x in hits.get("search") or [] if re.match(r"^Q\d+$", str(x.get("id")))]
+    more = _json(WIKIDATA + urllib.parse.urlencode({"action": "query", "list": "search", "format": "json", "srprop": "",
+                                                    "srlimit": 20, "srsearch": f"{query} haswbstatement:P345"}))
+    qids += [x["title"] for x in (more.get("query") or {}).get("search", []) if re.match(r"^Q\d+$", x.get("title", ""))]
+    qids = list(dict.fromkeys(qids))[:50]
+    if not qids:
+        return []
+    e = _json(WIKIDATA + urllib.parse.urlencode({"action": "wbgetentities", "ids": "|".join(qids), "format": "json",
+                                                 "props": "claims"}))
+    out = []
+    for q in qids:
+        claims = ((e.get("entities") or {}).get(q) or {}).get("claims") or {}
+        value = lambda c: ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
+        imdb = next((v for v in map(value, claims.get("P345", [])) if isinstance(v, str) and v.startswith("tt")), None)
+        classes = {v.get("id") for v in map(value, claims.get("P31", [])) if isinstance(v, dict)}
+        if not imdb or classes & NOT_TITLES and not classes & (SERIES_CLASSES | FILM_CLASSES):
+            continue
+        kind = "series" if classes & SERIES_CLASSES else "movie" if classes & FILM_CLASSES else None
+        out.append((imdb, kind))
+    return out[:limit * 3]
+
+
 def find_titles(kind, query, limit=8):
-    """IMDb ids for an Arabic query (Arabic search on the TV and phone)."""
+    """IMDb ids for an Arabic query (Arabic search on the TV and phone), best match first."""
     def load():
         ids = []
         try:
@@ -357,24 +435,11 @@ def find_titles(kind, query, limit=8):
                     if isinstance(ext.get("imdb_id"), str) and ext["imdb_id"].startswith("tt"):
                         ids.append(ext["imdb_id"])
             else:
-                s = _json(WIKIDATA + urllib.parse.urlencode({"action": "query", "list": "search", "format": "json",
-                                                             "srprop": "", "srlimit": limit * 2,
-                                                             "srsearch": f"{query} haswbstatement:P345"}))
-                qids = [x["title"] for x in (s.get("query") or {}).get("search", [])
-                        if re.match(r"^Q\d+$", x.get("title", ""))]
-                if qids:
-                    e = _json(WIKIDATA + urllib.parse.urlencode({"action": "wbgetentities", "ids": "|".join(qids),
-                                                                 "format": "json", "props": "claims"}))
-                    for q in qids:
-                        claims = ((e.get("entities") or {}).get(q) or {}).get("claims") or {}
-                        for c in claims.get("P345", []):
-                            v = ((c.get("mainsnak") or {}).get("datavalue") or {}).get("value")
-                            if isinstance(v, str) and v.startswith("tt") and v not in ids:
-                                ids.append(v)
-                                break
+                ids = [imdb for imdb, k in cached(("wd-titles", query), TTL["titles"],
+                                                  lambda: _wikidata_titles(query, limit)) or [] if k in (kind, None)]
         except (ArabicError, KeyError, TypeError, AttributeError):
             return None
-        return ids[:limit]
+        return list(dict.fromkeys(ids))[:limit]
     return cached(("titles", kind, query, bool(tmdb_key())), TTL["titles"], load) or []
 
 

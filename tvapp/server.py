@@ -331,6 +331,7 @@ def media_stream(value):
             "file_idx": None if idx is None else _count(idx, "file index", 0)}
 
 
+UNICODE_TYPE_DELAY_MS = 40
 TORBOX_ME = "https://api.torbox.app/v1/api/user/me"
 TORBOX_TRIES, TORBOX_WINDOW = 5, 600
 SOURCE_REF_TTL = 1800
@@ -1533,11 +1534,12 @@ class Controller:
             video_id = f"{item}:{nxt['season']}:{nxt['episode']}"
             self.prefetch = {"video_id": video_id, "chosen": None}
             prefer = True if (self.current_source or {}).get("site") else None
+            lang = (self.current_source or {}).get("lang") if prefer else media_arabic.preferred_language(item)
 
         def work():
             try:
                 found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
-                chosen = media_streams.best(found, media_config.load(), prefer)
+                chosen = media_streams.best(found, media_config.load(), True if (prefer or lang) else None, lang)
             except Exception:
                 chosen = None
             with self.lock:
@@ -1670,6 +1672,9 @@ class Controller:
                     self.flow.begin(self.media["next"], [], cfg)
             direct = None
             if stream:
+                # A source the user picked: the show keeps playing that language when episodes are just selected.
+                media_arabic.remember_language(item, stream.get("lang") if stream.get("site") else None)
+            if stream:
                 info_hash, file_idx, label = stream["info_hash"], stream["file_idx"], stream.get("label") or "Selected source"
                 direct = stream.get("url")
                 sources = stream.get("sources") or []
@@ -1680,7 +1685,8 @@ class Controller:
                     found = [media_streams.parse(s) for s in streams_job.result()]
                     with self.lock:
                         prefer = self.prefer_arabic_next or None
-                    chosen = media_streams.best(found, cfg, prefer)
+                    lang = media_arabic.preferred_language(item)
+                    chosen = media_streams.best(found, cfg, True if (prefer or lang) else None, lang)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
@@ -1956,7 +1962,11 @@ class Controller:
             if erase:
                 command(["xdotool", "key", "--clearmodifiers", "--delay", "1", "--repeat", str(erase), "BackSpace"])
             if text:
-                command(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text], timeout=10)
+                # Letters missing from the keymap (Arabic, accents) are typed by remapping a spare key for each one;
+                # at 1 ms the app often reads the old map and drops the letter (25% on Xvfb, more on the TV).
+                delay = "1" if text.isascii() else str(UNICODE_TYPE_DELAY_MS)
+                command(["xdotool", "type", "--clearmodifiers", "--delay", delay, "--", text],
+                        timeout=10 if text.isascii() else min(60, 10 + len(text) * UNICODE_TYPE_DELAY_MS / 1000 * 2))
         return {"applied": True}
 
     STATUS_TTL = 1.0         # s: the TV and every phone poll /api/state; requests this close together share one answer
@@ -2394,6 +2404,19 @@ class Controller:
                 return {"ok": True, "ignored": True}  # the prompt's OK / Back choices take priority over seeking
             if action == "keyboard_input":
                 return self.keyboard_input(params)
+            if action == "youtube_search":
+                query = params.get("query")
+                query = " ".join(query.split()) if isinstance(query, str) else ""
+                if not 1 <= len(query) <= 200:
+                    raise ValueError("Search must be 1-200 characters")
+                if self.app != "youtube":
+                    raise RuntimeError("YouTube isn't open")
+                if not youtube_volume.search(query):
+                    raise RuntimeError("Couldn't reach YouTube to search")
+                win = window_for("youtube")
+                if win:
+                    activate(win)
+                return {"ok": True}
             if action == "open_search":
                 if self.app == "youtube":
                     # Stay on YouTube: focus VacuumTube and press the YouTube TV search shortcut.

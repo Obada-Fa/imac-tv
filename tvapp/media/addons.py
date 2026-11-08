@@ -80,15 +80,24 @@ def search(kind, query):
 def search_arabic(kind, query):
     """Cinemeta only knows English titles: an Arabic query is looked up on TMDB/Wikidata, then shown from Cinemeta."""
     from . import arabic
-    out = []
-    for imdb_id in arabic.find_titles(kind, query.strip()):
+    import concurrent.futures
+
+    def one(imdb_id):
         try:
             item = meta(kind, imdb_id)
         except AddonError:
-            continue
-        if item and item.get("id"):
-            out.append({k: item.get(k) for k in ("id", "type", "name", "poster", "releaseInfo", "year", "genres")})
-    return out
+            return None
+        if not item or not item.get("id") or item.get("type") not in (None, kind):
+            return None
+        return {k: item.get(k) for k in ("id", "type", "name", "poster", "releaseInfo", "year", "genres")}
+    ids = arabic.find_titles(kind, query.strip())
+    if not ids:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(ids))) as pool:
+        found = [m for m in pool.map(one, ids) if m]
+    for m in found:     # searched in Arabic: these shows play their Arabic releases unless told otherwise
+        arabic.remember_language(m["id"], "dub", soft=True)
+    return found
 
 
 def meta(kind, item_id):

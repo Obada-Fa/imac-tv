@@ -639,7 +639,9 @@
   setInterval(checkTypingFocus, 450);
 
   $('search-open').onclick = async () => {
-    const target = state?.app === 'youtube' ? 'youtube' : 'home';
+    // YouTube's own search box loses phone typing (and its "s" shortcut types an s): send the whole query instead.
+    if (state?.app === 'youtube') { openSheet('ytsearch'); return; }
+    const target = 'home';
     // Focus during the tap (required on iOS). Hold early edits until the TV confirms its field.
     const session = keyboard.open(target, null, true);
     try {
@@ -772,7 +774,7 @@
   function openSheet(name) {
     keyboard.close();
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', arabic: 'ArabP2P sign in', tmdb: 'TMDB key', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', ytsearch: 'Search YouTube', arabic: 'ArabP2P sign in', tmdb: 'TMDB key', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
@@ -783,6 +785,17 @@
       renderTorbox(content);
     } else if (name === 'arabic' || name === 'tmdb') {
       renderArabicSheet(content, name);
+    } else if (name === 'ytsearch') {
+      content.innerHTML = `<form id="yt-form" autocomplete="off"><input id="yt-q" type="search" enterkeyhint="search" maxlength="200" autocomplete="off" placeholder="Search YouTube" aria-label="Search YouTube"><div class="sheet-row"><button type="submit" id="yt-go" class="primary">Search</button></div></form><p id="yt-error" class="tb-error" role="alert"></p>`;
+      const q = $('yt-q');
+      q.focus();
+      $('yt-form').onsubmit = async e => {
+        e.preventDefault();
+        const query = q.value.trim();
+        if (!query) return;
+        try { await youtubeSearch(query); closeSheet(); }
+        catch (ex) { $('yt-error').textContent = ex.message || 'Could not search'; }
+      };
     } else if (name === 'off') {
       content.innerHTML = `<p>Full shutdown keeps the iMac cool. To start it again, press the physical power button.</p><div class="sheet-row"><button id="off-confirm" class="danger">Turn off iMac</button><button id="off-cancel">Cancel</button></div>`;
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
@@ -1323,9 +1336,11 @@
     const changed = b.dataset.tab !== tab;
     showTab(b.dataset.tab);
     if (b.dataset.tab === 'search') {
-      catalogKeyboard = {app:state?.app === 'youtube' ? 'youtube' : 'home', deadline:Date.now()+5000};
       $('find-input').focus();   // the tap opens the phone keyboard; polling never steals focus
-      send('open_search').catch(() => $('find-input').blur());
+      if (state?.app !== 'youtube') {   // on YouTube nothing is pressed there: results offer "Search YouTube"
+        catalogKeyboard = {app:'home', deadline:Date.now()+5000};
+        send('open_search').catch(() => $('find-input').blur());
+      }
     }
     if (changed && tvScreen[b.dataset.tab]) {
       try { Promise.resolve(send('show', {screen: tvScreen[b.dataset.tab]})).catch(() => {}); } catch (e) {}
@@ -1959,7 +1974,24 @@
       showFind(r);
     } catch (e) { if (seq === findSeq) showFind(null); }
   }
+  async function youtubeSearch(query) {
+    await send('youtube_search', {query});
+    showTab('remote');
+  }
+  function showYoutubeRow() {
+    let row = $('find-youtube');
+    const q = fi.value.trim();
+    if (!row) {
+      row = document.createElement('button');
+      row.id = 'find-youtube'; row.type = 'button'; row.className = 'row glass';
+      $('find-results').prepend(row);
+    }
+    row.hidden = !(state && state.app === 'youtube' && q.length >= 1);
+    row.replaceChildren(rowText(`Search YouTube for “${q}”`, 'Shows the results on the TV'));
+    row.onclick = () => youtubeSearch(q).catch(e => message(e.message));
+  }
   function showFind(r) {
+    showYoutubeRow();
     $('find-spin').hidden = true;
     const movies = (r && r.movies) || [], series = (r && r.series) || [];
     fill($('find-movies').querySelector('.grid'), movies, false);
@@ -1969,12 +2001,17 @@
     if (fi.value.trim().length < 2) showTopTwitch();
   }
   fi.addEventListener('input', () => {
+    showYoutubeRow();
     $('find-clear').hidden = !fi.value;
     clearTimeout(findTimer);
     if (fi.value.trim().length < 2) { findSeq++; showFind(null); return; }
     findTimer = setTimeout(runFind, 450);
   });
-  $('find-form').onsubmit = e => { e.preventDefault(); fi.blur(); runFind(); };
+  $('find-form').onsubmit = e => {
+    e.preventDefault(); fi.blur();
+    if (state && state.app === 'youtube' && fi.value.trim()) { youtubeSearch(fi.value.trim()).catch(ex => message(ex.message)); return; }
+    runFind();
+  };
   $('find-clear').onclick = () => { fi.value = ''; $('find-clear').hidden = true; findSeq++; clearTimeout(findTimer); showFind(null); };
   const results = $('find-results');
   // Not on window scroll: Android scrolls the page while the keyboard opens, which would blur it at once.

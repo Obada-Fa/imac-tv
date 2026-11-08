@@ -144,3 +144,17 @@ class ServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class YoutubeSearchTests(unittest.TestCase):
+    def test_query_goes_into_the_address_safely(self):
+        import youtube_volume
+        with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}), \
+                mock.patch.object(youtube_volume.browser, "_page_command") as cmd:
+            self.assertTrue(youtube_volume.search("كونان' + alert(1) + '"))
+        js = cmd.call_args.args[2]["expression"]
+        self.assertIn("#/search?q=", js)
+        import json
+        self.assertIn("encodeURIComponent(" + json.dumps("كونان' + alert(1) + '") + ")", js)   # a string, not code
+        with mock.patch.object(youtube_volume, "youtube_page", return_value=None):
+            self.assertFalse(youtube_volume.search("x"))

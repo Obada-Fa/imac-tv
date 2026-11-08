@@ -92,6 +92,35 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(c.keyboard_input(edit)["applied"])
             run.assert_called_once_with(["xdotool", "key", "--clearmodifiers", "ctrl+a"])
 
+    def test_arabic_typed_slowly_enough_to_register(self):
+        c = server.Controller.__new__(server.Controller)
+        c.app, c.phase = "home", "ready"
+        with mock.patch.object(server, "window_for", return_value={"id": "0x123"}), \
+                mock.patch.object(c, "text_focus", return_value="search:1"), \
+                mock.patch.object(server, "active_window_id", return_value=0x123), \
+                mock.patch.object(server, "command") as run:
+            c.keyboard_input({"app": "home", "focus": "search:1", "text": "conan"})
+            self.assertEqual(run.call_args.args[0][:5], ["xdotool", "type", "--clearmodifiers", "--delay", "1"])
+            c.keyboard_input({"app": "home", "focus": "search:1", "text": "كونان"})
+            self.assertEqual(run.call_args.args[0][4], str(server.UNICODE_TYPE_DELAY_MS))
+            self.assertEqual(run.call_args.args[0][-1], "كونان")
+
+    def test_youtube_search_goes_through_the_address(self):
+        with mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+        c.app = "home"
+        with self.assertRaisesRegex(RuntimeError, "YouTube"):
+            c.action("youtube_search", {"query": "x"})
+        c.app = "youtube"
+        with self.assertRaises(ValueError):
+            c.action("youtube_search", {"query": "   "})
+        with mock.patch.object(server.youtube_volume, "search", return_value=True) as search, \
+                mock.patch.object(server, "window_for", return_value=None), \
+                mock.patch.object(server, "command") as run:
+            self.assertTrue(c.action("youtube_search", {"query": "  المحقق   كونان "})["ok"])
+        search.assert_called_once_with("المحقق كونان")
+        run.assert_not_called()          # no "s" key, no typing into YouTube
+
     def test_unsupported_seek_reports_error(self):
         with mock.patch.object(server.threading, "Thread"):
             c = server.Controller()

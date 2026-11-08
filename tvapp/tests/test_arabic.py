@@ -362,3 +362,43 @@ class Languages(unittest.TestCase):
         self.assertNotIn(("المتحري كونان", "100"), asked)
         self.assertEqual(streams.label({"quality": "1080p", "hdr": False, "dv": False, "source": "", "size_bytes": 0,
                                         "site": "ArabP2P", "lang": "subs"}), "1080p · ArabP2P · Arabic subtitles")
+
+
+class ShowLanguage(Temp):
+    def test_picked_choice_beats_search_and_is_remembered(self):
+        self.assertIsNone(arabic.preferred_language("tt1"))
+        arabic.remember_language("tt1", "dub", soft=True)          # found by an Arabic search
+        self.assertEqual(arabic.preferred_language("tt1"), "dub")
+        arabic.remember_language("tt1", None)                      # the user picked a normal source
+        arabic.remember_language("tt1", "dub", soft=True)          # a later Arabic search doesn't undo that
+        self.assertIsNone(arabic.preferred_language("tt1"))
+        arabic.remember_language("tt1", "subs")
+        self.assertEqual(arabic.preferred_language("tt1"), "subs")
+        arabic.remember_language("bad id", "dub")
+        self.assertNotIn("bad id", arabic._shows())
+
+    def test_best_follows_the_show_language(self):
+        mk = lambda lang, q: streams.parse({"name": "ArabP2P", "url": arabic.SITE + f"/download.php?id={lang}{q}&f=x",
+                                            "title": f"x {q}\n🇸🇦 {arabic.LANG_LABEL[lang]} 💾 1 GB 👤 5"})
+        torrent = streams.parse({"infoHash": "b" * 40, "title": "Show S01E01 1080p\n👤 90 💾 1 GB"})
+        found = [mk("dub", "720p"), mk("subs", "1080p"), torrent]
+        self.assertFalse(streams.best(found, {}).get("site"))
+        self.assertEqual(streams.best(found, {}, None, "subs")["lang"], "subs")
+        self.assertEqual(streams.best(found, {}, None, "dub")["lang"], "dub")
+
+    def test_wikidata_kinds_filter_results(self):
+        hits = [("tt0131179", "series"), ("tt1073223", "movie"), ("tt5", None)]
+        with mock.patch.object(arabic, "_wikidata_titles", return_value=hits):
+            self.assertEqual(arabic.find_titles("series", "المحقق كونان"), ["tt0131179", "tt5"])
+            self.assertEqual(arabic.find_titles("movie", "المحقق كونان"), ["tt1073223", "tt5"])
+
+    def test_arabic_search_marks_shows(self):
+        with mock.patch.object(arabic, "find_titles", return_value=["tt0131179", "tt9"]), \
+                mock.patch.object(addons, "meta", side_effect=lambda k, i: {"id": i, "type": "series" if i == "tt0131179"
+                                                                              else "movie", "name": i}):
+            got = addons.search("series", "كونان")
+        self.assertEqual([m["id"] for m in got], ["tt0131179"])        # a film is not a series result
+        self.assertEqual(arabic.preferred_language("tt0131179"), "dub")
+        self.assertEqual(addons.running_number([{"season": 0, "episode": 1}, {"season": 1, "episode": 1},
+                                                {"season": 1, "episode": 2}, {"season": 2, "episode": 1}],
+                                               "tt1:2:1"), 3)

@@ -217,6 +217,22 @@ def enforce(timeout=0.5):
         pass
 
 
+def search(query, timeout=3.0):
+    """Open YouTube TV's results for `query` (any language) in VacuumTube. False when it isn't reachable.
+
+    Typing into YouTube's own search box from the phone lost the phone keyboard and letters; its address
+    (#/search?q=) takes the whole query at once."""
+    page = youtube_page()
+    if not page:
+        return False
+    js = "location.hash = '#/search?q=' + encodeURIComponent(" + json.dumps(query) + ")"
+    try:
+        browser._page_command(page["id"], "Runtime.evaluate", {"expression": js}, timeout, PORT)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def youtube_page(timeout=0.5):
     """The YouTube page target, or None while YouTube isn't running."""
     try:
