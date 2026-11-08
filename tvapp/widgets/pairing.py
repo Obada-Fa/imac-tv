@@ -276,6 +276,7 @@ def show_pairing_sheet(shell):
     else:
         for w in (title, sub, code_lbl, addr, note):
             w.set_halign(Gtk.Align.CENTER)
+        addr.set_justify(Gtk.Justification.CENTER)
         for w in (title, sub, qr, code_lbl, addr, note):
             box.pack_start(w, False, False, 0)
         box.pack_start(done, False, False, p(10))
@@ -285,7 +286,8 @@ def show_pairing_sheet(shell):
         ip = net.get("ip", "127.0.0.1")
         qr.set_text(f"http://{ip}:8765/?pair={code}")
         code_lbl.set_text(fmt_code(code))
-        addr.set_text(f"{ip}:8765")
+        ts = net.get("tailscale")
+        addr.set_text(f"{ip}:8765" + (f"\nTailscale: {ts}:8765" if ts else ""))
     refresh()
     shell.open_sheet("pairing", box, [[done]], default=done, refresh=refresh)
 

@@ -10,9 +10,6 @@ import android.os.Looper
 import android.os.ResultReceiver
 import android.view.KeyEvent
 import android.webkit.CookieManager
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -54,16 +51,6 @@ class MainActivity : FlutterActivity() {
             setMethodCallHandler { call, result ->
                 when (call.method) {
                     "initialLink" -> { result.success(initialLink); initialLink = null }
-                    "scanQr" -> {
-                        val options = GmsBarcodeScannerOptions.Builder()
-                            .setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
-                        GmsBarcodeScanning.getClient(this@MainActivity, options).startScan()
-                            .addOnSuccessListener { result.success(it.rawValue) }
-                            .addOnCanceledListener { result.success(null) }
-                            .addOnFailureListener {
-                                result.error("scan_failed", "Could not open the QR scanner. Google Play services is needed.", null)
-                            }
-                    }
                     else -> result.notImplemented()
                 }
             }

@@ -231,6 +231,7 @@ fi
 
 # Music casting: "Nexus TV" in the YouTube Music cast menu, sound only (Node.js, yt-dlp, receiver packages)
 bash "$ROOT_DIR/scripts/install-music-cast.sh" || printf "${YELLOW}Music casting setup failed; the TV works without it.${NC}\n"
+mkdir -p "$HOME/.local/bin" && ln -sf "$ROOT_DIR/scripts/pair-code.sh" "$HOME/.local/bin/nexus-tv-pair"
 
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
 printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"
@@ -268,7 +269,8 @@ printf "     Open your mobile browser on the same Wi-Fi network:\n"
 printf "     ${CYAN}${BOLD}http://%s:8765${NC}\n\n" "$IP"
 printf "  ${BOLD}3. Pairing:${NC}\n"
 printf "     The TV Home screen displays a 6-digit code and a QR code.\n"
-printf "     Scan the QR code or enter the code on your phone to connect!\n\n"
+printf "     Scan the QR code or enter the code on your phone to connect!\n"
+printf "     No camera, or connecting over Tailscale? Run ${CYAN}nexus-tv-pair${NC} for the code and addresses.\n\n"
 printf "  ${BOLD}Installed:${NC}\n"
 printf "     - ${BOLD}VacuumTube:${NC} YouTube Leanback TV interface with adblocker and remote/gamepad nav\n"
 printf "     - ${BOLD}Music casting:${NC} cast from the YouTube Music app to \"Nexus TV\" (sound only, Premium not needed)\n"

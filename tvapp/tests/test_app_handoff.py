@@ -62,3 +62,39 @@ class AppHandoffTests(TorboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PairStatusTests(TorboxCase):
+    """/api/pair-status gives the code only to this PC itself and to paired phones."""
+
+    def setUp(self):
+        super().setUp()
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+        self.addCleanup(self.httpd.server_close)
+        self.addCleanup(self.httpd.shutdown)
+        self.base = f"http://127.0.0.1:{self.httpd.server_port}"
+        control = mock.patch.object(server, "CONTROL", mock.Mock(renew_pairing=lambda: "123456"))
+        control.start()
+        self.addCleanup(control.stop)
+
+    def status(self, client, paired=False):
+        real = server.Handler.__init__
+
+        def init(handler, request, address, srv):
+            real(handler, request, (client, address[1]), srv)
+        with mock.patch.object(server.Handler, "__init__", init), \
+                mock.patch.object(server.Handler, "authorised", return_value=paired):
+            with urllib.request.urlopen(self.base + "/api/pair-status", timeout=5) as r:
+                return json.loads(r.read())
+
+    def test_this_pc_gets_the_code(self):
+        answer = self.status("127.0.0.1")
+        self.assertEqual(answer, {"paired": False, "code": "123456"})
+
+    def test_an_unpaired_phone_does_not(self):
+        for client in ("192.168.1.30", "100.101.5.7"):
+            self.assertEqual(self.status(client), {"paired": False}, client)
+
+    def test_a_paired_phone_does(self):
+        self.assertEqual(self.status("192.168.1.30", paired=True), {"paired": True, "code": "123456"})

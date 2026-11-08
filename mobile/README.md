@@ -11,7 +11,10 @@ The Android app for a Nexus TV (`com.nexus.tv`). The remote itself is the TV's o
   with `web/open-app.html`, which opens `nexustv://pair?host=<ip:port>&code=<code>` (an `intent://`
   link with a browser fallback): the app opens and the TV's page pairs itself with the code; without the
   app, Chrome continues to the web remote. Links only open TVs on private addresses.
-- **In-app QR scanner:** Google's code scanner from Play services, so the app needs no camera permission.
+- **In-app QR scanner:** its own camera page (`lib/scan_page.dart`, `mobile_scanner` with ML Kit bundled), so it
+  works without Play services; it asks for the camera permission the first time.
+- **No camera / Tailscale:** Enter address (Wi-Fi or Tailscale `100.x` address), then type the code shown on
+  the TV (Settings → Pair phone, which also shows the Tailscale address) or printed by `nexus-tv-pair` on the PC.
 - **Android extras:** hardware volume buttons for the TV (also on the lock screen), phone microphone
   and phone speaker (`assets/tv-native.js` adds their switches to the TV's page).
 

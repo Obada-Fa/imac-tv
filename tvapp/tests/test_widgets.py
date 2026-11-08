@@ -277,6 +277,16 @@ class PairingHelpersTests(unittest.TestCase):
         (d / "devices.json").write_text("garbage")
         self.assertEqual(netinfo.paired_phones(d), 0)
 
+    def test_tailscale_ip(self):
+        from widgets import netinfo
+        out = ("1: lo    inet 127.0.0.1/8 scope host lo\n"
+               "2: wlp2s0    inet 192.168.1.4/24 brd 192.168.1.255 scope global wlp2s0\n"
+               "3: docker0    inet 100.20.0.1/16 scope global docker0\n"
+               "4: tailscale0    inet 100.101.5.7/32 scope global tailscale0\n")
+        self.assertEqual(netinfo.tailscale_ip(out), "100.101.5.7")
+        self.assertEqual(netinfo.tailscale_ip(out.replace("tailscale0", "ts0")), "100.101.5.7")
+        self.assertEqual(netinfo.tailscale_ip(out.splitlines()[1] + "\n"), "")
+
     def test_fmt_code(self):
         from widgets import netinfo
         self.assertEqual(netinfo.fmt_code("482913"), "482 913")

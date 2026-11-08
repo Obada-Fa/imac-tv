@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'phone_mic_control.dart';
 import 'phone_speaker_control.dart';
+import 'scan_page.dart';
 import 'tv_volume_control.dart';
 
 /// The Android extras around the TV's web remote: hardware volume buttons,
@@ -23,7 +25,7 @@ class NativeControls {
   }
 }
 
-/// nexustv:// links (from the TV's QR page) and Google's QR scanner.
+/// nexustv:// links (from the TV's QR page) and the QR scanner.
 class TvLinks {
   TvLinks() {
     channel.setMethodCallHandler((call) async {
@@ -48,15 +50,8 @@ class TvLinks {
     }
   }
 
-  /// The scanned text, or null if the scan was cancelled. Throws with a
-  /// message the user can read when there is no scanner.
-  Future<String?> scanQr() async {
-    try {
-      return await channel.invokeMethod<String>('scanQr');
-    } on PlatformException catch (e) {
-      throw StateError(e.message ?? 'Could not open the QR scanner.');
-    } on MissingPluginException {
-      throw StateError('QR scanning works on Android only.');
-    }
-  }
+  /// Opens the app's own camera scanner; the scanned text, or null if the
+  /// user went back.
+  Future<String?> scanQr(NavigatorState navigator) =>
+      navigator.push<String>(MaterialPageRoute(builder: (_) => const ScanPage()));
 }

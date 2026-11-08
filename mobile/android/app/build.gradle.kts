@@ -46,8 +46,6 @@ flutter {
 }
 
 dependencies {
-    // Google's QR scanner UI from Play services: no camera permission in this app.
-    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     // Android supplies org.json on-device; use its JVM implementation in HTTP tests.

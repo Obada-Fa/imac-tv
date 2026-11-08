@@ -2823,8 +2823,13 @@ class Handler(BaseHTTPRequestHandler):
             self.retro_thumb(parsed.path.rsplit("/", 1)[1])
             return
         if parsed.path == "/api/pair-status":
-            CONTROL.renew_pairing()
-            self.respond(200, {"paired": self.authorised(parsed.query), "code": CONTROL.pair_code})
+            # The code goes only to this PC itself (the TV app, `nexus-tv-pair`) and to paired phones:
+            # anyone else who could read it here could pair without seeing the TV.
+            paired = self.authorised(parsed.query)
+            answer = {"paired": paired}
+            if paired or self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1"):
+                answer["code"] = CONTROL.renew_pairing()
+            self.respond(200, answer)
             return
         self.respond(404, {"error": "Not found"})
 

@@ -43,6 +43,7 @@ class _NexusTvAppState extends State<NexusTvApp> {
   late final NativeControls controls = widget.controls ?? NativeControls();
   late final TvLinks links = widget.links ?? TvLinks();
   final _messenger = GlobalKey<ScaffoldMessengerState>();
+  final _navigator = GlobalKey<NavigatorState>();
   StreamSubscription<String>? _linkSub;
   _View? _view;
   Uri? _controlsFor;
@@ -82,12 +83,10 @@ class _NexusTvAppState extends State<NexusTvApp> {
   }
 
   Future<void> _scanQr() async {
-    try {
-      final text = await links.scanQr();
-      if (text != null) _handleLink(text);
-    } on StateError catch (e) {
-      _say(e.message);
-    }
+    final navigator = _navigator.currentState;
+    if (navigator == null) return;
+    final text = await links.scanQr(navigator);
+    if (text != null) _handleLink(text);
   }
 
   void _say(String text) =>
@@ -140,6 +139,7 @@ class _NexusTvAppState extends State<NexusTvApp> {
     return MaterialApp(
       title: 'Nexus TV',
       scaffoldMessengerKey: _messenger,
+      navigatorKey: _navigator,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,

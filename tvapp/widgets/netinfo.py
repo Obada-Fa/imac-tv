@@ -78,7 +78,26 @@ def get_network_info():
     if info["type"] == "none" and info["ip"] != "127.0.0.1":
         info["connected"] = True
 
+    info["tailscale"] = tailscale_ip()
     return info
+
+
+def tailscale_ip(addr_out=None):
+    """This PC's Tailscale address (100.64.0.0/10, normally on tailscale0), or "" without Tailscale."""
+    try:
+        if addr_out is None:
+            addr_out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True, timeout=1)
+    except Exception:
+        return ""
+    found = ""
+    for line in addr_out.splitlines():
+        m = re.search(r"^\d+:\s+(\S+)\s+inet\s+(100)\.(\d+)\.(\d+)\.(\d+)/", line)
+        if m and 64 <= int(m.group(3)) <= 127:
+            ip = ".".join(m.group(i) for i in range(2, 6))
+            if m.group(1).startswith("tailscale"):
+                return ip
+            found = found or ip
+    return found
 
 
 def make_qr_pixbuf(text, size=320):

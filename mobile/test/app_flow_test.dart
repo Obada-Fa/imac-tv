@@ -22,7 +22,7 @@ class _Links extends TvLinks {
   @override
   Future<String?> initial() async => first;
   @override
-  Future<String?> scanQr() async {
+  Future<String?> scanQr(NavigatorState navigator) async {
     scans++;
     return null;
   }
