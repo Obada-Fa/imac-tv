@@ -35,6 +35,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SIM_MS = 33             # Home steps the simulation at ~30 Hz while the GPU draws; this file draws every vsync
+STALE_S = 0.25          # no new frame for this long: the picture has settled (frame_at), stop drawing
 MUSIC_DIM = 0.22        # = homescreen.MUSIC_DIM
 FRAME_KEYS = ("t", "scale", "pts", "tails", "alphas", "links", "lv", "fade", "dim", "cur", "prev", "pal", "hub",
               "glow_r", "viz")
@@ -389,6 +390,7 @@ class Renderer:
         gl.BufferData(X.GL_ARRAY_BUFFER, ctypes.sizeof(quad), quad, X.GL_STATIC_DRAW)
         self.textures = {}          # photo key -> GL texture
         self.frames = []            # Home's latest frames, oldest first
+        self.fed_at = 0.0           # when the newest frame arrived
         self.shown = False
         self.want = False
         self.holes = None
@@ -417,6 +419,7 @@ class Renderer:
         elif kind == "frame":
             f = msg[1]
             self.frames = [x for x in self.frames if x["t"] < f["t"]][-2:] + [f]
+            self.fed_at = time.monotonic()
             if self.want and not self.shown:
                 self.set_shown(True)                  # "show" can overtake the first frame
             keep = {f.get("cur"), f.get("prev")}
@@ -476,6 +479,14 @@ class Renderer:
             self.frames = self.frames[-1:]
         self.x.XFlush(self.dpy)
         self.shown = on
+
+    def drawing(self, now=None):
+        """Shown and still being fed. Once Home stops sending frames the picture can't change any more
+        (frame_at settles on the newest one), so the window keeps its last image and nothing is drawn: Home
+        stopping its timer without a "show" False (another app in front) never leaves the GPU busy."""
+        if not self.shown:
+            return False
+        return (time.monotonic() if now is None else now) - self.fed_at < STALE_S
 
     # -- drawing
     def frame_at(self, now):
@@ -537,10 +548,11 @@ class Renderer:
         t0 = time.monotonic()
         self.draw(t0)
         self.x.glXSwapBuffers(self.dpy, self.win)
-        if not self.vsync:                       # no swap control: pace ourselves at ~60 fps
-            left = 1 / 60 - (time.monotonic() - t0)
-            if left > 0:
-                time.sleep(left)
+        # Never faster than ~60 fps, swap control or not: a swap the X server doesn't hold until the next
+        # refresh (no swap control, or a window that isn't on screen) would otherwise spin a core.
+        left = 1 / 60 - (time.monotonic() - t0)
+        if left > 0:
+            time.sleep(left)
 
 
 def serve(parent, width, height):
@@ -555,7 +567,7 @@ def serve(parent, width, height):
     os.set_blocking(fd, False)
     unpack = Unpacker()
     while True:
-        ready, _, _ = select.select([fd], [], [], 0 if r.shown else None)
+        ready, _, _ = select.select([fd], [], [], 0 if r.drawing() else None)
         if ready:
             while True:
                 try:
@@ -569,7 +581,7 @@ def serve(parent, width, height):
         if r.x_failed:
             print("error", r.x_failed, flush=True)
             return 1
-        if r.shown:
+        if r.drawing():
             r.present()
 
 

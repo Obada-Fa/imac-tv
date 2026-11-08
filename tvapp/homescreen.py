@@ -918,6 +918,7 @@ class AmbientHomeScreen(Screen):
             return False
         if not self.active():
             self.stop_anim()
+            self.gl_hide()                # another app in front: the GPU window goes too, not just the timer
             if self.audio:
                 self.stop_audio()
             if self.shape_id:
@@ -1424,6 +1425,7 @@ class AmbientHomeScreen(Screen):
                 self.canvas.step(dt)
         if not self.shape_needs_timer():
             self.shape_id = 0
+            self.gl_hide()
             self.shape_handoff()
             return False
         lively = (self.morph.moving or self.fake_levels and now >= self.fake_from or self.viz is not None

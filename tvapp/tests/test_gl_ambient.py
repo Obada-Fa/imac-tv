@@ -163,6 +163,19 @@ class HomeHandOverTest(unittest.TestCase):
         link.show.assert_called_once_with(False)
         self.assertFalse(s.gl_on)
 
+    def test_another_app_in_front_hides_it(self):
+        """supervise() stops the timer when Home isn't active; the GPU window must go with it, or the
+        renderer keeps drawing the full screen behind YouTube."""
+        link = mock.Mock(ready=True)
+        link.alive.return_value = True
+        s = self.screen(gl=link, gl_on=True, disposed=False, audio=None, shape_id=7)
+        s.active.return_value = False
+        with mock.patch.object(homescreen.GLib, "source_remove"):
+            homescreen.AmbientHomeScreen.supervise(s)
+        link.show.assert_called_once_with(False)
+        self.assertFalse(s.gl_on)
+        self.assertEqual(s.shape_id, 0)
+
     def test_photo_canvas_clips_redraws_to_the_holes(self):
         cv = homescreen.PhotoCanvas()
         cv.only = cairo.Region(cairo.RectangleInt(0, 0, 10, 10))
@@ -184,6 +197,26 @@ class HomeHandOverTest(unittest.TestCase):
 
 
 @unittest.skipIf(homescreen is None or not os.environ.get("DISPLAY"), "needs a (private) X display")
+class StaleFramesTest(unittest.TestCase):
+    def test_stops_drawing_once_home_stops_feeding(self):
+        r = gl_ambient.Renderer.__new__(gl_ambient.Renderer)
+        r.shown, r.fed_at = True, 100.0
+        self.assertTrue(r.drawing(100.0 + gl_ambient.STALE_S / 2))
+        self.assertFalse(r.drawing(100.0 + gl_ambient.STALE_S + 0.01))   # settled: keep the last image
+        r.shown = False
+        self.assertFalse(r.drawing(100.0))
+
+    def test_present_never_spins_faster_than_60fps(self):
+        r = gl_ambient.Renderer.__new__(gl_ambient.Renderer)
+        r.vsync, r.dpy, r.win = True, None, None              # a swap that returns at once (window not on screen)
+        r.x = mock.Mock()
+        r.draw = lambda now: None
+        t0 = time.monotonic()
+        for _ in range(6):
+            r.present()
+        self.assertGreaterEqual(time.monotonic() - t0, 5 / 60)
+
+
 class LiveRendererTest(unittest.TestCase):
     def test_renderer_maps_a_child_window_and_quits(self):
         win = Gtk.Window()

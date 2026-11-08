@@ -77,10 +77,11 @@ class AmbientMusicTests(unittest.TestCase):
         self.assertTrue(shape["pts"])
 
     def test_inactive_home_stops_capture(self):
-        screen = SimpleNamespace(active=lambda: False, stop_anim=mock.Mock(),
+        screen = SimpleNamespace(active=lambda: False, stop_anim=mock.Mock(), gl_hide=mock.Mock(),
                                  audio=mock.Mock(), stop_audio=mock.Mock(), shape_id=0)
         self.assertTrue(homescreen.AmbientHomeScreen.supervise(screen))
         screen.stop_anim.assert_called_once()
+        screen.gl_hide.assert_called_once()
         screen.stop_audio.assert_called_once()
 
     def test_wake_stops_capture_and_restores_photo(self):

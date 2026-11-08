@@ -698,6 +698,23 @@ class LifecycleTests(unittest.TestCase):
             server.minimize(yt)
         run.assert_called_once_with(["xdotool", "windowminimize", "0x9"], check=False)
 
+    def test_switching_from_a_pc_app_to_another_app_minimizes_it(self):
+        c = self.controller()
+        any_ = {"id": "0x5", "class": "anydesk.Anydesk", "title": "AnyDesk"}
+        yt = {"id": "0x9", "class": "vacuumtube", "title": "YouTube"}
+        c.app = "desktop:anydesk"
+        with mock.patch.object(server, "window_for", side_effect=lambda a: {"youtube": yt, "desktop:anydesk": any_, "desktop:vacuumtube_alias": yt}.get(a)), \
+                mock.patch.object(server, "activate") as act, mock.patch.object(server, "minimize") as mini, \
+                mock.patch.object(server.time, "sleep"), mock.patch.object(server.youtube_volume, "reachable", return_value=True):
+            c.generation += 1
+            c._launch("youtube", c.generation, "desktop:anydesk")
+            act.assert_called_once_with(yt)
+            mini.assert_called_once_with(any_)
+            mini.reset_mock()
+            c.generation += 1
+            c._launch("youtube", c.generation, "desktop:vacuumtube_alias")   # same window: never minimize what just came up
+            mini.assert_not_called()
+
     def test_activate_restores_iconified_window_before_fullscreen(self):
         with mock.patch.object(server, "command") as run:
             server.activate({"id": "0x9"})

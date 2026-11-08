@@ -799,7 +799,7 @@ class Controller:
         LOG.warning("YouTube did not close, so its own volume stays active")
         return win
 
-    def _launch(self, app, generation):
+    def _launch(self, app, generation, leaving=None):
         try:
             win = window_for(app)
             if app == "youtube" and win:
@@ -822,6 +822,9 @@ class Controller:
                             return
                         activate(win)
                         self.phase, self.error = "ready", ""
+                    left = window_for(leaving) if leaving else None
+                    if left and left["id"] != win["id"]:
+                        minimize(left)                 # e.g. AnyDesk -> YouTube: don't leave it fullscreen behind
                     return
                 time.sleep(0.5)
             raise RuntimeError(f"{app.title()} did not open")
@@ -837,7 +840,7 @@ class Controller:
         trace(f"select {app} start")
         self._end_playback()
         with self.lock:
-            leaving = self.app if app == "home" and str(self.app).startswith("desktop:") else None
+            leaving = self.app if str(self.app).startswith("desktop:") and app != self.app else None
             self.generation += 1
             generation = self.generation
             self.app, self.phase, self.error = app, "ready" if app == "home" else "opening", ""
@@ -861,7 +864,7 @@ class Controller:
                 self._minimize_app(leaving)
             threading.Thread(target=self._dismiss_youtube, args=(generation,), daemon=True).start()
         else:
-            threading.Thread(target=self._launch, args=(app, generation), daemon=True).start()
+            threading.Thread(target=self._launch, args=(app, generation, leaving), daemon=True).start()
         return {"app": app, "phase": self.phase}
 
     def _minimize_app(self, app):
