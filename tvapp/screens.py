@@ -1986,8 +1986,9 @@ class SourcesScreen(Screen):
             self.stack_msg.set_text("")
             self.stack_msg.hide()
             px = self.shell.px
+            picked = any(src.get("pick") for src in sources)   # the one "best match" plays (older servers: the top)
             for i, src in enumerate(sources):
-                self.add_row(src, i == 0, px, last=i == len(sources) - 1)
+                self.add_row(src, bool(src.get("pick")) if picked else i == 0, px, last=i == len(sources) - 1)
             self.panel.show()
             self.scroll.show_all()
         self.shell.ensure_focus()

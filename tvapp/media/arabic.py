@@ -114,17 +114,28 @@ def _shows():
 
 def remember_language(show_id, lang, soft=False):
     """lang: 'dub' / 'subs' / 'arabic', or None for "this show plays normal sources". A soft choice (found by
-    searching in Arabic) never replaces one the user made by picking a source."""
+    searching in Arabic) never replaces one the user made by picking a source; a hard one keeps what the search
+    found ("found") so "Best match" can go back to it."""
     if not isinstance(show_id, str) or not re.match(r"^tt\d+$", show_id) or lang not in LANGS + (None,):
         return
     shows = _shows()
-    old = shows.get(show_id)
-    if soft and isinstance(old, dict) and not old.get("soft"):
+    old = shows.get(show_id) if isinstance(shows.get(show_id), dict) else None
+    if soft and old and not old.get("soft"):
+        if old.get("found") != lang:
+            _save_show(shows, show_id, dict(old, found=lang))
         return
-    if old == {"lang": lang, "soft": soft}:
-        return
+    entry = {"lang": lang, "soft": soft}
+    found = lang if soft else (old or {}).get("found") or ((old or {}).get("lang") if (old or {}).get("soft") else None)
+    if found:
+        entry["found"] = found
+    if old != entry:
+        _save_show(shows, show_id, entry)
+
+
+def _save_show(shows, show_id, entry):
     shows.pop(show_id, None)
-    shows[show_id] = {"lang": lang, "soft": soft}
+    if entry is not None:
+        shows[show_id] = entry
     shows = dict(list(shows.items())[-500:])
     try:
         directory = config.data_dir()
@@ -139,6 +150,33 @@ def remember_language(show_id, lang, soft=False):
 def preferred_language(show_id):
     entry = _shows().get(show_id)
     return entry.get("lang") if isinstance(entry, dict) and entry.get("lang") in LANGS else None
+
+
+CHOICES = ("auto",) + LANGS + ("original",)
+
+
+def choice(show_id):
+    """What the phone's "Plays" row shows: 'auto' (best match: nothing picked, or only what an Arabic search
+    found), a picked Arabic kind, or 'original' (picked: no Arabic releases)."""
+    entry = _shows().get(show_id)
+    if not isinstance(entry, dict) or entry.get("soft"):
+        return "auto"
+    return entry.get("lang") if entry.get("lang") in LANGS else "original"
+
+
+def set_choice(show_id, value):
+    """The phone's "Plays" row: a kind or 'original' is a pick; 'auto' forgets the pick (an Arabic search's
+    find stays)."""
+    if not isinstance(show_id, str) or not re.match(r"^tt\d+$", show_id) or value not in CHOICES:
+        raise ValueError("Invalid language choice")
+    if value != "auto":
+        remember_language(show_id, None if value == "original" else value)
+        return
+    shows = _shows()
+    old = shows.get(show_id)
+    if isinstance(old, dict) and not old.get("soft"):
+        _save_show(shows, show_id, {"lang": old["found"], "soft": True, "found": old["found"]}
+                   if old.get("found") in LANGS else None)
 
 
 # ---------- small disk cache ----------

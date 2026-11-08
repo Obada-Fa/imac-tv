@@ -281,6 +281,24 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .eps button.current{border-color:rgba(var(--accent-rgb),.7);background:rgba(var(--accent-rgb),.12)}
 .eps button:active{border-color:var(--hair-hot);background:var(--glass-press)}
 .eps b{color:var(--accent);min-width:24px;font-weight:500;font-variant-numeric:tabular-nums}.eps span{flex:1;overflow-wrap:anywhere}.eps small{color:var(--ink3);white-space:nowrap;font-size:11px}
+.popts{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px}
+.popt{display:flex;align-items:center;gap:10px}
+.popt .k{min-width:58px;color:var(--ink3);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.popt .chips{flex:1;gap:6px}
+.popt .chips button{min-height:36px;padding:0 12px;font-size:13px}
+.epshint{font-size:12px;margin:0}
+.eps .ep{display:flex;align-items:center;gap:2px}
+.eps .ep>button:first-child{flex:1;min-width:0}
+.eps .srcbtn{flex:none;justify-content:center;min-width:46px;padding:0;font-size:20px;color:var(--ink2);letter-spacing:1px}
+.srclist{display:flex;flex-direction:column;gap:6px;padding-top:4px}
+.srclist .srcback{align-self:flex-start;background:none;border-color:transparent;color:var(--ink2);padding:6px 0;min-height:40px;font-size:14px}
+.srclist .srchead{font-size:18px;font-weight:400;line-height:1.3;margin:2px 0 4px;color:var(--ink)}
+.srclist .muted{margin:0 0 6px;font-size:12.5px}
+.srclist .src{display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;padding:10px 14px;min-height:58px;border-radius:14px}
+.srclist .src.pick{border-color:rgba(var(--accent-rgb),.7);background:rgba(var(--accent-rgb),.12)}
+.srclist .src .l{font-size:14.5px;font-weight:500;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.srclist .src em{font-style:normal;font-size:11px;color:var(--accent);border:1px solid rgba(var(--accent-rgb),.6);border-radius:8px;padding:1px 6px}
+.srclist .src small{color:var(--ink3);font-size:11.5px;overflow-wrap:anywhere;line-height:1.35}
 
 /* ---- Settings: rail of hex nodes, glass cards of borderless rows ---- */
 #settings-tabs{display:flex;gap:0;overflow-x:auto;margin:0 calc(-1 * var(--gut));padding:6px var(--gut) 4px;scrollbar-width:none}

@@ -1934,6 +1934,30 @@
   document.querySelectorAll('.pane .more').forEach(b => b.onclick = () => loadTab(b.closest('.pane').dataset.type, true));
 
   // ---- Title sheet ----
+  // Quality picked on the phone ('' = best match); kept on this phone only. The Arabic choice lives on the TV per show.
+  const QUALITIES = [['', 'Best'], ['2160p', '4K'], ['1080p', '1080p'], ['720p', '720p']];
+  const LANG_CHOICES = [['auto', 'Best match'], ['dub', 'Arabic dub'], ['subs', 'Arabic subs'], ['original', 'No Arabic']];
+  let phoneQuality = '';
+  try { phoneQuality = localStorage.getItem('play-quality') || ''; } catch (e) {}
+  if (!QUALITIES.some(q => q[0] === phoneQuality)) phoneQuality = '';
+  function streamRef(src) {   // same as the TV's screens.stream_ref: TorBox links stay on the TV behind a ref
+    if (Number.isInteger(src.ref)) return {ref: src.ref};
+    const ref = {info_hash: src.info_hash};
+    if (Number.isInteger(src.file_idx)) ref.file_idx = src.file_idx;
+    return ref;
+  }
+  function optionRow(name, choices, current, pick) {
+    const row = document.createElement('div'); row.className = 'popt';
+    const k = document.createElement('span'); k.className = 'k'; k.textContent = name;
+    const box = document.createElement('div'); box.className = 'chips';
+    const draw = cur => box.replaceChildren(...choices.map(([value, label]) => {
+      const b = chip(label, value === cur, async () => { const now = await pick(value); if (now !== undefined) draw(now); });
+      b.disabled = !online; return b;
+    }));
+    draw(current); row.append(k, box);
+    return row;
+  }
+
   async function openTitle(item) {
     const token = ++titleToken;
     sheetName = 'title'; sheet.hidden = false; updateTabbar();
@@ -1956,11 +1980,51 @@
     const type = t.type || item.type, id = t.id || item.id;
     const play = async params => {
       if (needsTorbox()) { openTorbox(() => play(params)); return; }
-      
-      try { await send('play_media', Object.assign({type, id}, params)); } catch (e) { return; }
+      const extra = phoneQuality && !params.stream ? {quality: phoneQuality} : {};
+      try { await send('play_media', Object.assign({type, id}, params, extra)); } catch (e) { return; }
       closeSheet(); showTab('remote'); refresh();
     };
     const btn = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'playbtn'; b.textContent = label; b.disabled = !online; b.onclick = fn; return b; };
+    // What "play" picks: the show's language (saved on the TV, so the TV's own episode picks follow it) and quality.
+    const opts = document.createElement('div'); opts.className = 'popts';
+    if (t.arabic && t.arabic.enabled) {
+      opts.append(optionRow('Plays', LANG_CHOICES, t.arabic.choice || 'auto', async value => {
+        try { return data(await send('title_language', {id, choice: value})).choice || value; } catch (e) { return undefined; }
+      }));
+    }
+    opts.append(optionRow('Quality', QUALITIES, phoneQuality, value => {
+      phoneQuality = value;
+      try { value ? localStorage.setItem('play-quality', value) : localStorage.removeItem('play-quality'); } catch (e) {}
+      return value;
+    }));
+    el.append(opts);
+    // The exact list for one movie / episode, the TV's Sources screen on the phone.
+    const openSources = async (target, heading) => {
+      const list = document.createElement('div'); list.className = 'srclist';
+      const back = document.createElement('button'); back.type = 'button'; back.className = 'srcback'; back.textContent = type === 'series' ? '‹ Episodes' : '‹ Back';
+      back.onclick = () => content.replaceChildren(el);
+      const h = document.createElement('div'); h.className = 'srchead'; h.textContent = heading;
+      const wait = document.createElement('div'); wait.className = 'spin'; wait.innerHTML = '<div class="spinner"></div>';
+      const note = document.createElement('p'); note.className = 'muted'; note.textContent = 'Looking for sources…';
+      list.append(back, h, wait, note);
+      content.replaceChildren(list);
+      const mine = titleToken;
+      let found;
+      try { found = data(await send('sources', Object.assign({type, id}, target, phoneQuality ? {quality: phoneQuality} : {}))).sources || []; }
+      catch (e) { if (mine === titleToken && list.isConnected) note.textContent = 'Could not load the sources.'; wait.remove(); return; }
+      if (mine !== titleToken || !list.isConnected) return;
+      wait.remove();
+      note.textContent = found.length ? 'Best match is what plays when you just tap play.' : 'No playable sources found.';
+      list.append(...found.map(src => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'src'; b.disabled = !online;
+        const top = document.createElement('span'); top.className = 'l'; top.textContent = src.label || src.quality || 'Source';
+        if (src.pick) { const p = document.createElement('em'); p.textContent = 'Best match'; top.append(p); b.classList.add('pick'); }
+        const rel = document.createElement('small'); rel.dir = 'auto'; rel.textContent = src.title || '';
+        b.append(top, rel);
+        b.onclick = () => play(Object.assign({}, target, {stream: streamRef(src)}));
+        return b;
+      }));
+    };
     if (type === 'series') {
       const seasons = (t.seasons || []).filter(s => s.episodes && s.episodes.length);
       const chipBox = document.createElement('div'); chipBox.className = 'chips'; chipBox.style.margin = '10px 0';
@@ -1972,10 +2036,12 @@
         const label = item.position > 0 ? `Resume ${episode} · ${fmt(item.position)}` : `Play ${episode}`;
         el.append(btn(label, () => play({season: item.season, episode: item.episode})));
       }
+      const hint = document.createElement('p'); hint.className = 'muted epshint'; hint.textContent = 'Tap an episode to play the best match · ⋯ to choose its source';
       const draw = () => {
         chipBox.replaceChildren(...seasons.map(s => chip(s.season === 0 ? 'Specials' : `Season ${s.season}`, s.season === cur, () => { cur = s.season; draw(); })));
         const s = seasons.find(x => x.season === cur);
         eps.replaceChildren(...((s && s.episodes) || []).map(ep => {
+          const row = document.createElement('div'); row.className = 'ep';
           const b = document.createElement('button'); b.type = 'button'; b.disabled = !online;
           const n = document.createElement('b'); n.textContent = ep.episode;
           const nm = document.createElement('span'); nm.textContent = ep.name || `Episode ${ep.episode}`;
@@ -1985,15 +2051,22 @@
             const marker = document.createElement('small'); marker.textContent = item.position > 0 ? 'Continue' : 'Up next'; b.append(marker);
           } else if (ep.released) { const r = document.createElement('small'); r.textContent = String(ep.released).slice(0, 10); b.append(r); }
           b.onclick = () => play({season: cur, episode: ep.episode});
-          return b;
+          const more = document.createElement('button'); more.type = 'button'; more.className = 'srcbtn'; more.disabled = !online;
+          more.textContent = '⋯'; more.setAttribute('aria-label', `Choose a source for episode ${ep.episode}`);
+          const season = cur;
+          more.onclick = () => openSources({season, episode: ep.episode},
+            `S${String(season).padStart(2, '0')}E${String(ep.episode).padStart(2, '0')} · ${nm.textContent}`);
+          row.append(b, more);
+          return row;
         }));
       };
-      if (seasons.length) { draw(); el.append(chipBox, eps); }
+      if (seasons.length) { draw(); el.append(chipBox, hint, eps); }
       else { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No episodes found.'; el.append(p); }
     } else if (t.resume > 0) {
-      el.append(btn(`Resume from ${fmt(t.resume)}`, () => play({})), btn('Start over', () => play({start: 0})));
+      el.append(btn(`Resume from ${fmt(t.resume)}`, () => play({})), btn('Start over', () => play({start: 0})),
+                btn('Choose source…', () => openSources({}, t.name || item.name || 'Sources')));
     } else {
-      el.append(btn('Play on TV', () => play({})));
+      el.append(btn('Play on TV', () => play({})), btn('Choose source…', () => openSources({}, t.name || item.name || 'Sources')));
     }
     content.replaceChildren(el);
   }

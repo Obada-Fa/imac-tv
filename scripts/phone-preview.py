@@ -55,6 +55,7 @@ def sample_apps(count):
 
 
 class Preview(SimpleHTTPRequestHandler):
+    arabic_choice = "auto"
     native_bridge = None
     apps = []
     max_favorites = 6
@@ -217,6 +218,29 @@ class Preview(SimpleHTTPRequestHandler):
                 app["favorite"] = bool(params.get("favorite"))
                 type(self).apps_rev += 1
                 return self.json(self.apps_payload())
+            if action in ("browse", "continue", "find"):
+                conan = {"id": "tt0131179", "type": "series", "name": "Detective Conan", "year": "1996", "poster": None}
+                return self.json({"result": {"items": [conan] if action != "continue" else []}})
+            if action == "title":
+                eps = [{"episode": n, "name": name, "released": f"1996-{1 + n // 4:02d}-{1 + n:02d}"} for n, name in
+                       enumerate(["Roller Coaster Murder Case", "Company President's Daughter Kidnapping Case",
+                                  "Idol's Secret Murder Case", "Coded Map of the City Case"], 1)]
+                return self.json({"result": {"id": "tt0131179", "type": "series", "name": "Detective Conan", "year": "1996",
+                                             "runtime": "24 min", "genres": ["Animation", "Mystery"],
+                                             "description": "A high-school detective, shrunk into a child, solves cases.",
+                                             "seasons": [{"season": 1, "episodes": eps}], "resume": 0,
+                                             "arabic": {"enabled": True, "choice": type(self).arabic_choice}}})
+            if action == "title_language":
+                type(self).arabic_choice = params.get("choice") or "auto"
+                return self.json({"result": {"choice": type(self).arabic_choice}})
+            if action == "sources":
+                rows = [("1080p · BluRay · 1.2 GB · ArabP2P · Arabic dub", "المحقق كونان مدبلج الحلقة 1", True),
+                        ("720p · WEB-DL · 0.6 GB · ArabP2P · Arabic subtitles · Season pack", "Detective.Conan.S01.720p.Arabic.Subs", False),
+                        ("1080p · BluRay · 1.4 GB · 214 seeds", "Detective.Conan.001.1080p.BluRay.x264", False),
+                        ("720p · WEB-DL · 0.4 GB · 88 seeds", "Detective.Conan.E001.720p.WEB.H264", False)]
+                time.sleep(0.6)
+                return self.json({"result": {"sources": [{"label": l, "title": t, "pick": p, "info_hash": f"{i}" * 40}
+                                                         for i, (l, t, p) in enumerate(rows, 1)]}})
             if action == "app_open":
                 app = next((a for a in self.apps if a["id"] == params.get("id")), None)
                 if not app:

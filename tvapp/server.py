@@ -292,6 +292,7 @@ def playback():
 
 
 MEDIA_ID = re.compile(r"^tt\d+$")
+QUALITIES = ("2160p", "1080p", "720p")   # the phone's quality pick; None/"" = best
 HASH = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
@@ -1145,6 +1146,9 @@ class Controller:
     def play_media(self, params, prefetched=None, auto=False, recovery=False, paused=False):
         kind, item, season, episode, video_id = media_target(params)
         stream = self._resolve_stream(params.get("stream"))
+        quality = params.get("quality") or None
+        if quality is not None and quality not in QUALITIES:
+            raise ValueError("Invalid quality")
         start = params.get("start")
         if start is None:
             start = history.resume_position(video_id)
@@ -1155,6 +1159,8 @@ class Controller:
         with self.lock:
             # An autoplayed episode stays Arabic when the one before was an Arabic release.
             self.prefer_arabic_next = bool(auto and (self.current_source or {}).get("site"))
+            if quality is None and (auto or recovery) and (self.media or {}).get("id") == item:
+                quality = self.media.get("quality")   # the next episode keeps the quality picked on the phone
             self.generation += 1
             generation = self.generation
             self.health_monitor = media_health.Monitor()
@@ -1168,7 +1174,7 @@ class Controller:
             self.app, self.phase, self.error = "player", "buffering", ""
             self.buffering = {"peers": 0, "speed": 0.0, "downloaded": 0, "source": "", "stage": "Finding the best source…"}
             self.media = {"type": kind, "id": item, "video_id": video_id, "season": season,
-                          "episode": episode, "name": item}
+                          "episode": episode, "name": item, "quality": quality}
             self._save_json(self.media_path, self.media)
             self._save_json(self.selection_path, {"boot_id": BOOT_ID, "app": "home"})
             self.prefetch = None
@@ -1525,6 +1531,16 @@ class Controller:
                 if event[0] != "skip":
                     return
 
+    @staticmethod
+    def _arabic_wish(item, after_arabic=False, arabic_lang=None):
+        """(prefer_arabic, lang) for streams.best. "No Arabic" picked for the show beats everything (also the
+        Prefer Arabic setting: someone who doesn't speak Arabic is watching); after an Arabic episode the next one
+        stays that kind; otherwise the show's remembered language."""
+        if media_arabic.choice(item) == "original":
+            return False, None
+        lang = (arabic_lang if after_arabic else None) or media_arabic.preferred_language(item)
+        return (True if (after_arabic or lang) else None), lang
+
     def _start_prefetch(self, generation, nxt):
         """Pick (don't start) the next episode's source while this one finishes."""
         with self.lock:
@@ -1533,13 +1549,14 @@ class Controller:
             kind, item = self.media["type"], self.media["id"]
             video_id = f"{item}:{nxt['season']}:{nxt['episode']}"
             self.prefetch = {"video_id": video_id, "chosen": None}
-            prefer = True if (self.current_source or {}).get("site") else None
-            lang = (self.current_source or {}).get("lang") if prefer else media_arabic.preferred_language(item)
+            current = self.current_source or {}
+            prefer, lang = self._arabic_wish(item, bool(current.get("site")), current.get("lang"))
+            quality = self.media.get("quality")
 
         def work():
             try:
                 found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
-                chosen = media_streams.best(found, media_config.load(), True if (prefer or lang) else None, lang)
+                chosen = media_streams.best(found, media_config.load(), prefer, lang, quality)
             except Exception:
                 chosen = None
             with self.lock:
@@ -1684,9 +1701,9 @@ class Controller:
                 if not chosen:
                     found = [media_streams.parse(s) for s in streams_job.result()]
                     with self.lock:
-                        prefer = self.prefer_arabic_next or None
-                    lang = media_arabic.preferred_language(item)
-                    chosen = media_streams.best(found, cfg, True if (prefer or lang) else None, lang)
+                        after_arabic, quality = self.prefer_arabic_next, (self.media or {}).get("quality")
+                    prefer, lang = self._arabic_wish(item, after_arabic)
+                    chosen = media_streams.best(found, cfg, prefer, lang, quality)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
@@ -2474,7 +2491,12 @@ class Controller:
                     found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
                 except addons.AddonError as exc:
                     raise RuntimeError(media_config.redact(exc)) from None
-                ranked, urls = media_streams.rank(found, media_config.load()), []
+                cfg = media_config.load()
+                ranked, urls = media_streams.rank(found, cfg), []
+                chosen = media_streams.best(found, cfg, *self._arabic_wish(params.get("id")),
+                                            params.get("quality") if params.get("quality") in QUALITIES else None)
+                for src in ranked:   # what "best match" would play, so the list can say so
+                    src["pick"] = src is chosen
                 metadata = {media_health.identity(s): dict(s) for s in ranked}
                 for src in ranked:  # direct links embed the TorBox key: keep them here, hand out an opaque ref
                     url = src.pop("url", None)
@@ -2541,7 +2563,14 @@ class Controller:
                             resume=history.resume_position(item) if kind == "movie" else 0)
                 if kind == "series":
                     card["seasons"] = _season_list(meta.get("videos"))
+                card["arabic"] = {"enabled": media_arabic.enabled(), "choice": media_arabic.choice(item)}
                 return card
+            if action == "title_language":
+                item = params.get("id")
+                if not isinstance(item, str) or not MEDIA_ID.match(item):
+                    raise ValueError("Invalid title id")
+                media_arabic.set_choice(item, params.get("choice"))
+                return {"choice": media_arabic.choice(item)}
             if action == "continue":
                 items = []
                 for entry in history.continue_watching():

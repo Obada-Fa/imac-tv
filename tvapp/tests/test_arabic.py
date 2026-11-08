@@ -386,6 +386,36 @@ class ShowLanguage(Temp):
         self.assertEqual(streams.best(found, {}, None, "subs")["lang"], "subs")
         self.assertEqual(streams.best(found, {}, None, "dub")["lang"], "dub")
 
+    def test_phone_choice_and_best_match(self):
+        self.assertEqual(arabic.choice("tt2"), "auto")
+        arabic.remember_language("tt2", "dub", soft=True)          # found by an Arabic search: still "best match"
+        self.assertEqual(arabic.choice("tt2"), "auto")
+        arabic.set_choice("tt2", "original")                       # watching with someone who doesn't speak Arabic
+        self.assertEqual((arabic.choice("tt2"), arabic.preferred_language("tt2")), ("original", None))
+        arabic.remember_language("tt2", "dub", soft=True)          # searching again doesn't undo the pick
+        self.assertEqual(arabic.choice("tt2"), "original")
+        arabic.set_choice("tt2", "auto")                           # best match: back to what the search found
+        self.assertEqual((arabic.choice("tt2"), arabic.preferred_language("tt2")), ("auto", "dub"))
+        arabic.set_choice("tt2", "subs")
+        self.assertEqual((arabic.choice("tt2"), arabic.preferred_language("tt2")), ("subs", "subs"))
+        arabic.set_choice("tt3", "original")
+        arabic.set_choice("tt3", "auto")                           # nothing was found by a search: forgotten
+        self.assertNotIn("tt3", arabic._shows())
+        for bad in (("tt2", "klingon"), ("bad", "dub")):
+            with self.assertRaises(ValueError):
+                arabic.set_choice(*bad)
+
+    def test_best_quality_within_the_language(self):
+        mk = lambda lang, q: streams.parse({"name": "ArabP2P", "url": arabic.SITE + f"/download.php?id={lang}{q}&f=x",
+                                            "title": f"x {q}\n🇸🇦 {arabic.LANG_LABEL[lang]} 💾 1 GB 👤 5"})
+        t = lambda q, h: streams.parse({"infoHash": h * 40, "title": f"Show S01E01 {q}\n👤 90 💾 1 GB"})
+        found = [mk("dub", "720p"), mk("dub", "1080p"), t("1080p", "b"), t("720p", "c")]
+        self.assertEqual(streams.best(found, {}, quality="720p")["info_hash"], "c" * 40)
+        self.assertEqual(streams.best(found, {}, None, "dub", "720p")["quality"], "720p")
+        got = streams.best(found, {"quality_order": ["2160p", "1080p", "720p"]}, None, "dub", "2160p")         # no 4K dub: the dub still wins over quality
+        self.assertEqual((got["lang"], got["quality"]), ("dub", "1080p"))
+        self.assertFalse(streams.best(found, {"prefer_arabic": True}, False).get("site"))
+
     def test_wikidata_kinds_filter_results(self):
         hits = [("tt0131179", "series"), ("tt1073223", "movie"), ("tt5", None)]
         with mock.patch.object(arabic, "_wikidata_titles", return_value=hits):

@@ -109,19 +109,22 @@ def rank(sources, cfg):
     return sorted(good, key=key)
 
 
-def best(sources, cfg, prefer_arabic=None, lang=None):
+def best(sources, cfg, prefer_arabic=None, lang=None, quality=None):
     """The source to play without asking. Arabic releases only when preferred (the show is remembered as Arabic,
     the setting, or the episode before was Arabic) or when nothing else is playable: TorBox takes a while to fetch
-    them. lang ('dub' / 'subs' / 'arabic') picks that kind first."""
+    them. lang ('dub' / 'subs' / 'arabic') picks that kind first. quality ('2160p' / '1080p' / '720p', from the
+    phone) picks that quality within the chosen language when there is one; the language always wins."""
     ranked = rank(sources, cfg)
     if prefer_arabic is None:
         prefer_arabic = bool(lang) or bool(cfg.get("prefer_arabic"))
+    pools = []
     if not prefer_arabic:
-        others = [s for s in ranked if not s.get("site")]
-        if others:
-            return others[0]
+        pools.append([s for s in ranked if not s.get("site")])
     if lang:
-        same = [s for s in ranked if s.get("site") and s.get("lang") == lang]
-        if same:
-            return same[0]
-    return ranked[0] if ranked else None
+        pools.append([s for s in ranked if s.get("site") and s.get("lang") == lang])
+    pools.append(ranked)
+    for pool in pools:
+        if pool:
+            exact = [s for s in pool if quality and s.get("quality") == quality]
+            return (exact or pool)[0]
+    return None

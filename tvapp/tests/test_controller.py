@@ -358,6 +358,25 @@ class PlayMediaTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.action("sources", {"type": "movie", "id": "bad"})
 
+    def test_phone_language_choice_quality_and_best_match_mark(self):
+        c = self.controller()
+        raw = [{"name": "Torrentio\n720p", "title": "A 720p\n\U0001f464 9 \U0001f4be 1 GB", "infoHash": "1" * 40},
+               {"name": "Torrentio\n1080p", "title": "B 1080p\n\U0001f464 9 \U0001f4be 2 GB", "infoHash": "2" * 40}]
+        with mock.patch.object(server.addons, "streams", return_value=raw):
+            out = c.action("sources", {"type": "movie", "id": "tt41"})
+            self.assertEqual([s["pick"] for s in out["sources"]], [True, False])
+            out = c.action("sources", {"type": "movie", "id": "tt41", "quality": "720p"})
+            self.assertEqual([(s["quality"], s["pick"]) for s in out["sources"]], [("1080p", False), ("720p", True)])
+        self.assertEqual(c.action("title_language", {"id": "tt41", "choice": "original"}), {"choice": "original"})
+        with mock.patch.object(server.media_config, "load", return_value={"prefer_arabic": True}):
+            self.assertEqual(c._arabic_wish("tt41", True, "dub"), (False, None))   # "No Arabic" beats everything
+        c.action("title_language", {"id": "tt41", "choice": "dub"})
+        self.assertEqual(c._arabic_wish("tt41"), (True, "dub"))
+        with self.assertRaises(ValueError):
+            c.action("title_language", {"id": "bad", "choice": "dub"})
+        with self.assertRaises(ValueError):
+            c.play_media({"type": "movie", "id": "tt41", "quality": "8k"})
+
     def test_media_stream_url_validation(self):
         self.assertEqual(server.media_stream({"url": "https://tb/x"}), {"url": "https://tb/x", "info_hash": None, "file_idx": None})
         for bad in ("ftp://x/y", "javascript:alert(1)", "https://" + "a" * 2048, "", 5):
