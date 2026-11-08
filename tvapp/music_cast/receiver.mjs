@@ -55,6 +55,14 @@ export class Mpv {
     this.waiting = new Map();
     this.listeners = new Set();
     this.buf = '';
+    // How yt-dlp resolves songs: without a JS runtime first (2026-11-08: with Node, yt-dlp picked YouTube's TV
+    // client, whose stream URLs answer mpv with 403), with it as the fallback; the last one that worked leads.
+    this.ytdlModes = jsRuntime ? [{}, { 'js-runtimes': jsRuntime }] : [{}];
+  }
+
+  // a song played with this mode: try it first from now on
+  preferMode(mode) {
+    this.ytdlModes = [mode, ...this.ytdlModes.filter((m) => m !== mode)];
   }
 
   onEvent(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -63,11 +71,12 @@ export class Mpv {
     if (this.conn && !this.conn.destroyed) return;
     if (!this.proc || this.proc.exitCode !== null) {
       try { fs.unlinkSync(this.sock); } catch { /* not there */ }
-      const args = ['--idle=yes', '--no-video', '--no-terminal', '--really-quiet', '--audio-display=no',
-        '--ytdl-format=bestaudio/best', `--input-ipc-server=${this.sock}`, '--volume=100', '--title=Nexus TV music'];
+      // mpv's errors (and yt-dlp's, through the ytdl hook) go to our stdout, i.e. music_cast.log
+      const args = ['--idle=yes', '--no-video', '--quiet', '--input-terminal=no', '--msg-level=all=error,ytdl_hook=warn',
+        '--audio-display=no', '--ytdl-format=bestaudio/best', `--input-ipc-server=${this.sock}`, '--volume=100',
+        '--title=Nexus TV music'];
       if (this.ytdlp) args.push(`--script-opts=ytdl_hook-ytdl_path=${this.ytdlp}`);
-      if (this.jsRuntime) args.push(`--ytdl-raw-options=js-runtimes=${this.jsRuntime}`);
-      this.proc = this.spawnFn(this.bin, args, { stdio: 'ignore' });
+      this.proc = this.spawnFn(this.bin, args, { stdio: ['ignore', 'inherit', 'inherit'] });
       this.proc.on('exit', (code) => { log('mpv exited', code); this.conn = null; });
     }
     for (let i = 0; i < 50; i++) {
@@ -170,6 +179,7 @@ export class MpvPlayer extends Player {
     this.track = null;           // {id, title, artist, art}
     this.loadGen = 0;
     this.heartbeat = null;
+    this.pubGen = 0;
     mpv.onEvent((e) => this.#event(e));
     this.on('state', () => this.#publish());
   }
@@ -181,6 +191,24 @@ export class MpvPlayer extends Player {
     this.meta(video.id).then((m) => {
       if (gen === this.loadGen && m) { Object.assign(this.track, m); this.#publish(); }
     }).catch(() => {});
+    await this.mpv.command(['set_property', 'pause', false]);
+    let ok = false;
+    for (const mode of [...this.mpv.ytdlModes]) {
+      if (gen !== this.loadGen) break;
+      ok = await this.#load(video.id, gen, mode);
+      if (ok) { this.mpv.preferMode(mode); break; }
+      if (gen === this.loadGen && this.mpv.ytdlModes.length > 1) {
+        log('could not play', video.id, mode['js-runtimes'] ? 'with a JS runtime' : 'without a JS runtime');
+      }
+    }
+    if (ok && position > 1) {
+      try { await this.mpv.command(['seek', position, 'absolute']); } catch { /* starts from 0 */ }
+    }
+    if (!ok) log('could not play', video.id);
+    return ok;
+  }
+
+  async #load(id, gen, mode) {
     const loaded = new Promise((resolve) => {
       const timer = setTimeout(() => { off(); resolve(false); }, LOAD_TIMEOUT_MS);
       const off = this.mpv.onEvent((e) => {
@@ -189,14 +217,13 @@ export class MpvPlayer extends Player {
         else if (e.event === 'end-file' && e.reason === 'error') { clearTimeout(timer); off(); resolve(false); }
       });
     });
-    await this.mpv.command(['set_property', 'pause', false]);
-    await this.mpv.command(['loadfile', `https://www.youtube.com/watch?v=${video.id}`, 'replace']);
-    const ok = await loaded;
-    if (ok && position > 1) {
-      try { await this.mpv.command(['seek', position, 'absolute']); } catch { /* starts from 0 */ }
+    try {
+      await this.mpv.command(['set_property', 'ytdl-raw-options', mode]);   // read by the ytdl hook per load
+    } catch (e) {
+      log('could not set ytdl-raw-options:', e.message);
     }
-    if (!ok) log('could not play', video.id);
-    return ok;
+    await this.mpv.command(['loadfile', `https://www.youtube.com/watch?v=${id}`, 'replace']);
+    return loaded;
   }
 
   async doPause() { return this.#set('pause', true); }
@@ -243,17 +270,22 @@ export class MpvPlayer extends Player {
 
   async #publish() {
     const name = STATUS_NAMES[this.status];
+    const pub = ++this.pubGen;       // a newer state wins over a write still waiting for mpv's position
     clearInterval(this.heartbeat);
+    this.heartbeat = null;
     if (!name || !this.track) {
       writeJson(this.nowFile, { status: 'Stopped', updated: Date.now() / 1000 });
       return;
     }
-    const write = async () => writeJson(this.nowFile, {
-      status: name, ...this.track, position: await this.doGetPosition(), duration: await this.doGetDuration(),
-      updated: Date.now() / 1000,
-    });
+    const track = this.track;
+    const write = async () => {
+      const position = await this.doGetPosition();
+      const duration = await this.doGetDuration();
+      if (pub !== this.pubGen) return;
+      writeJson(this.nowFile, { status: name, ...track, position, duration, updated: Date.now() / 1000 });
+    };
     await write();
-    this.heartbeat = setInterval(write, HEARTBEAT_MS);
+    if (pub === this.pubGen) this.heartbeat = setInterval(write, HEARTBEAT_MS);
   }
 }
 

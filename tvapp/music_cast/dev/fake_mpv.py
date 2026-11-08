@@ -4,7 +4,7 @@ import json, os, socket, sys, threading, time
 DUR = float(os.environ.get("FAKE_DUR", "2.0"))
 sock_path = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("--input-ipc-server="))
 open(os.environ.get("FAKE_ARGS", "/dev/null"), "w").write(json.dumps(sys.argv[1:]))
-st = {"file": None, "pause": False, "pos": 0.0, "t": time.monotonic(), "gen": 0}
+st = {"raw": {}, "file": None, "pause": False, "pos": 0.0, "t": time.monotonic(), "gen": 0}
 clients, lock = [], threading.Lock()
 def emit(ev):
     for c in list(clients):
@@ -18,7 +18,8 @@ def setpause(v):
 def play(url, gen):
     time.sleep(0.3)
     if gen != st["gen"]: return
-    if "bad" in url:
+    js = "js-runtimes" in st["raw"]
+    if "bad" in url or ("jsonly" in url and not js) or ("nojs" in url and js):
         st["file"] = None; emit({"event": "end-file", "reason": "error"}); return
     st.update(file=url, pos=0.0, t=time.monotonic()); emit({"event": "start-file"}); emit({"event": "file-loaded"})
     while gen == st["gen"]:
@@ -38,6 +39,7 @@ def handle(c):
                 data = {"time-pos": pos() if st["file"] else None, "duration": DUR if st["file"] else None, "pause": st["pause"]}.get(cmd[1])
                 if data is None: err = "property unavailable"
             elif cmd[0] == "set_property" and cmd[1] == "pause": setpause(bool(cmd[2]))
+            elif cmd[0] == "set_property" and cmd[1] == "ytdl-raw-options": st["raw"] = dict(cmd[2])
             elif cmd[0] == "loadfile":
                 if st["file"]: emit({"event": "end-file", "reason": "stop"})
                 st["gen"] += 1; st["file"] = None

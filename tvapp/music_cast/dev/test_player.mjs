@@ -10,7 +10,7 @@ const nowFile = path.join(dir, 'now.json'), volFile = path.join(dir, 'vol.json')
 const now = () => JSON.parse(fs.readFileSync(nowFile, 'utf8'));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let vol = { level: 40, muted: false };
-const mpv = new Mpv({ bin: path.join(HERE, 'fake_mpv.py'), sock: path.join(dir, 'mpv.sock'), ytdlp: '/x/yt-dlp' });
+const mpv = new Mpv({ bin: path.join(HERE, 'fake_mpv.py'), sock: path.join(dir, 'mpv.sock'), ytdlp: '/x/yt-dlp', jsRuntime: 'node:/n/node' });
 const player = new MpvPlayer(mpv, { nowFile, volumeFile: volFile, meta: async (id) => ({ title: 'Song ' + id, artist: 'Artist' }),
   volume: { get: async () => vol, set: async (v) => { vol = v; } } });
 const lg = new DefaultLogger(); lg.setLevel?.('error'); player.setLogger(lg);
@@ -31,6 +31,12 @@ try {
   await player.setVolume({ level: 65, muted: false }); assert.equal(vol.level, 65);
   assert.equal(JSON.parse(fs.readFileSync(volFile, 'utf8')).percent, 65);
   assert.equal(await player.play(video('bad1'), 0), false, 'unplayable song reports failure');
+  assert.equal(await player.play(video('nojs1'), 0), true, 'plays without a JS runtime');
+  assert.deepEqual(mpv.ytdlModes[0], {}, 'no JS runtime leads');
+  assert.equal(await player.play(video('jsonly1'), 0), true, 'falls back to the JS runtime');
+  assert.equal(mpv.ytdlModes[0]['js-runtimes'], 'node:/n/node', 'the mode that worked leads');
+  assert.equal(await player.play(video('nojs2'), 0), true, 'falls back the other way too');
+  assert.ok(!args.some((a) => a.startsWith('--ytdl-raw-options')), 'no JS runtime on the command line');
   assert.equal(await player.play(video('B2'), 0), true);
   await wait(2600);                                                            // the song ends: queue empty -> stop
   console.log('after end:', player.status, now().status);
