@@ -1,17 +1,19 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'air_pointer.dart';
 import 'phone_mic_control.dart';
 import 'phone_speaker_control.dart';
 import 'scan_page.dart';
 import 'tv_volume_control.dart';
 
 /// The Android extras around the TV's web remote: hardware volume buttons,
-/// phone microphone and phone speaker. Each is bound to one TV at a time.
+/// phone microphone, phone speaker and the air pointer. Each is bound to one TV at a time.
 class NativeControls {
   final hardwareVolume = TvVolumeControl();
   final phoneMic = PhoneMicControl();
   final phoneSpeaker = PhoneSpeakerControl();
+  final airPointer = AirPointer();
 
   Future<void> initialize() => hardwareVolume.initialize();
 
@@ -21,6 +23,7 @@ class NativeControls {
       hardwareVolume.stop().catchError((_) {}),
       phoneMic.stop().catchError((_) {}),
       phoneSpeaker.stop().catchError((_) {}),
+      airPointer.stop().catchError((_) {}),
     ]);
   }
 }

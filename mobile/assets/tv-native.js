@@ -98,6 +98,42 @@
     }
     pairing.append(footer);
   }
+  // Air pointer: hold to aim the TV's pointer by tilting the phone, a quick tap clicks.
+  // The app reads the gyro and does all the maths; this button only says down and up.
+  const pad = document.getElementById('pad');
+  let air = null;
+  if (pad) {
+    const style = make('style');
+    style.textContent = '#air{position:absolute;left:50%;bottom:13%;transform:translateX(-50%);z-index:1;' +
+      'min-width:132px;padding:12px 20px;border-radius:999px;border:1px solid var(--hair);' +
+      'background:rgba(255,255,255,.08);color:var(--ink,#fff);font:inherit;font-size:14px;touch-action:none;' +
+      '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}' +
+      '#air.on{background:rgba(120,170,255,.32);border-color:rgba(160,200,255,.7)}' +
+      '.pad.air-on small{display:none}.hive.discord.pointer #air{bottom:18px}';
+    document.head.append(style);
+    air = make('button', '', 'Hold to aim'); air.id = 'air'; air.type = 'button'; air.hidden = true;
+    air.setAttribute('aria-label', 'Air pointer: hold and tilt the phone to aim, tap to click');
+    let held = null;
+    const release = e => {
+      if (held === null || (e && e.pointerId !== held)) return;
+      held = null; air.classList.remove('on'); send('air_up');
+    };
+    air.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      if (held !== null) return;
+      held = e.pointerId;
+      try { air.setPointerCapture(e.pointerId); } catch (x) {}
+      air.classList.add('on'); send('air_down');
+      if (navigator.vibrate) navigator.vibrate(8);
+    });
+    air.addEventListener('pointerup', e => { e.stopPropagation(); release(e); });
+    air.addEventListener('pointercancel', release);
+    air.addEventListener('lostpointercapture', release);
+    air.addEventListener('contextmenu', e => e.preventDefault());
+    air.addEventListener('click', e => e.stopPropagation());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
+    pad.append(air);
+  }
   window.NexusNative = {
     update(state) {
       native = state;
@@ -117,6 +153,12 @@
       speaker.disabled = !!sp.busy;
       speaker.setAttribute('aria-checked', String(!!sp.enabled));
       speakerValue.textContent = sp.busy ? 'Connecting…' : sp.enabled ? 'On' : 'Off';
+      const a = state.air || {};
+      if (air) {
+        air.hidden = !a.supported;
+        pad.classList.toggle('air-on', !!a.supported);   // the touchpad's tip makes room for the button
+        air.textContent = a.error && !a.aiming ? a.error : a.aiming ? 'Aiming…' : 'Hold to aim';
+      }
       const message = state.error || m.error || sp.error || '';
       error.textContent = message;
       error.hidden = !message;

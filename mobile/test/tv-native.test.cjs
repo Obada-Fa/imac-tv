@@ -95,3 +95,47 @@ test('plain browsers are untouched and reinjection does not duplicate controls',
   assert.equal(f.access.sibling, section);
   assert.equal(f.messages.filter(message => message.action === 'status').length, 1);
 });
+
+test('air pointer button: hidden until the app supports it, down and up while held', () => {
+  const messages = [];
+  class Element {
+    constructor(tag) {
+      this.tag = tag; this.children = []; this.attributes = {}; this.listeners = {};
+      const classes = new Set();
+      this.classList = {add: c => classes.add(c), remove: c => classes.delete(c), has: c => classes.has(c), toggle: (c, on) => on ? classes.add(c) : classes.delete(c)};
+    }
+    append(...nodes) { this.children.push(...nodes); }
+    setAttribute(key, value) { this.attributes[key] = value; }
+    getAttribute(key) { return this.attributes[key]; }
+    after(node) { this.sibling = node; }
+    addEventListener(type, fn) { this.listeners[type] = fn; }
+    setPointerCapture() {}
+    fire(type, extra = {}) {
+      this.listeners[type]({pointerId: 1, preventDefault() {}, stopPropagation() { this.stopped = true; }, ...extra});
+    }
+  }
+  const access = new Element('div'), pad = new Element('div'), head = new Element('head');
+  const context = vm.createContext({
+    window: {NexusTv: {postMessage: message => messages.push(JSON.parse(message))}},
+    navigator: {},
+    document: {getElementById: id => ({'phone-access': access, pad})[id] || null, head,
+      querySelector: () => null, addEventListener() {}, createElement: tag => new Element(tag)},
+  });
+  vm.runInContext(source, context);
+  const air = pad.children.find(c => c.id === 'air');
+  assert.ok(air);
+  assert.equal(air.hidden, true);
+  context.window.NexusNative.update({supported: true, air: {supported: true}});
+  assert.equal(air.hidden, false);
+  air.fire('pointerdown');
+  assert.equal(messages.at(-1).action, 'air_down');
+  assert.ok(air.classList.has('on'));
+  air.fire('pointerdown');                       // a second finger doesn't start another press
+  assert.equal(messages.filter(m => m.action === 'air_down').length, 1);
+  air.fire('pointerup');
+  assert.equal(messages.at(-1).action, 'air_up');
+  air.fire('lostpointercapture');                // already released: no second up
+  assert.equal(messages.filter(m => m.action === 'air_up').length, 1);
+  context.window.NexusNative.update({supported: true, air: {supported: true, aiming: true}});
+  assert.equal(air.textContent, 'Aiming…');
+});

@@ -17,6 +17,9 @@ The Android app for a Nexus TV (`com.nexus.tv`). The remote itself is the TV's o
   the TV (Settings → Pair phone, which also shows the Tailscale address) or printed by `nexus-tv-pair` on the PC.
 - **Android extras:** hardware volume buttons for the TV (also on the lock screen), phone microphone
   and phone speaker (`assets/tv-native.js` adds their switches to the TV's page).
+- **Air pointer:** in Pointer mode, hold "Hold to aim" on the touchpad and tilt the phone to move the TV's
+  pointer; a quick tap clicks. The gyro maths runs in the app (`lib/air_pointer.dart`); the TV only
+  receives 5-byte moves on `/api/air`.
 
 Build: `bash scripts/build-phone-app.sh` (writes `dist/nexus-tv-<version>-android.apk`). It is
 signed with this machine's debug key, the same key as earlier Nexus TV builds, so it installs over them.

@@ -11,6 +11,7 @@ import secrets
 import shutil
 import signal
 import socket
+import struct
 import re
 import subprocess
 import sys
@@ -384,6 +385,9 @@ def _season_list(videos):
                 {"episode": v["episode"], "name": v.get("name") or v.get("title") or "", "released": v.get("released")})
     return [{"season": n, "episodes": sorted(seasons[n], key=lambda e: e["episode"])}
             for n in sorted(seasons, key=lambda n: (n == 0, n))]
+
+
+AIR_RECORD = struct.Struct("<Bhh")    # the phone app's air pointer: type, dx, dy
 
 
 class XPointer:
@@ -2628,6 +2632,19 @@ class Controller:
             command(["xdotool", "key", "--clearmodifiers", browser.SHORTCUTS[do]])
         return {"ok": True}
 
+    def air_begin(self):
+        """The phone's air pointer starts aiming: bring the app in front its keys and clicks, at most every 2 s."""
+        with self.action_lock:
+            with self.lock:
+                self.flow.note_input()
+            now = time.monotonic()
+            if now - self.last_focus > 2:
+                try:
+                    self._focus_target()
+                except RuntimeError:
+                    pass                    # still opening: the pointer moves anyway
+                self.last_focus = now
+
     def _focus_target(self):
         if self.phase != "ready":
             raise RuntimeError("App is still opening")
@@ -2983,6 +3000,53 @@ class Handler(BaseHTTPRequestHandler):
             stop()
         self.close_connection = True
 
+    def phone_air(self, parsed):
+        """The phone app's air pointer: chunked 5-byte records (type, dx, dy as little-endian int16) until it
+        hangs up. The phone does all the gyro work; this only hands each record to XTest."""
+        if not self.authorised(parsed.query):
+            self.respond(401, {"error": "Phone is not paired"})
+            return
+        if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+            raise ValueError("Air pointer records must be streamed")
+        self._note_presence()
+        pointer = CONTROL.pointer
+        self.connection.settimeout(45)          # the phone closes after 30 s without aiming
+        buf = b""
+        try:
+            while True:
+                size = int(self.rfile.readline(32).strip().split(b";")[0] or b"0", 16)
+                if size == 0:
+                    break
+                if size > 4096:
+                    raise ValueError("Air pointer chunk too large")
+                data = self.rfile.read(size)
+                self.rfile.readline()
+                if len(data) < size:
+                    return
+                buf += data
+                usable = len(buf) - len(buf) % AIR_RECORD.size
+                steps = []
+                for kind, dx, dy in AIR_RECORD.iter_unpack(buf[:usable]):
+                    if kind == 0:
+                        steps.append((max(-300, min(300, dx)), max(-300, min(300, dy))))
+                        continue
+                    if steps:
+                        pointer.move(steps)
+                        steps = []
+                    if kind == 1:
+                        CONTROL.air_begin()
+                        self._note_presence()
+                    elif kind in (3, 4):
+                        if not pointer.click(1 if kind == 3 else 3):
+                            command(["xdotool", "click", "1" if kind == 3 else "3"], check=False)
+                if steps and not pointer.move(steps):
+                    for dx, dy in steps:
+                        command(["xdotool", "mousemove_relative", "--", str(dx), str(dy)], check=False)
+                buf = buf[usable:]
+        except (OSError, ValueError, BrokenPipeError):
+            return
+        self.close_connection = True
+
     def do_POST(self):
         if CONTROL:
             CONTROL.status_changed()        # a command may change the state: no shared /api/state answer from before it
@@ -3005,6 +3069,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/mic":
                 self.phone_mic(parsed)
+                return
+            if parsed.path == "/api/air":
+                self.phone_air(parsed)
                 return
             if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
                 chunks = []

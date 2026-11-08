@@ -57,6 +57,7 @@ class _TvWebPageState extends State<TvWebPage> {
     _controls.hardwareVolume.addListener(_syncNativeState);
     _controls.phoneMic.addListener(_syncNativeState);
     _controls.phoneSpeaker.addListener(_syncNativeState);
+    _controls.airPointer.addListener(_syncNativeState);
     unawaited(_open());
   }
 
@@ -211,6 +212,17 @@ class _TvWebPageState extends State<TvWebPage> {
           );
         case 'speaker_stop':
           await _controls.phoneSpeaker.stop();
+        case 'air_down':
+          // Answered straight away: aiming must start while the thumb is still down.
+          final cookie = await TvVolumeControl.channel.invokeMethod<String>(
+            'pairCookie',
+            {'origin': _origin!.origin},
+          );
+          await _controls.airPointer.down(origin: _origin!, cookie: 'imactv=${cookie ?? ''}');
+          return;
+        case 'air_up':
+          await _controls.airPointer.up();
+          return;
         case 'exit':
           widget.onExit();
           return;
@@ -248,6 +260,11 @@ class _TvWebPageState extends State<TvWebPage> {
         'busy': _controls.phoneSpeaker.busy,
         'error': _controls.phoneSpeaker.error,
       },
+      'air': {
+        'supported': _controls.airPointer.supported,
+        'aiming': _controls.airPointer.aiming,
+        'error': _controls.airPointer.error,
+      },
     });
     unawaited(
       _web!
@@ -261,6 +278,8 @@ class _TvWebPageState extends State<TvWebPage> {
     _controls.hardwareVolume.removeListener(_syncNativeState);
     _controls.phoneMic.removeListener(_syncNativeState);
     _controls.phoneSpeaker.removeListener(_syncNativeState);
+    _controls.airPointer.removeListener(_syncNativeState);
+    unawaited(_controls.airPointer.stop());
     super.dispose();
   }
 
