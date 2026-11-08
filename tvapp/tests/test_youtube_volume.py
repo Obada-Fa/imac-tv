@@ -147,26 +147,23 @@ if __name__ == "__main__":
 
 
 class YoutubeSearchTests(unittest.TestCase):
-    def test_query_goes_into_the_address_safely(self):
+    def test_query_goes_to_youtubes_command_dispatcher_safely(self):
+        import json
         import youtube_volume
+        query = "كونان' + alert(1) + '"
         with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}), \
                 mock.patch.object(youtube_volume.browser, "_page_command") as cmd:
-            self.assertTrue(youtube_volume.search("كونان' + alert(1) + '"))
+            self.assertTrue(youtube_volume.search(query))
         js = cmd.call_args.args[2]["expression"]
-        self.assertIn("#/search?q=", js)
-        import json
-        self.assertIn("encodeURIComponent(" + json.dumps("كونان' + alert(1) + '") + ")", js)   # a string, not code
+        self.assertIn("const query = " + json.dumps(query) + ";", js)   # a string, not code
+        # A changed #/search address is ignored by an open YouTube TV page (seen in real VacuumTube 2.0.1).
+        self.assertIn("resolveCommand({searchEndpoint: {query}})", js)
         with mock.patch.object(youtube_volume, "youtube_page", return_value=None):
             self.assertFalse(youtube_volume.search("x"))
 
-    def test_an_open_search_is_replaced_not_stacked(self):
+    def test_search_area_includes_the_mic_button(self):
         import youtube_volume
-        with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}), \
-                mock.patch.object(youtube_volume.browser, "_page_command") as cmd:
-            youtube_volume.search("naruto")
-        js = cmd.call_args.args[2]["expression"]
-        self.assertIn("location.hash.startsWith('#/search')", js)
-        self.assertIn("location.replace(h)", js)
+        self.assertIn("ytlr-search-voice", youtube_volume.SEARCH_AREA)   # where focus lands from the side menu
 
     def test_search_focus_reports_the_search_keyboard(self):
         import youtube_volume

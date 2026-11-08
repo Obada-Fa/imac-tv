@@ -219,7 +219,8 @@ def enforce(timeout=0.5):
 
 # YouTube TV's search screen has no text field: its own on-screen keyboard holds the focus. While it
 # does, the phone offers its own search sheet. The token changes each time focus comes back to it.
-SEARCH_AREA = "ytlr-search-keyboard,ytlr-search-suggestions,ytlr-search-text-box"
+# Opening search from the side menu puts focus on the mic button first.
+SEARCH_AREA = "ytlr-search-keyboard,ytlr-search-suggestions,ytlr-search-text-box,ytlr-search-voice"
 SEARCH_CHECK = """(() => {
   const area = %s;
   if (!window.__nexusYtSearch) {
@@ -258,20 +259,34 @@ def search_focus(timeout=0.4):
     return {"focus": page["id"] + ":" + value["token"][:64], "query": query[:200] if isinstance(query, str) else ""}
 
 
+# YouTube TV ignores a changed #/search address on a page that is already open (it only reads it at load),
+# so the search goes through its own command dispatcher, the same one the phone apps' commands use.
+SEARCH = """(() => {
+  const query = %s;
+  for (const key in window._yttv || {}) {
+    const target = window._yttv[key] && window._yttv[key].instance;
+    if (target && typeof target.resolveCommand === "function") {
+      target.resolveCommand({searchEndpoint: {query}});
+      return true;
+    }
+  }
+  location.hash = "#/search?q=" + encodeURIComponent(query);   // not loaded yet: it reads this when it starts
+  return false;
+})()"""
+
+
 def search(query, timeout=3.0):
     """Show YouTube TV's results for `query` (any language) in VacuumTube. False when it isn't reachable.
 
     Key events can't carry it: YouTube's search box only reads A-Z/0-9 key codes (no Arabic, not even a
-    space) and Backspace means Back there. Its address (#/search?q=) takes the whole query at once and
-    shows it in the box. Changing an open search replaces the address, so live typing from the phone
-    leaves one Back step, not one per letter."""
+    space) and Backspace means Back there. A searchEndpoint command takes the whole query at once, shows it
+    in the box and moves the focus to the first result; Back from there returns to the search keyboard."""
     page = youtube_page()
     if not page:
         return False
-    js = ("(() => { const h = '#/search?q=' + encodeURIComponent(" + json.dumps(query) + ");"
-          " if (location.hash.startsWith('#/search')) location.replace(h); else location.hash = h; })()")
     try:
-        browser._page_command(page["id"], "Runtime.evaluate", {"expression": js}, timeout, PORT)
+        browser._page_command(page["id"], "Runtime.evaluate",
+                              {"expression": SEARCH % json.dumps(query), "returnByValue": True}, timeout, PORT)
     except (OSError, ValueError):
         return False
     return True
