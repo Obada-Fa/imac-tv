@@ -1730,8 +1730,9 @@ class Controller:
             log_path = DATA / "mpv.log"
             os.close(os.open(log_path, os.O_WRONLY | os.O_CREAT, 0o600))
             os.chmod(log_path, 0o600)
+            alang, slang = player.source_langs(chosen, slang)
             argv = player.mpv_argv(direct or torrents.url(info_hash, file_idx), title=name, subs=[], start=start, slang=slang,
-                                  log_file=str(log_path), ipc=MPV_SOCK)
+                                  log_file=str(log_path), ipc=MPV_SOCK, alang=alang)
             if self.recovery_paused:
                 argv.insert(1, "--pause=yes")
             proc = subprocess.Popen(argv, env=DISPLAY_ENV, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,

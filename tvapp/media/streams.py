@@ -75,7 +75,7 @@ def label(src):
         parts.append(f"{src['size_bytes'] / 1e9:.1f} GB" if src["size_bytes"] >= 1e8 else f"{src['size_bytes'] / 1e6:.0f} MB")
     if src.get("site"):
         parts.append(src["site"])
-        parts.append({"dub": "Arabic dub", "subs": "Arabic subs"}.get(src.get("lang"), "Arabic"))
+        parts.append({"dub": "Arabic dub", "subs": "Arabic subtitles"}.get(src.get("lang"), "Arabic"))
         if src.get("pack"):
             parts.append("Season pack")
     elif src.get("direct"):

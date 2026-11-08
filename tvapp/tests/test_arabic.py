@@ -337,3 +337,28 @@ class ArabicSearch(Temp):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Languages(unittest.TestCase):
+    def test_player_tracks_follow_the_release(self):
+        from media import player
+        self.assertEqual(player.source_langs({"site": "ArabP2P", "lang": "dub"}, "en,eng"), (player.ARABIC, "en,eng"))
+        alang, slang = player.source_langs({"site": "ArabP2P", "lang": "subs"}, "en,eng")
+        self.assertIsNone(alang)
+        self.assertTrue(slang.startswith("ar,ara"))
+        self.assertEqual(player.source_langs({"lang": "dub"}, "en"), (None, "en"))     # not an Arabic source
+        argv = player.mpv_argv("u", title="t", subs=[], alang=player.ARABIC)
+        self.assertIn("--alang=ar,ara,arb,arabic", argv)
+        self.assertNotIn("--alang", " ".join(player.mpv_argv("u", title="t", subs=[])))
+
+    def test_dub_categories_searched_for_the_main_name(self):
+        asked = []
+        with mock.patch.object(arabic, "enabled", return_value=True), \
+                mock.patch.object(arabic, "arabic_names", return_value=["المحقق كونان", "المتحري كونان"]), \
+                mock.patch.object(arabic, "search_site", side_effect=lambda q, c=0: asked.append((q, c)) or []):
+            arabic.streams("series", "tt0131179:1:1", "Detective Conan")
+        self.assertIn(("المحقق كونان", "100"), asked)
+        self.assertIn(("المحقق كونان", "102"), asked)
+        self.assertNotIn(("المتحري كونان", "100"), asked)
+        self.assertEqual(streams.label({"quality": "1080p", "hdr": False, "dv": False, "source": "", "size_bytes": 0,
+                                        "site": "ArabP2P", "lang": "subs"}), "1080p · ArabP2P · Arabic subtitles")

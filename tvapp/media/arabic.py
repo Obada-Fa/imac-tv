@@ -672,8 +672,12 @@ def streams(kind, video_id, english="", year="", absolute=None, aired=None):
     names = arabic_names(kind, imdb_id)[:MAX_NAMES]
     queries = list(dict.fromkeys(search_terms(names) + ([english] if english and len(english) >= 3 else [])))[:MAX_QUERIES]
     out, seen = [], set()
-    for query in queries:
-        for row in search_site(query):
+    # One page holds ~30 releases, so a long show's dubs fall off the general search: the main name also
+    # searches the dubbed categories (series: whole seasons and single episodes; films).
+    extra = ["100", "102"] if kind == "series" else ["98"]
+    plan = [(q, 0) for q in queries] + [(q, c) for q in queries[:1] for c in extra]
+    for query, category in plan:
+        for row in search_site(query, category):
             if row["id"] in seen:
                 continue
             if not (movie_matches if kind == "movie" else matches)(row["title"], names, english):

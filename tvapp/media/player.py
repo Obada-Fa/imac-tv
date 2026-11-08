@@ -52,7 +52,21 @@ def skip_button_ass(kind):
     ))
 
 
-def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_file=None):
+ARABIC = "ar,ara,arb,arabic"
+
+
+def source_langs(source, slang):
+    """(alang, slang) for a source: Arabic releases get Arabic audio (dubs carry Japanese and Arabic tracks)
+    or Arabic subtitles first (multi-subtitle releases default to English otherwise)."""
+    lang = (source or {}).get("lang") if (source or {}).get("site") else None
+    if lang in ("dub", "arabic"):
+        return ARABIC, slang
+    if lang == "subs":
+        return None, ARABIC + "," + (slang or DEFAULT_SLANG)
+    return None, slang
+
+
+def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_file=None, alang=None):
     # --force-window=no: the window maps with the first video frame, so TV Home's loading screen
     # shows until then. --ontop: GNOME opens new windows behind the focused fullscreen Home.
     argv = ["mpv", "--fs", "--ontop", f"--input-ipc-server={ipc}", "--force-window=no", "--keep-open=no",
@@ -62,6 +76,8 @@ def mpv_argv(url, *, title, subs, start=0, ipc="/tmp/mpv.sock", slang=None, log_
             "--cache-pause-initial=yes", "--network-timeout=60",
             "--sub-font=Noto Sans", "--sub-font-size=42", "--sub-border-size=2.5",
             "--osd-font=Inter", "--osd-font-size=34", "--osd-bar-align-y=0.9"]
+    if alang:
+        argv.append(f"--alang={alang}")
     for sub in subs or []:
         argv.append("--sub-file=" + sub["url"])
     if log_file:
