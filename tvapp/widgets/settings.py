@@ -23,6 +23,7 @@ import widgets  # noqa: E402
 from widgets import glass, pairing, vitals  # noqa: E402
 from screens import Screen, text_label, cmd, cover_pixbuf, ASSETS  # noqa: E402
 from media import config as media_config  # noqa: E402
+from media import arabic as media_arabic  # noqa: E402
 
 PER_ROW = 5
 MIN_WIDTH = 640
@@ -145,6 +146,7 @@ class SettingsScreen(Screen):
         self.connect("destroy", self.on_destroy)
         self.rows = []
         self.torbox_busy = False
+        self.arabic_busy = False
         self.loading = False
         self.outputs = None
         self.sound_outputs = []
@@ -514,6 +516,103 @@ class SettingsScreen(Screen):
         self.grid([self.torbox_save, self.torbox_remove])
         self.update_torbox(bool(media_config.read_key()))
         self.note("You can also add or change this key from your phone's Settings.", top=6)
+        self.render_arabic()
+
+    def _entry(self, placeholder, key, hidden, on_activate, max_length=128):
+        px = self.shell.px
+        entry = Gtk.Entry()
+        entry.set_visibility(not hidden)
+        entry.set_max_length(max_length)
+        entry.set_placeholder_text(placeholder)
+        entry.get_style_context().add_class("set-entry")
+        entry.sel_key = key
+        entry.connect("activate", lambda *_: on_activate())
+        field = glass.GlassField(self.shell, self.backdrop, self.look, entry)
+        field.set_margin_start(px(30))
+        field.set_margin_end(px(30))
+        field.set_margin_top(px(4))
+        field.set_margin_bottom(px(6))
+        self.content.pack_start(field, False, False, 0)
+        self.rows.append([entry])
+        return entry
+
+    def render_arabic(self):
+        """ArabP2P login (Arabic dubs, Arabic series and movies, through TorBox) and an optional TMDB key."""
+        self.section('Arabic sources')
+        self.arabic_busy = False
+        self.arabic_status = self.note("", top=0)
+        self.arabic_user = self._entry("ArabP2P username", ("arabic", "user"), False, lambda: self.arabic_pass.grab_focus(), 64)
+        self.arabic_pass = self._entry("ArabP2P password", ("arabic", "pass"), True, self.save_arabic)
+        self.arabic_save = self.button("Sign in", "Checked with ArabP2P", False, ("arabic", "save"), self.save_arabic)
+        self.arabic_remove = self.button("Sign out", "Forget the ArabP2P login", False, ("arabic", "remove"),
+                                         lambda: self.change_arabic("arabic_remove"))
+        self.grid([self.arabic_save, self.arabic_remove])
+        self.tmdb_entry = self._entry("TMDB key (optional, better Arabic titles)", ("arabic", "tmdb"), True,
+                                      self.save_tmdb, 400)
+        self.tmdb_save = self.button("Save TMDB key", "Optional", False, ("arabic", "tmdb_save"), self.save_tmdb)
+        self.tmdb_remove = self.button("Remove TMDB key", "Use Wikidata names", False, ("arabic", "tmdb_remove"),
+                                       lambda: self.change_arabic("tmdb_remove"))
+        self.grid([self.tmdb_save, self.tmdb_remove])
+        self.update_arabic(media_arabic.status_public())
+        self.note("Arabic releases show first in a title's Sources and play through TorBox, which seeds them back "
+                  "so your ArabP2P ratio stays fine. Search in Arabic works too.", top=6)
+
+    def update_arabic(self, status):
+        if self.category != "Connections" or not hasattr(self, "arabic_status") or not status:
+            return
+        if status.get("arabp2p"):
+            text = f"Signed in as {status.get('user')}"
+            text += "" if status.get("ready") else "  ·  add a TorBox key above to play these"
+        else:
+            text = "Not signed in  ·  sign up at arabp2p.net, then sign in here"
+        text += "  ·  TMDB titles" if status.get("tmdb") else ""
+        self.arabic_status.set_text(text)
+        self.arabic_remove.set_sensitive(bool(status.get("arabp2p")) and not self.arabic_busy)
+        self.tmdb_remove.set_sensitive(bool(status.get("tmdb")) and not self.arabic_busy)
+
+    def save_arabic(self):
+        user, password = self.arabic_user.get_text().strip(), self.arabic_pass.get_text()
+        self.arabic_pass.set_text("")
+        if not user or not password:
+            self.shell.toast("Enter your ArabP2P username and password", 4)
+            return
+        self.change_arabic("arabic_login", {"user": user, "password": password})
+
+    def save_tmdb(self):
+        key = self.tmdb_entry.get_text().strip()
+        self.tmdb_entry.set_text("")
+        if not key:
+            self.shell.toast("Paste your TMDB key first", 4)
+            return
+        self.change_arabic("tmdb_key", {"key": key})
+
+    def change_arabic(self, action, params=None):
+        if self.arabic_busy:
+            return
+        self.arabic_busy = True
+        widgets_ = (self.arabic_user, self.arabic_pass, self.arabic_save, self.arabic_remove,
+                    self.tmdb_entry, self.tmdb_save, self.tmdb_remove)
+        for w in widgets_:
+            w.set_sensitive(False)
+        self.shell.toast({"arabic_login": "Signing in to ArabP2P…", "tmdb_key": "Checking with TMDB…"}.get(action, "Saving…"), 3)
+
+        def work():
+            result = cmd(action, params, timeout=25)
+            GLib.idle_add(self.arabic_changed, result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def arabic_changed(self, result):
+        self.arabic_busy = False
+        if self.category != "Connections":
+            return False
+        for w in (self.arabic_user, self.arabic_pass, self.arabic_save, self.tmdb_entry, self.tmdb_save):
+            w.set_sensitive(True)
+        self.update_arabic(media_arabic.status_public())
+        ok = result and result.get("ok")
+        self.shell.toast("Arabic sources saved" if ok else (result or {}).get("error", "Couldn't reach the controller"),
+                         3 if ok else 6)
+        self.arabic_save.grab_focus()
+        return False
 
     def update_torbox(self, configured):
         if self.category != "Connections":

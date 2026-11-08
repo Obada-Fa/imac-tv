@@ -181,6 +181,9 @@ class CategoryNavigationTest(unittest.TestCase):
         keys = [b.sel_key for r in self.screen.rows for b in r]
         self.assertIn(('access', 'other_phones'), keys)
         self.assertIn(('torbox', 'key'), keys)
+        for key in (('arabic', 'user'), ('arabic', 'pass'), ('arabic', 'save'), ('arabic', 'tmdb')):
+            self.assertIn(key, keys)
+        self.assertIn('Not signed in', self.screen.arabic_status.get_text())
 
     def test_plain_switches_render(self):
         import widgets

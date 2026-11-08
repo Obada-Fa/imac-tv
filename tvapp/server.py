@@ -48,6 +48,7 @@ try:
 except Exception:  # pragma: no cover
     display = None
 from media import segments as media_segments, upnext, health as media_health
+from media import arabic as media_arabic, torbox as media_torbox
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -508,6 +509,8 @@ class Controller:
         self.pair_attempts = {}
         self.pair_popups = {}           # address -> when it last asked the TV to show the code
         self.torbox_tries = []
+        self.arabic_tries = []
+        self.prefer_arabic_next = False
         self.source_refs = {"time": 0.0, "urls": []}
         self.source_metadata = {}
         self.sessions_path = DATA / "devices.json"
@@ -1149,6 +1152,8 @@ class Controller:
         self._end_playback()
         self._stop_proc()
         with self.lock:
+            # An autoplayed episode stays Arabic when the one before was an Arabic release.
+            self.prefer_arabic_next = bool(auto and (self.current_source or {}).get("site"))
             self.generation += 1
             generation = self.generation
             self.health_monitor = media_health.Monitor()
@@ -1527,11 +1532,12 @@ class Controller:
             kind, item = self.media["type"], self.media["id"]
             video_id = f"{item}:{nxt['season']}:{nxt['episode']}"
             self.prefetch = {"video_id": video_id, "chosen": None}
+            prefer = True if (self.current_source or {}).get("site") else None
 
         def work():
             try:
                 found = [media_streams.parse(s) for s in addons.streams(kind, video_id)]
-                chosen = media_streams.best(found, media_config.load())
+                chosen = media_streams.best(found, media_config.load(), prefer)
             except Exception:
                 chosen = None
             with self.lock:
@@ -1612,6 +1618,19 @@ class Controller:
             if generation == self.generation and self.buffering is not None:
                 self.buffering.update(stage=stage, **extra)
 
+    def _prepare_torbox(self, generation, url, episode, label):
+        """Private-tracker release: TorBox fetches (and seeds) it, then gives a direct link. None if the user left."""
+        def report(frac, speed, seeds, stage):
+            self._set_stage(generation, stage, source=label, peers=int(seeds), speed=float(speed),
+                            progress=round(float(frac), 3))
+        try:
+            return media_torbox.prepare(url, episode=episode, on_progress=report,
+                                        cancelled=lambda: not self._current(generation))
+        except media_torbox.Cancelled:
+            return None
+        except (media_arabic.ArabicError, media_torbox.TorBoxError) as exc:
+            raise RuntimeError(media_config.redact(exc)) from None
+
     def _play_worker(self, generation, stream, start, prefetched=None):
         try:
             with self.lock:
@@ -1659,7 +1678,9 @@ class Controller:
                 chosen = prefetched
                 if not chosen:
                     found = [media_streams.parse(s) for s in streams_job.result()]
-                    chosen = media_streams.best(found, cfg)
+                    with self.lock:
+                        prefer = self.prefer_arabic_next or None
+                    chosen = media_streams.best(found, cfg, prefer)
                 if not chosen:
                     raise RuntimeError("No playable sources found")
                 info_hash, file_idx, label = chosen["info_hash"], chosen["file_idx"], chosen["label"]
@@ -1675,7 +1696,11 @@ class Controller:
                     info_hash = None
                 else:
                     torrents = engine_ready()
-            if direct:
+            if direct and media_arabic.owns(direct):
+                direct = self._prepare_torbox(generation, direct, chosen.get("episodes") or episode, label)
+                if direct is None:
+                    return
+            elif direct:
                 self._set_stage(generation, "Opening TorBox link…", source=label)
             else:
                 self._set_stage(generation, "Connecting to peers…", source=label)
@@ -1767,6 +1792,33 @@ class Controller:
         media_config.write_key(key)
         addons.clear_cache()
         return {"configured": True}
+
+    def _arabic_try(self):
+        now = time.monotonic()
+        with self.lock:
+            self.arabic_tries = [t for t in self.arabic_tries if now - t < TORBOX_WINDOW]
+            if len(self.arabic_tries) >= TORBOX_TRIES:
+                raise RuntimeError("Too many tries, wait a few minutes")
+            self.arabic_tries.append(now)
+
+    def set_arabic_login(self, user, password):
+        self._arabic_try()
+        user = user.strip() if isinstance(user, str) else ""
+        if not user or len(user) > 64 or not isinstance(password, str) or not password or len(password) > 128:
+            raise ValueError("Enter your ArabP2P username and password")
+        media_arabic.check_login(user, password)
+        media_arabic.update_creds(arabp2p={"user": user, "pass": password})
+        addons.clear_cache()
+        return {"arabic": media_arabic.status_public()}
+
+    def set_tmdb_key(self, key):
+        self._arabic_try()
+        key = key.strip() if isinstance(key, str) else ""
+        if not re.match(r"^[A-Za-z0-9._-]{20,400}$", key):
+            raise ValueError("That doesn't look like a TMDB key")
+        media_arabic.check_tmdb_key(key)
+        media_arabic.update_creds(tmdb_key=key)
+        return {"arabic": media_arabic.status_public()}
 
     def set_brightness(self, level):
         if isinstance(level, bool) or not isinstance(level, int) or not 5 <= level <= 100:
@@ -1971,6 +2023,7 @@ class Controller:
                 "old_link_active": bool(self.legacy_secret),
                 "updates": self.updater.status(),
                 "torbox": {"configured": bool(media_config.read_key())},
+                "arabic": media_arabic.status_public(),
                 "playback": player, "remote": self.remote_state(), "youtube_now": yt_now,
                 "youtube_mode": (yt_now or {}).get("youtube_mode"), "youtube_reason": (yt_now or {}).get("youtube_reason"),
                 **self._flow_view(player), "temperature": cpu_temp, "gpu_temperature": gpu_temp,
@@ -2089,6 +2142,7 @@ class Controller:
         """Editable preferences, TorBox state, backgrounds, and timed display trial."""
         out = {"outputs": [], "trial": {"active": False}, "display_error": "", "background": self.background_state(),
                "torbox": {"configured": bool(media_config.read_key())},
+               "arabic": media_arabic.status_public(),
                "fields": settings_model.FIELDS,
                "values": settings_model.values(widgets.load_config(DATA), media_config.load()),
                "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
@@ -2403,6 +2457,17 @@ class Controller:
                 return {"sources": ranked}
             if action == "torbox_key":
                 return self.set_torbox_key(params.get("key"))
+            if action == "arabic_login":
+                return self.set_arabic_login(params.get("user"), params.get("password"))
+            if action == "arabic_remove":
+                media_arabic.update_creds(arabp2p=None)
+                addons.clear_cache()
+                return {"arabic": media_arabic.status_public()}
+            if action == "tmdb_key":
+                return self.set_tmdb_key(params.get("key"))
+            if action == "tmdb_remove":
+                media_arabic.update_creds(tmdb_key=None)
+                return {"arabic": media_arabic.status_public()}
             if action == "torbox_remove":
                 media_config.remove_key()
                 addons.clear_cache()

@@ -53,6 +53,12 @@ def parse(stream):
            "seeders": int(seeds.group(1)) if seeds else 0,
            "languages": languages,
            "sources": [x for x in stream.get("sources") or [] if isinstance(x, str)]}
+    if name == "ArabP2P" and url:
+        # A private-tracker release, prepared on TorBox when picked (media/torbox.py).
+        lang = "dub" if "Arabic dub" in title else "subs" if "Arabic subs" in title else "arabic"
+        eps = [e for e in stream.get("nexusEpisodes") or [] if isinstance(e, int) and not isinstance(e, bool)]
+        out.update(site="ArabP2P", cached=False, lang=lang, dub=lang == "dub", pack="Season pack" in title,
+                   languages=["ar"], episodes=eps)
     out["label"] = label(out)
     return out
 
@@ -67,7 +73,12 @@ def label(src):
         parts.append(src["source"])
     if src["size_bytes"]:
         parts.append(f"{src['size_bytes'] / 1e9:.1f} GB" if src["size_bytes"] >= 1e8 else f"{src['size_bytes'] / 1e6:.0f} MB")
-    if src.get("direct"):
+    if src.get("site"):
+        parts.append(src["site"])
+        parts.append({"dub": "Arabic dub", "subs": "Arabic subs"}.get(src.get("lang"), "Arabic"))
+        if src.get("pack"):
+            parts.append("Season pack")
+    elif src.get("direct"):
         parts.append("TorBox ⚡" if src.get("cached") else "Debrid (not cached)")
     else:
         parts.append(f"{src['seeders']} seeds")
@@ -79,12 +90,16 @@ def rank(sources, cfg):
     codecs = cfg.get("codec_order", ["H264", "", "HEVC", "AV1"])
     limit = cfg.get("max_size_gb", 25) * 1e9
     good = [s for s in sources if (len(s.get("info_hash") or "") == 40 or s.get("url")) and not BAD.search(s.get("title", ""))
-            and s.get("quality") != "cam" and s.get("size_bytes", 0) <= limit]
+            and s.get("quality") != "cam" and (s.get("size_bytes", 0) <= limit or s.get("pack"))]
 
     def key(s):
         # Quality first: a live 1080p always beats better-seeded 4K/720p; dead torrents (<2 seeds) go last.
         direct = bool(s.get("url"))
         group = (0 if s.get("cached") else 2) if direct else 1
+        if s.get("site"):          # Arabic releases lead the list (dubs first) so they're easy to find
+            return (-1, ("dub", "arabic", "subs").index(s.get("lang", "arabic")), s.get("seeders", 0) < 1,
+                    s.get("pack", False), order.index(s["quality"]) if s["quality"] in order else len(order),
+                    -s.get("seeders", 0))
         seeders = 0 if direct else s["seeders"]
         q = order.index(s["quality"]) if s["quality"] in order else len(order)
         # Old/weak CPUs decode H.264 in hardware; HEVC (esp. 10-bit/HDR) and AV1 fall back to the CPU and stutter.
@@ -94,6 +109,14 @@ def rank(sources, cfg):
     return sorted(good, key=key)
 
 
-def best(sources, cfg):
+def best(sources, cfg, prefer_arabic=None):
+    """The source to play without asking. Arabic releases only when preferred (setting, or the episode before was
+    Arabic) or when nothing else is playable: they take TorBox a while to fetch."""
     ranked = rank(sources, cfg)
+    if prefer_arabic is None:
+        prefer_arabic = bool(cfg.get("prefer_arabic"))
+    if not prefer_arabic:
+        others = [s for s in ranked if not s.get("site")]
+        if others:
+            return others[0]
     return ranked[0] if ranked else None

@@ -24,6 +24,7 @@ FIELDS = [
     ('quality_order', 'Playback', 'Video quality order', 'order', ['1080p', '720p', '2160p', '480p'], False),
     ('autoplay_next', 'Playback', 'Autoplay next episode', 'bool', [], False),
     ('auto_skip_intro', 'Playback', 'Automatically skip intros', 'bool', [], False),
+    ('prefer_arabic', 'Playback', 'Prefer Arabic (ArabP2P) releases', 'bool', [], False),
     ('still_watching_episodes', 'Playback', 'Still watching after episodes', 'number', [1, 50], False),
     ('still_watching_hours', 'Playback', 'Still watching after hours', 'number', [0.1, 24], False),
 ]

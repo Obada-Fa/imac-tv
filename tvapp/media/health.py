@@ -86,6 +86,8 @@ def resolution(src):
 def alternative(current, ranked, reason, excluded=()):
     """Prefer a meaningful reduction; never suggest a known-dead or already tried source."""
     blocked = set(excluded) | {identity(current)}
+    # Never switch language behind the user's back: Arabic releases only swap for other Arabic releases.
+    ranked = [s for s in ranked if bool(s.get("site")) == bool(current.get("site"))]
     candidates = [s for s in ranked if identity(s) not in blocked
                   and (s.get("cached") or (not s.get("direct") and s.get("seeders", 0) >= 2))]
     cq, size = resolution(current), current.get("size_bytes", 0)

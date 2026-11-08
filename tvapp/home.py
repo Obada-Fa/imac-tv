@@ -991,6 +991,8 @@ class Home(Gtk.Window):
         settings = self.tops.get("settings")
         if settings and not settings.torbox_busy and "torbox" in state:
             settings.update_torbox(state["torbox"]["configured"])
+        if settings and not settings.arabic_busy and state.get("arabic"):
+            settings.update_arabic(state["arabic"])
         GLib.idle_add(self.notify_pair)
         app, phase = state.get("app"), state.get("phase")
         if phase == "buffering":

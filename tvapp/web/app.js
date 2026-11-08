@@ -308,6 +308,7 @@
 
   function render(s) {
     renderTorboxRow('set-torbox-row', s.torbox);
+    renderArabicRow(s.arabic);
     state = s;
     if (!setState && !settingsAsked) { settingsAsked = true; loadSettings(); }   // node shape + Home's photo
     pair.hidden = true; $('connection').hidden = false;
@@ -771,7 +772,7 @@
   function openSheet(name) {
     keyboard.close();
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', arabic: 'ArabP2P sign in', tmdb: 'TMDB key', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
@@ -780,6 +781,8 @@
     if (name === 'output') { renderOutputSheet(); return; }
     if (name === 'torbox') {
       renderTorbox(content);
+    } else if (name === 'arabic' || name === 'tmdb') {
+      renderArabicSheet(content, name);
     } else if (name === 'off') {
       content.innerHTML = `<p>Full shutdown keeps the iMac cool. To start it again, press the physical power button.</p><div class="sheet-row"><button id="off-confirm" class="danger">Turn off iMac</button><button id="off-cancel">Cancel</button></div>`;
       $('off-confirm').onclick = () => fire('poweroff', {confirm: true});
@@ -922,6 +925,58 @@
       }, 'danger'));
     }
     row.replaceChildren(...parts);
+  }
+
+  // ---- Arabic sources (ArabP2P login, optional TMDB key): values live only for the request ----
+  function renderArabicRow(arabic) {
+    const row = $('set-arabic-row');
+    if (!row || !arabic) return;
+    const sig = JSON.stringify(arabic);
+    if (row.dataset.sig === sig) return;
+    row.dataset.sig = sig;
+    const status = el('div', 'row static');
+    const sub = !arabic.arabp2p ? 'Sign up at arabp2p.net, then sign in here'
+      : (arabic.ready ? 'Arabic dubs and Arabic titles show first in Sources' : 'Add a TorBox key to play them');
+    status.append(rowText(arabic.arabp2p ? `Signed in as ${arabic.user}` : 'Not signed in', sub), el('span', 'rv', 'ArabP2P'));
+    const parts = [status, actionRow(arabic.arabp2p ? 'Change login' : 'Sign in to ArabP2P', 'Checked with ArabP2P, kept on the TV', () => openSheet('arabic'))];
+    if (arabic.arabp2p) parts.push(actionRow('Sign out', '', () => removeArabic('arabic_remove', 'Forget the ArabP2P login on the TV?'), 'danger'));
+    parts.push(actionRow(arabic.tmdb ? 'Change TMDB key' : 'Add TMDB key', 'Optional: better Arabic titles', () => openSheet('tmdb')));
+    if (arabic.tmdb) parts.push(actionRow('Remove TMDB key', '', () => removeArabic('tmdb_remove', 'Remove the TMDB key from the TV?'), 'danger'));
+    row.replaceChildren(...parts);
+  }
+
+  async function removeArabic(action, question) {
+    if (!confirm(question)) return;
+    try { const r = await send(action); if (r && r.result && r.result.arabic) renderArabicRow(r.result.arabic); }
+    catch (e) { message(e.message); }
+  }
+
+  function renderArabicSheet(content, name) {
+    const login = name === 'arabic';
+    const attrs = 'autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"';
+    content.innerHTML = login
+      ? `<p>Your ArabP2P account. Its releases play through TorBox, which seeds them back so your ratio stays fine.</p><form id="ar-form" autocomplete="off"><input id="ar-user" ${attrs} maxlength="64" placeholder="Username" aria-label="ArabP2P username"><input type="password" id="ar-pass" ${attrs} maxlength="128" placeholder="Password" aria-label="ArabP2P password"><div class="sheet-row"><button type="submit" id="ar-save" class="primary">Sign in</button></div></form><p id="ar-error" class="tb-error" role="alert"></p><p class="muted">Sent only to your TV, which keeps it there.</p>`
+      : `<p>Optional. A free TMDB key gives better Arabic titles. Without it, Wikidata is used.</p><form id="ar-form" autocomplete="off"><input type="password" id="ar-pass" ${attrs} maxlength="400" placeholder="TMDB API key or read access token" aria-label="TMDB key"><div class="sheet-row"><button type="submit" id="ar-save" class="primary">Save</button></div></form><p id="ar-error" class="tb-error" role="alert"></p>`;
+    const err = $('ar-error'), save = $('ar-save');
+    $('ar-form').onsubmit = async e => {
+      e.preventDefault();
+      if (save.disabled) return;
+      const user = login ? $('ar-user').value.trim() : '', secret = $('ar-pass').value;
+      $('ar-pass').value = '';
+      if ((login && !user) || !secret.trim()) { err.textContent = login ? 'Enter your username and password' : 'Paste your TMDB key first'; return; }
+      err.textContent = ''; save.disabled = true;
+      const label = save.textContent;
+      save.textContent = login ? 'Signing in…' : 'Checking with TMDB…';
+      try {
+        const r = await send(login ? 'arabic_login' : 'tmdb_key', login ? {user, password: secret} : {key: secret.trim()});
+        if (r && r.result && r.result.arabic) renderArabicRow(r.result.arabic);
+        if (sheetName === name) closeSheet();
+      } catch (ex) {
+        if (sheetName !== name) return;
+        err.textContent = ex.message || 'Could not save';
+        save.textContent = label; save.disabled = false;
+      }
+    };
   }
 
   function closeSheet() { sheet.hidden = true; sheetName = ''; titleToken++; updateTabbar(); }

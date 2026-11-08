@@ -22,6 +22,7 @@ DEFAULTS = {
     "still_watching_episodes": 3,   # autoplayed episodes in a row before "Are you still watching?"
     "still_watching_hours": 2.5,    # ...or this long without any remote input
     "youtube_close_after_paused_min": 0,  # close VacuumTube after this many minutes paused (0 = never)
+    "prefer_arabic": False,  # play Arabic (ArabP2P) releases first when there are any
     "torbox_key": "",  # legacy place for the TorBox key; $DATA/torbox.key wins when present
 }
 
