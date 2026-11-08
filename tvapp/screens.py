@@ -870,6 +870,34 @@ class BrowseScreen(RailsScreen):
         return groups[0][0] if groups else None
 
 
+ANIME_RAILS = (("Trending now", "kitsu-anime-trending", None), ("Top airing", "kitsu-anime-airing", None),
+               ("Most popular", "kitsu-anime-popular", None), ("Highest rated", "kitsu-anime-rating", None))
+ANIME_GENRES = ("Action", "Adventure", "Comedy", "Fantasy", "Romance", "Sports", "Mystery", "Slice of Life",
+                "Mecha", "Kids")
+
+
+def anime_items(catalog_id, genre=None):
+    return [i for i in (item_from_meta(m) for m in addons.anime_catalog(catalog_id, genre)) if i]
+
+
+class AnimeScreen(BrowseScreen):
+    """Anime on its own: Kitsu's trending, airing, popular and top-rated shows and films, then genres. Every
+    card is its IMDb title, so it opens, plays and finds Arabic dubs/subs like any series or film."""
+    sname = "anime"
+
+    def __init__(self, shell):
+        RailsScreen.__init__(self, shell)
+        self.kind = None                       # search covers series and films
+        chip = {"type": "", "kicker": "ANIME", "name": "Search anime", "browse_search": True,
+                "description": "Find a show or film by name, in English, romaji or Arabic. "
+                               "You can also type in the phone's Search tab."}
+        self.make_rail(None, lambda: [chip], kind="pill")
+        for title, catalog_id, genre in ANIME_RAILS:
+            self.make_rail(title, lambda c=catalog_id, g=genre: anime_items(c, g))
+        for g in ANIME_GENRES:
+            self.make_rail(g, lambda g=g: anime_items("kitsu-anime-popular", g))
+
+
 def twitch_count(viewers):
     return f"{viewers / 1000:.1f}K".replace(".0K", "K") if viewers >= 1000 else str(viewers)
 

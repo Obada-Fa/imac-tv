@@ -69,6 +69,22 @@ def catalog(kind, catalog_id="top", genre=None, skip=0):
     return _fetch(url, TTL["catalog"]).get("metas", [])
 
 
+def anime_catalog(catalog_id, genre=None):
+    """A Kitsu anime catalog as Cinemeta-style metas keyed by IMDb id, so details, sources, Arabic releases and
+    history work as for any series or film. Entries without an IMDb id are left out; seasons Kitsu lists
+    separately (same IMDb id) show once."""
+    tail = "/genre=" + quote(genre, safe="") if genre else ""
+    url = f"{config.load()['addons']['anime'].rstrip('/')}/catalog/anime/{_path(catalog_id)}{tail}.json"
+    out, seen = [], set()
+    for m in _fetch(url, TTL["catalog"]).get("metas", []):
+        imdb_id = m.get("imdb_id") if isinstance(m, dict) else None
+        if not (isinstance(imdb_id, str) and re.match(r"^tt\d+$", imdb_id)) or imdb_id in seen:
+            continue
+        seen.add(imdb_id)
+        out.append(dict(m, id=imdb_id, type="movie" if m.get("type") == "movie" else "series"))
+    return out
+
+
 def search(kind, query):
     _check_type(kind)
     if re.search(r"[\u0600-\u06FF]", query or ""):

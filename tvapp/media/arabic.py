@@ -37,6 +37,9 @@ DUB_MARKERS_RE = re.compile(r"\b(SPACETOON|DUBBED|AR[ .-]?DUB)\b", re.I)   # SHA
 DUB_CATS = {"71", "98", "100", "102"}       # Arabic-dubbed anime (series, films, episodes) and dubbed series
 SUB_CATS = {"99", "101", "103"}             # anime with Arabic subtitles
 FILM_CATS = {"41", "98", "99"}              # Arabic films, dubbed and subtitled anime films
+# Releases never offered (as in Arabarr): Tunisian-dialect dubs and behind-the-scenes extras.
+SKIP_WORDS = ("تونسي", "تونسيه", "خلف الكواليس")
+NAMES_FILE = "arabic_names.json"       # {"tt…": ["Arabic name", …]}: names releases use that TMDB/Wikidata miss
 VIDEO_EXT = (".mkv", ".mp4", ".avi", ".m4v", ".ts", ".webm", ".mov", ".wmv", ".mpg", ".mpeg")
 
 
@@ -90,7 +93,10 @@ def tmdb_key():
 
 def status_public():
     acc = account()
+    creds = load_creds()
     return {"arabp2p": bool(acc), "user": acc["user"] if acc else "", "tmdb": bool(tmdb_key()),
+            "subdl": bool(str(creds.get("subdl_key") or "").strip()),
+            "subsource": bool(str(creds.get("subsource_key") or "").strip()),
             "ready": bool(acc) and bool(config.read_key())}
 
 
@@ -414,8 +420,37 @@ def _names_wikidata(imdb_id):
     return _uniq_ar(cands)
 
 
+def name_overrides(imdb_id):
+    """Hand-kept Arabic names for a title: the bundled list next to this file, then $DATA/arabic_names.json
+    (the user's own, which wins). Used when TMDB/Wikidata word a title differently from real releases."""
+    out = []
+    for path in (os.path.join(os.path.dirname(__file__), NAMES_FILE), config.data_dir() / NAMES_FILE):
+        try:
+            data = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError):
+            continue
+        names = data.get(imdb_id) if isinstance(data, dict) else None
+        if isinstance(names, list):
+            out = [n for n in names if isinstance(n, str) and has_ar(n)] + out
+    return list(dict.fromkeys(out))
+
+
+def skipped(title):
+    """A release never offered: Tunisian dialect or a behind-the-scenes extra."""
+    t = norm(title)
+    return any(norm(w).strip() in t for w in SKIP_WORDS)
+
+
 def arabic_names(kind, imdb_id):
-    """Arabic titles for an IMDb id, shortest first (short names match more release titles)."""
+    """Arabic titles for an IMDb id: hand-kept names first, then the rest shortest first (short names match
+    more release titles)."""
+    manual = name_overrides(imdb_id)
+    found = _arabic_names_found(kind, imdb_id)
+    seen = {norm(n) for n in manual}
+    return manual + [n for n in found if norm(n) not in seen]
+
+
+def _arabic_names_found(kind, imdb_id):
     def load():
         try:
             return _names_tmdb(kind, imdb_id) if tmdb_key() else _names_wikidata(imdb_id)
@@ -781,7 +816,7 @@ def streams(kind, video_id, english="", year="", absolute=None, aired=None):
     plan = [(q, 0) for q in queries] + [(q, c) for q in queries[:1] for c in extra]
     for query, category in plan:
         for row in search_site(query, category):
-            if row["id"] in seen:
+            if row["id"] in seen or skipped(row["title"]):
                 continue
             if not (movie_matches if kind == "movie" else matches)(row["title"], names, english):
                 continue

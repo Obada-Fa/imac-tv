@@ -116,7 +116,7 @@ def idle_delay(quiet, music, state, audio=MUSIC_IDLE):
 
 def search_scope(sname):
     """Which catalog the phone/TV search should be scoped to, from the screen we are leaving."""
-    return {"movies": "movie", "series": "series", "twitch": "twitch"}.get(sname)
+    return {"movies": "movie", "series": "series", "twitch": "twitch"}.get(sname)   # anime: both kinds
 
 
 def photo_label(item):

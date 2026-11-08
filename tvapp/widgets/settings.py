@@ -553,9 +553,21 @@ class SettingsScreen(Screen):
         self.tmdb_remove = self.button("Remove TMDB key", "Use Wikidata names", False, ("arabic", "tmdb_remove"),
                                        lambda: self.change_arabic("tmdb_remove"))
         self.grid([self.tmdb_save, self.tmdb_remove])
+        self.sub_keys = {}
+        for provider, name, why in (("subdl", "SubDL", "free key at subdl.com → Account → API"),
+                                    ("subsource", "Subsource", "free key at subsource.net → Account → API")):
+            entry = self._entry(f"{name} API key (Arabic subtitles)", ("arabic", provider), True,
+                                lambda p=provider: self.save_sub_key(p), 200)
+            save = self.button(f"Save {name} key", why, False, ("arabic", provider + "_save"),
+                               lambda p=provider: self.save_sub_key(p))
+            remove = self.button(f"Remove {name} key", "", False, ("arabic", provider + "_remove"),
+                                 lambda p=provider: self.change_arabic("subtitle_key_remove", {"provider": p}))
+            self.grid([save, remove])
+            self.sub_keys[provider] = (entry, save, remove)
         self.update_arabic(media_arabic.status_public())
         self.note("Arabic releases show first in a title's Sources and play through TorBox, which seeds them back "
-                  "so your ArabP2P ratio stays fine. Search in Arabic works too.", top=6)
+                  "so your ArabP2P ratio stays fine. Search in Arabic works too. With a SubDL or Subsource key, "
+                  "normal releases also get the best-fitting Arabic subtitles.", top=6)
 
     def update_arabic(self, status):
         if self.category != "Connections" or not hasattr(self, "arabic_status") or not status:
@@ -566,9 +578,13 @@ class SettingsScreen(Screen):
         else:
             text = "Not signed in  ·  sign up at arabp2p.net, then sign in here"
         text += "  ·  TMDB titles" if status.get("tmdb") else ""
+        subs = [n for p, n in (("subdl", "SubDL"), ("subsource", "Subsource")) if status.get(p)]
+        text += ("  ·  Arabic subtitles from " + " and ".join(subs)) if subs else ""
         self.arabic_status.set_text(text)
         self.arabic_remove.set_sensitive(bool(status.get("arabp2p")) and not self.arabic_busy)
         self.tmdb_remove.set_sensitive(bool(status.get("tmdb")) and not self.arabic_busy)
+        for provider, (_entry, _save, remove) in getattr(self, "sub_keys", {}).items():
+            remove.set_sensitive(bool(status.get(provider)) and not self.arabic_busy)
 
     def save_arabic(self):
         user, password = self.arabic_user.get_text().strip(), self.arabic_pass.get_text()
@@ -586,15 +602,28 @@ class SettingsScreen(Screen):
             return
         self.change_arabic("tmdb_key", {"key": key})
 
+    def save_sub_key(self, provider):
+        entry = self.sub_keys[provider][0]
+        key = entry.get_text().strip()
+        entry.set_text("")
+        if not key:
+            self.shell.toast("Paste the API key first", 4)
+            return
+        self.change_arabic("subtitle_key", {"provider": provider, "key": key})
+
+    def _arabic_widgets(self):
+        extra = [w for trio in getattr(self, "sub_keys", {}).values() for w in trio]
+        return [self.arabic_user, self.arabic_pass, self.arabic_save, self.arabic_remove,
+                self.tmdb_entry, self.tmdb_save, self.tmdb_remove] + extra
+
     def change_arabic(self, action, params=None):
         if self.arabic_busy:
             return
         self.arabic_busy = True
-        widgets_ = (self.arabic_user, self.arabic_pass, self.arabic_save, self.arabic_remove,
-                    self.tmdb_entry, self.tmdb_save, self.tmdb_remove)
-        for w in widgets_:
+        for w in self._arabic_widgets():
             w.set_sensitive(False)
-        self.shell.toast({"arabic_login": "Signing in to ArabP2P…", "tmdb_key": "Checking with TMDB…"}.get(action, "Saving…"), 3)
+        self.shell.toast({"arabic_login": "Signing in to ArabP2P…", "tmdb_key": "Checking with TMDB…",
+                         "subtitle_key": "Checking the key…"}.get(action, "Saving…"), 3)
 
         def work():
             result = cmd(action, params, timeout=25)
@@ -605,7 +634,7 @@ class SettingsScreen(Screen):
         self.arabic_busy = False
         if self.category != "Connections":
             return False
-        for w in (self.arabic_user, self.arabic_pass, self.arabic_save, self.tmdb_entry, self.tmdb_save):
+        for w in self._arabic_widgets():
             w.set_sensitive(True)
         self.update_arabic(media_arabic.status_public())
         ok = result and result.get("ok")

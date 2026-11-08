@@ -20,7 +20,7 @@ from text_focus import TextFocus
 import gpu
 import screens  # noqa: E402
 from screens import (local_api, cmd, text_label, cover_pixbuf, grid_move, fresh_request,  # noqa: E402,F401
-                     BrowseScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
+                     BrowseScreen, AnimeScreen, SearchScreen, TwitchScreen, DetailsScreen, SourcesScreen,
                      BufferingOverlay, AppsScreen, ShortcutsScreen, CalculatorScreen, SystemScreen, BACK_KEYS as _BACK, ARROWS)
 
 BACK_KEYS = tuple(_BACK) + ("Back",)    # GDK names the XF86Back keysym "Back"
@@ -307,7 +307,7 @@ class Home(Gtk.Window):
         self.last_qr_text = ""
         self.trigger_network_refresh()
         self.push(self.top_screen("home"))
-        if top in ("movies", "series", "search", "settings", "apps"):
+        if top in ("movies", "series", "anime", "search", "settings", "apps"):
             self.push(self.top_screen(top))
         self.set_default_size(w, h)               # after the old, larger screens are gone (they'd clamp it)
         self.resize(w, h)
@@ -447,7 +447,8 @@ class Home(Gtk.Window):
             self.tops[name] = {"home": AmbientHomeScreen, "search": SearchScreen, "settings": SettingsScreen, "twitch": TwitchScreen, "apps": AppsScreen, "shortcuts": ShortcutsScreen,
                                "calculator": CalculatorScreen, "system": SystemScreen,
                                "movies": lambda s: BrowseScreen(s, "movie"),
-                               "series": lambda s: BrowseScreen(s, "series")}[name](self)
+                               "series": lambda s: BrowseScreen(s, "series"),
+                               "anime": AnimeScreen}[name](self)
         return self.tops[name]
 
     def current(self):
@@ -870,7 +871,7 @@ class Home(Gtk.Window):
         elif name in ("calculator", "system", "shortcuts"):
             if getattr(self.current(), "sname", None) != name:
                 self.push(self.top_screen(name))
-        elif name in ("home", "movies", "series", "settings", "twitch", "apps"):
+        elif name in ("home", "movies", "series", "anime", "settings", "twitch", "apps"):
             self.goto_top(name)
         else:
             return

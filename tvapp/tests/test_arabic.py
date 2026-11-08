@@ -212,7 +212,8 @@ class Credentials(Temp):
         arabic.update_creds(arabp2p={"user": "u", "pass": "p"})
         path = config.data_dir() / arabic.CREDS_FILE
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-        self.assertEqual(arabic.status_public(), {"arabp2p": True, "user": "u", "tmdb": False, "ready": False})
+        self.assertEqual(arabic.status_public(), {"arabp2p": True, "user": "u", "tmdb": False, "ready": False,
+                                                  "subdl": False, "subsource": False})
         self.assertFalse(arabic.enabled())
         config.write_key("k" * 32)
         self.assertTrue(arabic.enabled())

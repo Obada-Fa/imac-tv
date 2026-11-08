@@ -105,7 +105,7 @@ def glyph(cr, name, cx, cy, s, alpha=0.92):
     if name in ("system", "settings"):
         _icon(cr, "settings", cx, cy, s)
         return
-    if name in ("movies", "series", "search", "youtube"):
+    if name in ("movies", "series", "anime", "search", "youtube"):
         _icon(cr, name, cx, cy, s)
         return
     cr.save()

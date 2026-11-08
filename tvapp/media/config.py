@@ -9,6 +9,7 @@ DEFAULTS = {
         "meta": "https://v3-cinemeta.strem.io",
         "streams": ["https://torrentio.strem.fun/sort=qualitysize|qualityfilter=cam,scr,unknown"],
         "subtitles": "https://opensubtitles-v3.strem.io",
+        "anime": "https://anime-kitsu.strem.fun",    # Kitsu catalogs for the Anime screen
     },
     "sub_langs": ["ara", "dut", "eng"],
     "sub_default": "eng",

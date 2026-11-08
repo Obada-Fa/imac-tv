@@ -189,6 +189,23 @@ def _icon(cr, kind, cx, cy, s):
                     cr.arc(ax, ay, r, math.radians(a), math.radians(a + 90))
                 cr.close_path()
                 cr.stroke()
+    elif kind == "anime":        # a four-point sparkle with a small companion star
+        pts = []
+        for i in range(8):
+            a = -math.pi / 2 + i * math.pi / 4
+            r = s * (0.62 if i % 2 == 0 else 0.17)
+            pts.append((cx - s * 0.1 + math.cos(a) * r, cy + s * 0.06 + math.sin(a) * r))
+        cr.move_to(*pts[0])
+        for p in pts[1:]:
+            cr.line_to(*p)
+        cr.close_path()
+        cr.stroke()
+        sx, sy, t = cx + s * 0.5, cy - s * 0.48, s * 0.16
+        cr.move_to(sx, sy - t)
+        cr.line_to(sx, sy + t)
+        cr.move_to(sx - t, sy)
+        cr.line_to(sx + t, sy)
+        cr.stroke()
     elif kind == "series":
         for i, dy in enumerate((-0.42, 0.0, 0.42)):
             cr.set_source_rgba(1, 1, 1, 0.92 - i * 0.25)
@@ -218,7 +235,7 @@ def _icon(cr, kind, cx, cy, s):
     cr.restore()
 
 
-TINTS = {"movies": (0.36, 0.52, 0.86), "series": (0.62, 0.42, 0.84),
+TINTS = {"movies": (0.36, 0.52, 0.86), "series": (0.62, 0.42, 0.84), "anime": (0.92, 0.42, 0.56),
          "youtube": (0.82, 0.30, 0.32), "discord": (0.36, 0.40, 0.90), "twitch": (0.57, 0.27, 1.0), "search": (0.28, 0.66, 0.62),
          "settings": (0.50, 0.56, 0.66), "apps": (0.40, 0.62, 0.80)}
 

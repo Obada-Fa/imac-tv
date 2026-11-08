@@ -85,7 +85,7 @@ class AppsTests(unittest.TestCase):
         self.write("rustdesk", "RustDesk")
         self.write("brave-browser", "Brave")
         self.assertEqual(self.ids(apps.home_apps()), apps.DEFAULT_FAVORITES)
-        self.assertEqual(self.ids()[:4], apps.DEFAULT_FAVORITES)
+        self.assertEqual(self.ids()[:len(apps.DEFAULT_FAVORITES)], apps.DEFAULT_FAVORITES)
 
     def test_all_apps_lists_utilities_then_everything_on_the_pc(self):
         self.write("brave-browser", "Brave", exec_="brave-browser")
@@ -133,7 +133,8 @@ class AppsTests(unittest.TestCase):
             self.write(f"x{n}", f"X{n}")
         self.write("rustdesk", "RustDesk")
         self.write("brave-browser", "Brave")
-        for app_id in ("desktop:brave-browser", "desktop:rustdesk", "desktop:x1", "desktop:x2"):
+        free = apps.MAX_FAVORITES - len(apps.home_apps())
+        for app_id in ("desktop:brave-browser", "desktop:rustdesk", "desktop:x1", "desktop:x2")[:free]:
             apps.set_favorite(app_id, True)
         self.assertEqual(len(apps.home_apps()), apps.MAX_FAVORITES)
         with self.assertRaisesRegex(ValueError, "Home is full: remove a favorite first"):
@@ -183,6 +184,12 @@ class AppsTests(unittest.TestCase):
         self.write("x", "X")
         apps.set_favorite("desktop:x", True)
         self.assertEqual(json.loads((self.data / "home.json").read_text())["favorites"], ["desktop:gone", "movies", "desktop:x"])
+
+    def test_anime_is_pinned_once_after_series(self):
+        (self.data / "home.json").write_text(json.dumps({"favorites": ["movies", "series", "youtube"]}))
+        self.assertEqual(self.ids(apps.home_apps()), ["movies", "series", "anime", "youtube"])
+        apps.set_favorite("anime", False)              # taking it off sticks
+        self.assertEqual(self.ids(apps.home_apps()), ["movies", "series", "youtube"])
 
     def test_empty_favorites_is_respected(self):
         (self.data / "home.json").write_text(json.dumps({"favorites": []}))

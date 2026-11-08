@@ -48,7 +48,7 @@ try:
 except Exception:  # pragma: no cover
     display = None
 from media import segments as media_segments, upnext, health as media_health
-from media import arabic as media_arabic, torbox as media_torbox
+from media import arabic as media_arabic, torbox as media_torbox, arabsubs as media_arabsubs
 from media import addons, config as media_config, engine as media_engine, history, player, streams as media_streams, subs as media_subs
 DATA = Path(os.environ.get("IMACTV_DATA_DIR", str(Path.home() / ".local/share/imactv")))
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1377,6 +1377,31 @@ class Controller:
         target["start"] = max(0, position)
         return self.play_media(target, prefetched=prompt["source"], recovery=True, paused=paused)
 
+    def _attach_arabic_subs(self, generation, job, cfg):
+        """Arabic subtitles from SubDL/Subsource, added once they're downloaded (playback never waits for them).
+        They're selected when Arabic is the default subtitle language and no Arabic track is on yet."""
+        try:
+            found = job.result(timeout=40)
+        except Exception as exc:
+            LOG.info("Arabic subtitles: %s", media_config.redact(str(exc)))
+            return
+        if not found or not self._current(generation):
+            return
+        try:
+            subs = [t for t in (mpv("get_property", "track-list") or []) if t.get("type") == "sub"]
+        except (OSError, RuntimeError, ValueError, TimeoutError):
+            subs = []
+        have_arabic = any(media_subs.normalize(t.get("lang")) == "ara" for t in subs)
+        arabic_on = any(t.get("selected") and media_subs.normalize(t.get("lang")) == "ara" for t in subs)
+        select = media_subs.normalize(cfg.get("sub_default", "eng")) == "ara" and not arabic_on
+        for i, sub in enumerate(found):
+            flag = "select" if (select and i == 0) else "auto"
+            try:
+                mpv("sub-add", sub["url"], flag, sub["label"], sub["lang"])
+            except (OSError, RuntimeError, ValueError, TimeoutError):
+                continue
+        LOG.info("Arabic subtitles added: %s (had Arabic before: %s)", ", ".join(t["label"] for t in found), have_arabic)
+
     def _attach_subs(self, tracks, cfg):
         """Load every picked external sub with a proper label/lang, then select the default language."""
         order = list(cfg["sub_langs"])
@@ -1729,6 +1754,11 @@ class Controller:
                 self._set_stage(generation, "Connecting to peers…", source=label)
                 if not torrents.create(info_hash, sources):
                     LOG.warning("Stremio server did not accept /create for %s; streaming without trackers", info_hash)
+            arsubs_job = None
+            if "ara" in [media_subs.normalize(x) for x in cfg["sub_langs"]] and media_arabsubs.wanted(chosen):
+                arsubs_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                arsubs_job = arsubs_pool.submit(media_arabsubs.find, kind, video_id, (chosen or {}).get("title") or label or "")
+                arsubs_pool.shutdown(wait=False)
             try:
                 tracks = media_subs.pick(subs_job.result(), cfg["sub_langs"])
             except addons.AddonError:
@@ -1796,6 +1826,8 @@ class Controller:
             else:
                 raise RuntimeError("Timed out waiting for the stream to start")
             self._attach_subs(tracks, cfg)
+            if arsubs_job:
+                threading.Thread(target=self._attach_arabic_subs, args=(generation, arsubs_job, cfg), daemon=True).start()
             threading.Thread(target=self._load_segments, args=(generation, kind, item, season, episode, meta), daemon=True).start()
             threading.Thread(target=self._flow_loop, args=(generation, cfg), daemon=True).start()
             self._playback_loop(generation)
@@ -1842,6 +1874,17 @@ class Controller:
             raise ValueError("That doesn't look like a TMDB key")
         media_arabic.check_tmdb_key(key)
         media_arabic.update_creds(tmdb_key=key)
+        return {"arabic": media_arabic.status_public()}
+
+    def set_subtitle_key(self, provider, key):
+        self._arabic_try()
+        if provider not in media_arabsubs.PROVIDERS:
+            raise ValueError("Unknown subtitle site")
+        key = key.strip() if isinstance(key, str) else ""
+        if not re.match(r"^[A-Za-z0-9._:-]{8,200}$", key):
+            raise ValueError(f"That doesn't look like a {media_arabsubs.NAMES[provider]} key")
+        media_arabsubs.check_key(provider, key)
+        media_arabic.update_creds(**{provider + "_key": key})
         return {"arabic": media_arabic.status_public()}
 
     def set_brightness(self, level):
@@ -2455,8 +2498,8 @@ class Controller:
                 return {"ok": True, "target": "home"}
             if action == "show":
                 screen = params.get("screen")
-                if screen not in ("home", "movies", "series"):
-                    raise ValueError("Screen must be home, movies or series")
+                if screen not in ("home", "movies", "series", "anime"):
+                    raise ValueError("Screen must be home, movies, series or anime")
                 if self.app != "home" or self.phase == "buffering" or self.buffering or playback()["active"]:
                     return {"ok": True, "ignored": True}
                 self._ui_request(screen)
@@ -2519,6 +2562,14 @@ class Controller:
                 return self.set_tmdb_key(params.get("key"))
             if action == "tmdb_remove":
                 media_arabic.update_creds(tmdb_key=None)
+                return {"arabic": media_arabic.status_public()}
+            if action == "subtitle_key":
+                return self.set_subtitle_key(params.get("provider"), params.get("key"))
+            if action == "subtitle_key_remove":
+                provider = params.get("provider")
+                if provider not in media_arabsubs.PROVIDERS:
+                    raise ValueError("Unknown subtitle site")
+                media_arabic.update_creds(**{provider + "_key": None})
                 return {"arabic": media_arabic.status_public()}
             if action == "torbox_remove":
                 media_config.remove_key()

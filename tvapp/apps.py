@@ -23,13 +23,14 @@ import browser
 
 MAX_FAVORITES = 8
 SCAN_SECONDS = 60
-DEFAULT_FAVORITES = ["movies", "series", "youtube", "twitch"]
+DEFAULT_FAVORITES = ["movies", "series", "anime", "youtube", "twitch"]
 FULL_ERROR = "Home is full: remove a favorite first"
 ICON_SIZE = 256
 
 BUILTINS = [
     ("movies", "Movies", "screen"),
     ("series", "Series", "screen"),
+    ("anime", "Anime", "screen"),
     ("twitch", "Twitch", "screen"),
     ("youtube", "YouTube", "app"),
     ("discord", "Discord", "app"),
@@ -236,9 +237,16 @@ def _catalog():
 
 
 def _stored_favorites():
-    raw = _read_home().get("favorites")
+    home = _read_home()
+    raw = home.get("favorites")
     if isinstance(raw, list):
-        return [x for x in raw if isinstance(x, str)]
+        out = [x for x in raw if isinstance(x, str)]
+        # Anime came after people had saved their pins: it is added once, after Series (if Series is pinned
+        # and Home has room);
+        # set_favorite records "anime_offered", so taking it off sticks.
+        if not home.get("anime_offered") and "series" in out and "anime" not in out and len(out) < MAX_FAVORITES:
+            out.insert(out.index("series") + 1, "anime")
+        return out
     return list(DEFAULT_FAVORITES)
 
 
@@ -412,7 +420,7 @@ def set_favorite(app_id, favorite):
         if app_id not in stored:
             return list_apps()
         new = [f for f in stored if f != app_id]
-    save_keys(data_dir(), {"favorites": new, "apps_rev": apps_rev() + 1})
+    save_keys(data_dir(), {"favorites": new, "apps_rev": apps_rev() + 1, "anime_offered": True})
     return list_apps()
 
 
