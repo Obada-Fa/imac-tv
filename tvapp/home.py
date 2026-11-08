@@ -133,6 +133,7 @@ class Home(Gtk.Window):
         self.connect("delete-event", lambda *_: True)
         self.connect("key-press-event", self.on_key_press)
         self.connect("set-focus", self.on_set_focus)
+        self.connect("window-state-event", self.on_window_state)
         self.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_PRESS_MASK)
         self.connect("motion-notify-event", self.on_pointer)
         self.connect("button-press-event", self.on_pointer)
@@ -694,6 +695,13 @@ class Home(Gtk.Window):
         screen.last_focus = None
         self.focus_screen(screen)
 
+    def on_window_state(self, _win, event):
+        """Never leave fullscreen (a WM or shell hiccup would show the desktop's panels around Home)."""
+        if not (event.new_window_state & Gdk.WindowState.FULLSCREEN) \
+                and not (event.new_window_state & Gdk.WindowState.ICONIFIED):
+            GLib.timeout_add(300, lambda: (self.fullscreen(), False)[1])
+        return False
+
     def on_pointer(self, *_):
         display.poke()
         screen = self.current()
@@ -1136,5 +1144,7 @@ if __name__ == "__main__":
     except BlockingIOError:
         raise SystemExit(0)
     gpu.start_detection()          # hardware GL or not: where the ambient visualizer is drawn (home.json gpu_viz)
+    import kiosk
+    kiosk.start()                  # no dock/taskbar/menu/top bar, idle pointer hidden; undone on exit
     Home()
     Gtk.main()
