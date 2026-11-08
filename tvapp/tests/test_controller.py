@@ -121,6 +121,34 @@ class ControllerTests(unittest.TestCase):
         search.assert_called_once_with("المحقق كونان")
         run.assert_not_called()          # no "s" key, no typing into YouTube
 
+    def test_live_youtube_search_leaves_the_window_alone(self):
+        with mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+        c.app = "youtube"
+        with mock.patch.object(server.youtube_volume, "search", return_value=True), \
+                mock.patch.object(server, "window_for", return_value={"id": "0x1"}) as find, \
+                mock.patch.object(server, "activate") as act:
+            c.action("youtube_search", {"query": "نار", "live": True})
+            act.assert_not_called()
+            find.assert_not_called()
+            c.action("youtube_search", {"query": "ناروتو"})
+            act.assert_called_once_with({"id": "0x1"})
+
+    def test_youtube_offers_the_search_sheet_not_the_keyboard(self):
+        with mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+        c.phase = "ready"
+        win = {"id": "0x1", "pid": "1"}
+        self.assertIsNone(c.text_focus("youtube", win))     # xdotool can't type Arabic there; Backspace is Back
+        focus = {"focus": "T1:1-1", "query": ""}
+        with mock.patch.object(server.youtube_volume, "search_focus", return_value=focus) as check:
+            self.assertEqual(c.youtube_search_focus("youtube", win), focus)
+            self.assertIsNone(c.youtube_search_focus("home", win))
+            self.assertIsNone(c.youtube_search_focus("youtube", None))
+            c.phase = "starting"
+            self.assertIsNone(c.youtube_search_focus("youtube", win))
+        check.assert_called_once()
+
     def test_unsupported_seek_reports_error(self):
         with mock.patch.object(server.threading, "Thread"):
             c = server.Controller()

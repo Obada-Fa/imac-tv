@@ -217,15 +217,59 @@ def enforce(timeout=0.5):
         pass
 
 
-def search(query, timeout=3.0):
-    """Open YouTube TV's results for `query` (any language) in VacuumTube. False when it isn't reachable.
+# YouTube TV's search screen has no text field: its own on-screen keyboard holds the focus. While it
+# does, the phone offers its own search sheet. The token changes each time focus comes back to it.
+SEARCH_AREA = "ytlr-search-keyboard,ytlr-search-suggestions,ytlr-search-text-box"
+SEARCH_CHECK = """(() => {
+  const area = %s;
+  if (!window.__nexusYtSearch) {
+    const state = window.__nexusYtSearch = {inside: false, serial: 0};
+    document.addEventListener('focusin', e => {
+      const inside = Boolean(e.target && e.target.closest && e.target.closest(area));
+      if (inside && !state.inside) state.serial++;
+      state.inside = inside;
+    }, true);
+  }
+  const state = window.__nexusYtSearch, e = document.activeElement;
+  const inside = Boolean(e && e.closest && e.closest(area));
+  if (inside && !state.inside) state.serial++;
+  state.inside = inside;
+  if (!inside || !document.hasFocus()) return null;
+  const hash = location.hash, at = hash.indexOf('?');
+  const query = hash.startsWith('#/search') && at >= 0 ? new URLSearchParams(hash.slice(at + 1)).get('q') || '' : '';
+  return {token: performance.timeOrigin + '-' + state.serial, query: query.slice(0, 200)};
+})()""" % json.dumps(SEARCH_AREA)
 
-    Typing into YouTube's own search box from the phone lost the phone keyboard and letters; its address
-    (#/search?q=) takes the whole query at once."""
+
+def search_focus(timeout=0.4):
+    """{"focus": token, "query": last searched text} while YouTube's search keyboard has the focus, else None."""
+    page = youtube_page()
+    if not page:
+        return None
+    try:
+        reply = browser._page_command(page["id"], "Runtime.evaluate",
+                                      {"expression": SEARCH_CHECK, "returnByValue": True}, timeout, PORT)
+    except (OSError, ValueError):
+        return None
+    value = (reply.get("result") or {}).get("value")
+    if not isinstance(value, dict) or not isinstance(value.get("token"), str):
+        return None
+    query = value.get("query")
+    return {"focus": page["id"] + ":" + value["token"][:64], "query": query[:200] if isinstance(query, str) else ""}
+
+
+def search(query, timeout=3.0):
+    """Show YouTube TV's results for `query` (any language) in VacuumTube. False when it isn't reachable.
+
+    Key events can't carry it: YouTube's search box only reads A-Z/0-9 key codes (no Arabic, not even a
+    space) and Backspace means Back there. Its address (#/search?q=) takes the whole query at once and
+    shows it in the box. Changing an open search replaces the address, so live typing from the phone
+    leaves one Back step, not one per letter."""
     page = youtube_page()
     if not page:
         return False
-    js = "location.hash = '#/search?q=' + encodeURIComponent(" + json.dumps(query) + ")"
+    js = ("(() => { const h = '#/search?q=' + encodeURIComponent(" + json.dumps(query) + ");"
+          " if (location.hash.startsWith('#/search')) location.replace(h); else location.hash = h; })()")
     try:
         browser._page_command(page["id"], "Runtime.evaluate", {"expression": js}, timeout, PORT)
     except (OSError, ValueError):

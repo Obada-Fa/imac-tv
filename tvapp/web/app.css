@@ -213,13 +213,14 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .sheet-head h2{font-size:26px;font-weight:250}.sheet-head .hb{width:46px;flex:none}
 .sheet-row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.sheet-row button{flex:1 1 0;min-width:0;min-height:46px;padding:4px 8px;border-radius:12px;font-size:14px;font-weight:500;white-space:nowrap}
 .sheet p{color:var(--ink2);line-height:1.5;margin:8px 2px;font-size:14px}
-.sheet input[type=text],.sheet input:not([type]),.keyrow input{width:100%;font-size:17px;min-height:50px;background:rgba(6,10,18,.45);border:1px solid var(--hair);color:#fff;padding:12px 14px;border-radius:14px}
+.sheet input[type=text],.sheet input[type=search],.sheet input:not([type]),.keyrow input{-webkit-appearance:none;appearance:none;width:100%;font-size:17px;min-height:50px;background:rgba(6,10,18,.45);border:1px solid var(--hair);color:#fff;padding:12px 14px;border-radius:14px}
 .sheet .feedback{color:#ffdcc0;min-height:22px;font-size:13px}
 .sheet label{display:flex;align-items:center;gap:8px;font-size:10.5px;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:var(--ink2);margin:18px 2px 4px}
 .sheet label::before{content:"";width:9px;height:calc(9px / var(--hx-ar));background:var(--hx-mark) center/100% 100% no-repeat}
 .sheet #timer-status{font-size:13px;color:var(--ink3)}
 .keyrow{display:flex;gap:8px}.keyrow input{flex:1;min-width:0}.keyrow button{flex:none;width:52px}
 .tb-error{color:#ff9e94;font-size:13px;padding:0 4px}.tb-error:empty{display:none}
+.yt-hint{color:var(--ink3);font-size:13px;margin:6px 4px 0}
 .tracklist{display:flex;flex-direction:column;gap:2px}
 .tracklist button{width:100%;text-align:left;border-radius:12px;padding:0 14px;font-size:15px;min-height:50px;background:none;border-color:transparent;display:flex;align-items:center}
 .tracklist button.on{border-color:rgba(255,255,255,.5);background:rgba(255,255,255,.08)}

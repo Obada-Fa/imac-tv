@@ -607,7 +607,32 @@
     $('search-open').setAttribute('aria-label', label);
   }
 
+  // YouTube TV's search screen is its own on-screen keyboard: when it gets the focus, offer the phone's
+  // search sheet once (a new token each time focus comes back to it; closing the sheet keeps it closed).
+  let ytSearchSeen = null;
+  function syncYoutubeSearch(s) {
+    const token = (s.app === 'youtube' && s.youtube_search?.focus) || null;
+    if (token === ytSearchSeen) return;
+    ytSearchSeen = token;
+    if (!token || !online || sheetName || document.hidden || tab !== 'remote') return;
+    const field = document.activeElement;
+    if (field?.matches('input:not([type=range]),textarea')) return;
+    state.youtube_search = s.youtube_search;
+    openSheet('ytsearch');
+  }
+  let checkingYoutube = false;
+  setInterval(async () => {
+    if (checkingYoutube || state?.app !== 'youtube' || sheetName || document.hidden || !online || tab !== 'remote') return;
+    checkingYoutube = true;
+    try {
+      const s = await api('/api/text-focus');
+      if (s.app === state?.app) syncYoutubeSearch(s);
+    } catch { /* the regular state poll handles disconnects */ }
+    finally { checkingYoutube = false; }
+  }, 700);
+
   function syncKeyboard(s) {
+    syncYoutubeSearch(s);
     const focus = s.text_focus || null;
     // Catalog search has its own text field and results. Release its IME if the TV leaves search.
     if (tab === 'search' && catalogKeyboard) {
@@ -651,6 +676,8 @@
     } catch { if (keyboard.session === session) keyboard.close(); }
   };
   function manualKeyboard() {
+    // YouTube has no text fields: its search box ignores Arabic keys and takes Backspace as Back.
+    if (state?.app === 'youtube' && online) { openSheet('ytsearch'); return; }
     if (state && online) keyboard.open(state.app, state.text_focus || null);
   }
   document.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => {
@@ -786,11 +813,25 @@
     } else if (name === 'arabic' || name === 'tmdb') {
       renderArabicSheet(content, name);
     } else if (name === 'ytsearch') {
-      content.innerHTML = `<form id="yt-form" autocomplete="off"><input id="yt-q" type="search" enterkeyhint="search" maxlength="200" autocomplete="off" placeholder="Search YouTube" aria-label="Search YouTube"><div class="sheet-row"><button type="submit" id="yt-go" class="primary">Search</button></div></form><p id="yt-error" class="tb-error" role="alert"></p>`;
-      const q = $('yt-q');
+      content.innerHTML = `<form id="yt-form" autocomplete="off"><input id="yt-q" type="search" dir="auto" enterkeyhint="search" maxlength="200" autocomplete="off" placeholder="Search YouTube" aria-label="Search YouTube"><p class="yt-hint">Results show on the TV as you type</p><div class="sheet-row"><button type="submit" id="yt-go" class="primary">Search</button></div></form><p id="yt-error" class="tb-error" role="alert"></p>`;
+      const q = $('yt-q'), start = (state?.youtube_search?.query || '').trim();
+      // Typing replaces the last search; a tap places the cursor to edit it instead.
+      q.value = start;
       q.focus();
+      if (start) q.select();
+      let sent = start, timer = 0;
+      const live = () => {
+        const query = q.value.trim();
+        if (!query || query === sent || sheetName !== 'ytsearch') return;
+        sent = query;
+        send('youtube_search', {query, live: true})
+          .then(() => { if ($('yt-error')) $('yt-error').textContent = ''; })
+          .catch(ex => { if ($('yt-error')) $('yt-error').textContent = ex.message || 'Could not search'; });
+      };
+      q.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(live, 400); });
       $('yt-form').onsubmit = async e => {
         e.preventDefault();
+        clearTimeout(timer);
         const query = q.value.trim();
         if (!query) return;
         try { await youtubeSearch(query); closeSheet(); }

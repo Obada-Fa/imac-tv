@@ -158,3 +158,32 @@ class YoutubeSearchTests(unittest.TestCase):
         self.assertIn("encodeURIComponent(" + json.dumps("كونان' + alert(1) + '") + ")", js)   # a string, not code
         with mock.patch.object(youtube_volume, "youtube_page", return_value=None):
             self.assertFalse(youtube_volume.search("x"))
+
+    def test_an_open_search_is_replaced_not_stacked(self):
+        import youtube_volume
+        with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}), \
+                mock.patch.object(youtube_volume.browser, "_page_command") as cmd:
+            youtube_volume.search("naruto")
+        js = cmd.call_args.args[2]["expression"]
+        self.assertIn("location.hash.startsWith('#/search')", js)
+        self.assertIn("location.replace(h)", js)
+
+    def test_search_focus_reports_the_search_keyboard(self):
+        import youtube_volume
+        reply = {"result": {"value": {"token": "123.4-2", "query": "ناروتو"}}}
+        with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}), \
+                mock.patch.object(youtube_volume.browser, "_page_command", return_value=reply) as cmd:
+            self.assertEqual(youtube_volume.search_focus(), {"focus": "T1:123.4-2", "query": "ناروتو"})
+        self.assertIn("ytlr-search-keyboard", cmd.call_args.args[2]["expression"])
+        self.assertTrue(cmd.call_args.args[2]["returnByValue"])
+
+    def test_search_focus_is_none_away_from_search(self):
+        import youtube_volume
+        with mock.patch.object(youtube_volume, "youtube_page", return_value=None):
+            self.assertIsNone(youtube_volume.search_focus())
+        with mock.patch.object(youtube_volume, "youtube_page", return_value={"id": "T1"}):
+            for reply in ({"result": {"value": None}}, {"result": {"value": "x"}}, {}):
+                with mock.patch.object(youtube_volume.browser, "_page_command", return_value=reply):
+                    self.assertIsNone(youtube_volume.search_focus())
+            with mock.patch.object(youtube_volume.browser, "_page_command", side_effect=OSError):
+                self.assertIsNone(youtube_volume.search_focus())

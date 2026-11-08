@@ -1921,8 +1921,7 @@ class Controller:
                 web = browser.view(win.get("title"))
             return (web or {}).get("focus")
         if app == "youtube":
-            page = youtube_volume.youtube_page()
-            return browser.field_focused(page["id"], port=youtube_volume.PORT) if page else None
+            return None   # no text fields there: youtube_search_focus offers the phone's search sheet instead
         path = DATA / "text_focus.json"
         try:
             if time.time() - path.stat().st_mtime > 8:
@@ -1934,6 +1933,12 @@ class Controller:
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
         return None
+
+    def youtube_search_focus(self, app, win):
+        """While YouTube's own search keyboard has the focus: {"focus", "query"} for the phone's search sheet."""
+        if app != "youtube" or not win or self.phase != "ready":
+            return None
+        return youtube_volume.search_focus()
 
     def keyboard_input(self, params):
         """Apply one IME edit or key chord in order, while its original target still has focus."""
@@ -2025,6 +2030,7 @@ class Controller:
         tv_browser = apps.is_tv_browser(app)
         web = self._browser_view(win) if tv_browser and phase == "ready" else None
         return {"text_focus": self.text_focus(app, win, web or {}) if not player["active"] else None,
+                "youtube_search": self.youtube_search_focus(app, win) if not player["active"] else None,
                 "app": app, "phase": phase, "error": error, "buffering": buffering, "media": current_media,
                 "apps_rev": apps.apps_rev(), **({"app_name": app_name} if app_name else {}),
                 "tv_browser": tv_browser, **({"browser": web} if tv_browser and phase == "ready" else {}),
@@ -2413,7 +2419,7 @@ class Controller:
                     raise RuntimeError("YouTube isn't open")
                 if not youtube_volume.search(query):
                     raise RuntimeError("Couldn't reach YouTube to search")
-                win = window_for("youtube")
+                win = None if params.get("live") else window_for("youtube")   # live: each pause while typing
                 if win:
                     activate(win)
                 return {"ok": True}
@@ -2907,7 +2913,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.respond(401, {"error": "Pair this phone using the code on the TV"})
                 return
             app = CONTROL.app
-            self.respond(200, {"app": app, "text_focus": CONTROL.text_focus(app, window_for(app))})
+            win = window_for(app)
+            self.respond(200, {"app": app, "text_focus": CONTROL.text_focus(app, win),
+                               "youtube_search": CONTROL.youtube_search_focus(app, win)})
             return
         if parsed.path == "/api/settings":
             if not self.authorised(parsed.query):
