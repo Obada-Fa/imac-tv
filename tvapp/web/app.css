@@ -203,6 +203,7 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .pair h1{font-size:30px}.pair form{display:flex;gap:10px;margin-top:8px}
 .pair input{width:100%;min-width:0;padding:10px;border:1px solid var(--hair);border-radius:14px;background:rgba(6,10,18,.45);color:#fff;font-size:24px;letter-spacing:.4em;text-align:center;font-weight:300}
 .pair button{padding:0 20px}.pair #pair-error{color:#ffb7ad;min-height:20px;font-size:13px}
+.pair .pair-show{align-self:center;padding:8px 12px;background:none;border:0;box-shadow:none;color:var(--accent);font-size:14px}
 
 /* ---- Sheets: the second (and only other) frosted layer ---- */
 .sheet{position:fixed;inset:0;display:flex;align-items:flex-end;justify-content:center;padding:18px 0 0;background:rgba(4,7,13,.55);z-index:10}

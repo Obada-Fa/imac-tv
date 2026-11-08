@@ -845,6 +845,9 @@ class Home(Gtk.Window):
             if home is not None and hasattr(home, "next_viz") and home.next_viz():
                 self.write_viz_state(force=True)
             return
+        if name == "pair":                      # an unpaired phone wants the code: the app in front stays
+            self.show_pair_code(req.get("code"))
+            return
         if name == "browser_menu":              # over the TV browser: Home itself stays behind it
             if self.browser_menu is None:
                 self.browser_menu = BrowserMenu(self.scale)
@@ -908,6 +911,23 @@ class Home(Gtk.Window):
 
     def show_pairing(self):
         pairing_ui.show_dialog(self)
+
+    def show_pair_code(self, code=None):
+        """A phone is on its pairing page: Home and Settings open the Pair phone sheet; over another app (YouTube,
+        a movie) the code shows as a notice, so nothing the user is watching is interrupted."""
+        if isinstance(code, str) and code.isdigit() and len(code) == 6 and code != self.code:
+            self.code = code
+            for fn in list(self.pair_listeners):
+                fn()
+        code = self.code
+        if not code or not code.isdigit():
+            return
+        if self.prev_app not in (None, "home") or self.buffering.get_visible():
+            self.toast(f"Pairing code  {fmt_code(code)}", 30, "phone")
+        elif not (self.sheet and self.sheet["kind"] == "pairing"):
+            self.show_pairing()
+        elif self.sheet["refresh"]:
+            self.sheet["refresh"]()
 
     def confirm_off(self):
         pairing_ui.confirm_off(self)

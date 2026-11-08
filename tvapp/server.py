@@ -502,6 +502,7 @@ class Controller:
         self.pair_code = ""
         self.pair_expiry = 0
         self.pair_attempts = {}
+        self.pair_popups = {}           # address -> when it last asked the TV to show the code
         self.torbox_tries = []
         self.source_refs = {"time": 0.0, "urls": []}
         self.source_metadata = {}
@@ -604,6 +605,22 @@ class Controller:
             self.pair_expiry = 0
             self.renew_pairing()
             return token
+
+    PAIR_POPUP_GAP = 20     # one phone may bring the code up on the TV this often (s)
+    PAIR_POPUP_ANY = 3      # and all phones together this often
+
+    def show_pair_code(self, address):
+        """An unpaired phone is on the pairing page: put the code on the TV (Home's Pair phone sheet, or a notice
+        over the app in front). Rate-limited, since anyone on the network may ask. -> True when shown."""
+        with self.lock:
+            now = time.time()
+            last = max(self.pair_popups.values(), default=0)
+            if now - self.pair_popups.get(address, 0) < self.PAIR_POPUP_GAP or now - last < self.PAIR_POPUP_ANY:
+                return False
+            self.pair_popups = {a: t for a, t in self.pair_popups.items() if now - t < self.PAIR_POPUP_GAP}
+            self.pair_popups[address] = now
+        self._ui_request("pair", code=self.renew_pairing())
+        return True
 
     def new_device(self):
         with self.lock:
@@ -1035,10 +1052,10 @@ class Controller:
         with self.lock:
             return generation == self.generation
 
-    def _ui_request(self, screen, media=None):
+    def _ui_request(self, screen, media=None, **extra):
         with self.lock:
             self.ui_ts = max(time.time(), getattr(self, "ui_ts", 0) + 0.001)
-            request = {"screen": screen, "ts": self.ui_ts}
+            request = {"screen": screen, "ts": self.ui_ts, **extra}
         if media:
             request["media"] = media
         self._save_json(self.ui_path, request)
@@ -3014,6 +3031,13 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw)
             if not isinstance(body, dict):
                 raise ValueError("Expected an object")
+            if parsed.path == "/api/pair-request":
+                # Unauthenticated on purpose: the phone isn't paired yet. It only shows the code on the TV.
+                if self.authorised(parsed.query):
+                    self.respond(200, {"shown": False, "paired": True})
+                else:
+                    self.respond(200, {"shown": CONTROL.show_pair_code(self.client_address[0])})
+                return
             if parsed.path == "/api/pair":
                 token = CONTROL.pair(body.get("code", ""), self.client_address[0])
                 self.respond(200, {"paired": True}, cookie=token)

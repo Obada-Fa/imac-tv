@@ -1255,3 +1255,34 @@ class CloseAppTests(unittest.TestCase):
         _, kills, select = self.run_close("discord", restart=True, pids_seq=[[]])
         self.assertEqual(kills, [])
         select.assert_called_once_with("discord")
+
+
+class PairPopupTests(unittest.TestCase):
+    """An unpaired phone on its pairing page brings the code up on the TV, rate-limited."""
+
+    def setUp(self):
+        with mock.patch.object(server.threading, "Thread"):
+            self.c = server.Controller()
+
+    def ui(self):
+        return server.Controller._read_json(server.DATA / "ui_request.json", {})
+
+    def test_writes_a_pair_request_with_the_current_code(self):
+        self.assertTrue(self.c.show_pair_code("192.168.1.30"))
+        req = self.ui()
+        self.assertEqual(req["screen"], "pair")
+        self.assertEqual(req["code"], self.c.pair_code)
+        self.assertRegex(req["code"], r"^\d{6}$")
+
+    def test_rate_limited_per_phone_and_overall(self):
+        clock = [1000.0]
+        with mock.patch.object(server.time, "time", side_effect=lambda: clock[0]):
+            self.assertTrue(self.c.show_pair_code("192.168.1.30"))
+            clock[0] += 1
+            self.assertFalse(self.c.show_pair_code("192.168.1.31"))     # all phones: once per 3 s
+            clock[0] += 3
+            self.assertTrue(self.c.show_pair_code("192.168.1.31"))
+            clock[0] += 5
+            self.assertFalse(self.c.show_pair_code("192.168.1.30"))     # this phone: once per 20 s
+            clock[0] += 20
+            self.assertTrue(self.c.show_pair_code("192.168.1.30"))

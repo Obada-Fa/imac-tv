@@ -126,6 +126,38 @@ class HomeShellTests(unittest.TestCase):
         self.home.Home.handle_ui_request(s, {"screen": "viz_next", "ts": 1})
         self.assertEqual(s.prev_app, "youtube")
 
+    def test_pair_request_shows_the_code_without_leaving_the_app(self):
+        s = self.shell()
+        s.show_pair_code = mock.Mock()
+        self.home.Home.handle_ui_request(s, {"screen": "pair", "code": "123456", "ts": 1})
+        s.show_pair_code.assert_called_once_with("123456")
+        self.assertEqual(s.prev_app, "youtube")
+        s.close_sheet.assert_not_called()
+
+    def pair_shell(self, prev_app, sheet=None):
+        s = types.SimpleNamespace(prev_app=prev_app, code="111111", pair_listeners=[], sheet=sheet,
+                                  buffering=mock.Mock(**{"get_visible.return_value": False}),
+                                  toast=mock.Mock(), show_pairing=mock.Mock())
+        return s
+
+    def test_show_pair_code_over_an_app_is_a_notice(self):
+        s = self.pair_shell("youtube")
+        self.home.Home.show_pair_code(s, "123456")
+        s.toast.assert_called_once_with("Pairing code  123 456", 30, "phone")
+        s.show_pairing.assert_not_called()
+
+    def test_show_pair_code_on_home_opens_the_sheet_once(self):
+        s = self.pair_shell("home")
+        self.home.Home.show_pair_code(s, "123456")
+        s.show_pairing.assert_called_once_with()
+        self.assertEqual(s.code, "123456")
+        refresh = mock.Mock()
+        s.sheet = {"kind": "pairing", "refresh": refresh}
+        self.home.Home.show_pair_code(s, "123456")
+        s.show_pairing.assert_called_once_with()
+        refresh.assert_called_once_with()
+        s.toast.assert_not_called()
+
     def test_poll_started_before_the_ui_request_is_ignored(self):
         s = self.shell()
         s.ui_at = 50.0

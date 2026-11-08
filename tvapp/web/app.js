@@ -283,10 +283,21 @@
     renderUpdateStatus();
   }
 
+  // An unpaired phone asks the TV to put its code on screen (the TV rate-limits this too).
+  let pairAsked = 0;
+  function askTvForCode(force) {
+    if (!force && Date.now() - pairAsked < 20000) return;
+    if (/[?&](pair|code)=\d{6}/.test(window.location.search)) return;   // the QR's code pairs by itself
+    pairAsked = Date.now();
+    api('/api/pair-request', {}).catch(() => {});
+  }
+
   function showPair() {
+    const wasHidden = pair.hidden;
     $('connection').hidden = true; pair.hidden = false; remote.hidden = true; browser.hidden = true; sheet.hidden = true; sheetName = '';
     connected(false, 'Pair this phone');
     updateTabbar();
+    if (wasHidden) askTvForCode(false);
   }
 
   function fmt(seconds) {
@@ -1199,6 +1210,8 @@
       refresh();
     } catch (err) { $('pair-error').textContent = err.message; }
   };
+
+  $('pair-show').onclick = () => askTvForCode(true);
 
   async function checkAutoPair() {
     try {
