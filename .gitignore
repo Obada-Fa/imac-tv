@@ -33,3 +33,6 @@ backups/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Flutter phone app: keep its lockfile
+!/mobile/pubspec.lock

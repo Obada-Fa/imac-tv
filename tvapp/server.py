@@ -19,7 +19,8 @@ import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
+import html
 import urllib.error
 import urllib.request
 
@@ -2645,6 +2646,12 @@ PHONE_MIC = phonemic.PhoneMic()
 PHONE_SPEAKER = phonespeaker.PhoneSpeaker()
 
 
+def tv_name():
+    """What the phone app calls this TV: the computer's name, tidied ("zorin-laptop" -> "Zorin laptop")."""
+    name = socket.gethostname().split(".")[0].replace("-", " ").replace("_", " ").strip()
+    return (name[:1].upper() + name[1:]) if name else "Nexus TV"
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         LOG.info(format, *args)
@@ -2678,6 +2685,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlsplit(self.path)
+        if parsed.path == "/api/hello":
+            # Unauthenticated: the Nexus TV phone app finds TVs on the Wi-Fi with this.
+            self.respond(200, {"app": "nexus-tv", "name": tv_name()})
+            return
+        if parsed.path == "/" and self.app_handoff(parsed.query):
+            return
         if parsed.path == "/" and self.authorised(parsed.query):
             cookies = SimpleCookie()
             try:
@@ -2814,6 +2827,31 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(200, {"paired": self.authorised(parsed.query), "code": CONTROL.pair_code})
             return
         self.respond(404, {"error": "Not found"})
+
+    def app_handoff(self, query):
+        """An Android phone that scanned the TV's QR (/?pair=CODE): open the Nexus TV app if it is
+        installed. The page tries the app at once and offers buttons, since Chrome may block an
+        automatic app launch; without the app, Chrome continues to this page with web=1."""
+        q = parse_qs(query)
+        code = (q.get("pair") or q.get("code") or [""])[0]
+        host = self.headers.get("Host", "")
+        if ("app" in q or "web" in q or not re.fullmatch(r"\d{6}", code)
+                or "Android" not in self.headers.get("User-Agent", "")
+                or not re.fullmatch(r"[A-Za-z0-9.\-]+(:\d{1,5})?|\[[0-9A-Fa-f:.]+\](:\d{1,5})?", host)):
+            return False
+        web = f"http://{host}/?pair={code}&web=1"
+        intent = (f"intent://pair?host={host}&code={code}#Intent;scheme=nexustv;package=com.nexus.tv;"
+                  f"S.browser_fallback_url={quote(web, safe='')};end")
+        page = (WEB / "open-app.html").read_text().replace("{{INTENT}}", html.escape(intent)).replace(
+            "{{WEB}}", html.escape(web))
+        payload = page.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+        return True
 
     def retro_upload(self, parsed):
         """Raw image bytes in the body (?name=file.jpg, optional &replace=<id>): kept at full resolution."""
