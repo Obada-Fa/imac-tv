@@ -317,6 +317,17 @@ class FieldAndEdgeFlowTests(unittest.TestCase):
             t += 0.11
         self.assertEqual(f.amt, 0.0)
 
+    def test_field_pace_slows_the_drift(self):
+        import random
+        a, b = shapes.Field(1920, 1080, random.Random(5)), shapes.Field(1920, 1080, random.Random(5))
+        b.pace = 0.35
+        x0 = [(q["x"], q["y"]) for q in a.p]
+        a.step(1.0, 1.0)
+        b.step(1.0, 1.0)
+        for (sx, sy), qa, qb in zip(x0, a.p, b.p):
+            da, db = abs(qa["x"] - sx) + abs(qa["y"] - sy), abs(qb["x"] - sx) + abs(qb["y"] - sy)
+            self.assertAlmostEqual(db, 0.35 * da, delta=0.05 * da + 1e-6)
+
     def test_edgeflow_enters_and_leaves_and_music_drives_it(self):
         mode = shapes.EdgeFlowMode(shapes.VIZ_N, 1920, 1080, self.rng)
         quiet = {"bass": 0.0, "mid": 0.0, "treble": 0.0}

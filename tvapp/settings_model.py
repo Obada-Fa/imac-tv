@@ -17,7 +17,7 @@ FIELDS = [
     ('idle', 'Ambient', 'Idle delay (seconds)', 'number', [10, 7200], False),
     ('idle_music', 'Ambient', 'Music idle delay (seconds)', 'number', [10, 7200], False),
     ('visualizer', 'Ambient', 'Music visualizer', 'bool', [], True),
-    ('gpu_viz', 'Ambient', 'Smooth visualizer (GPU)', 'choice', ['auto', 'on', 'off'], True),
+    ('gpu_viz', 'Ambient', 'Smooth motion (GPU)', 'choice', ['auto', 'on', 'off'], True),
     ('shapes', 'Ambient', 'Ambient shapes', 'choice', ['photo', 'photo+animals', 'off'], True),
     ('sub_default', 'Playback', 'Default subtitle language', 'language', [], False),
     ('sub_langs', 'Playback', 'Subtitle language order', 'languages', [], False),

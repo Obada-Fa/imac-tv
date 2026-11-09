@@ -1,13 +1,14 @@
-"""The ambient music visualizer drawn on the GPU (home.json "gpu_viz", see gpu.py).
+"""Ambient Home drawn on the GPU (home.json "gpu_viz", see gpu.py): the quiet floating particles, the sky-line
+and doodle shapes, and the music visualizer.
 
-Home keeps running the visualizer's simulation (shapes.Viz) at ~30 Hz and sends each frame's geometry here. This
-renderer runs as its own process (a crashing driver can't take the TV app down) and draws into a native X child
+Home keeps running the simulations (shapes.Field at 10 Hz, the morph at 15 Hz, shapes.Viz at ~30 Hz) and sends
+each frame's geometry here. This renderer runs as its own process (a crashing driver can't take the TV app down) and draws into a native X child
 window of Home's toplevel with OpenGL at the display's refresh rate, interpolating between Home's frames, so the
 motion is smooth while Home's CPU stays low. Under the dots it draws the same photo (cross-fade and music dim
 included) that the cairo canvas shows. GTK widgets that stay up in ambient (the clock, islands) get holes in the
 window (X Shape), so GTK keeps drawing them; Home's cairo path still paints the visualizer inside those holes.
 
-The window has a blank cursor and is mapped only while the visualizer stage shows. Not GtkGLArea: that reads every
+The window has a blank cursor and is mapped only while ambient's stage shows (the tiles faded out). Not GtkGLArea: that reads every
 frame back through cairo (it was measured at 40-50% of a core); this draws straight to the window.
 
 Protocol (Home -> renderer, stdin): 4-byte big-endian length + pickle of a tuple:
@@ -35,10 +36,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SIM_MS = 33             # Home steps the simulation at ~30 Hz while the GPU draws; this file draws every vsync
-STALE_S = 0.25          # no new frame for this long: the picture has settled (frame_at), stop drawing
+STALE_S = 0.4           # no new frame for this long: the picture has settled (frame_at), stop drawing
+JUMP_PX = 120           # a particle that moved further than this between two frames left and came back in: no lerp
 MUSIC_DIM = 0.22        # = homescreen.MUSIC_DIM
 FRAME_KEYS = ("t", "scale", "pts", "tails", "alphas", "links", "lv", "fade", "dim", "cur", "prev", "pal", "hub",
-              "glow_r", "viz")
+              "glow_r", "viz", "field")   # + "e", "centre", "rmax" for a shape without the visualizer
 
 
 def pack(msg):
@@ -161,17 +163,48 @@ def _lerp_pts(a, b, u):
     return [(ax + (bx - ax) * u, ay + (by - ay) * u) for (ax, ay), (bx, by) in zip(a, b)]
 
 
+def interpolate_field(a, b, u):
+    """The particles between two frames: positions and alphas blended, links faded in and out by (i, j). A
+    particle that jumped (left the screen and re-entered elsewhere) takes b's place at once; it is invisible
+    at the edges anyway."""
+    if a is None or b is None or len(a["pts"]) != len(b["pts"]):
+        return b
+    pts, al = [], []
+    for (ax, ay), (bx, by), aa, ba in zip(a["pts"], b["pts"], a["alpha"], b["alpha"]):
+        if abs(bx - ax) + abs(by - ay) > JUMP_PX:
+            pts.append((bx, by))
+            al.append(ba)
+        else:
+            pts.append((ax + (bx - ax) * u, ay + (by - ay) * u))
+            al.append(aa + (ba - aa) * u)
+    la = {(i, j): x for i, j, x in a["links"]}
+    lb = {(i, j): x for i, j, x in b["links"]}
+    links = []
+    for k in sorted(la.keys() | lb.keys()):
+        x = la.get(k, 0.0) + (lb.get(k, 0.0) - la.get(k, 0.0)) * u
+        if x > 0.01:
+            links.append((k[0], k[1], x))
+    return dict(b, pts=pts, alpha=al, links=links)
+
+
 def interpolate(fa, fb, u):
     """A frame between Home's frames fa and fb (u = 0..1). Positions, alphas, levels, fade/dim and the clock are
-    blended; the rest (links, glyphs, pulses, colours) comes from fb. Different point counts: fb as it is."""
+    blended; the rest (links, glyphs, pulses, colours) comes from fb. Different point counts: fb's shape as it
+    is (the particles are blended on their own)."""
     if fa is None or u >= 1.0:
         return fb
     if u <= 0.0:
         return fa
     if len(fa["pts"]) != len(fb["pts"]):
-        return fb
+        if not (fa.get("field") and fb.get("field")):
+            return fb
+        return dict(fb, field=interpolate_field(fa["field"], fb["field"], u))
     out = dict(fb)
     out["t"] = fa["t"] + (fb["t"] - fa["t"]) * u
+    if fb.get("field"):
+        out["field"] = interpolate_field(fa.get("field"), fb["field"], u)
+    if "e" in fa and "e" in fb:
+        out["e"] = fa["e"] + (fb["e"] - fa["e"]) * u
     out["pts"] = _lerp_pts(fa["pts"], fb["pts"], u)
     if fa.get("tails") and fb.get("tails") and len(fa["tails"]) == len(fb["tails"]):
         out["tails"] = _lerp_pts(fa["tails"], fb["tails"], u)
@@ -494,7 +527,7 @@ class Renderer:
             return None
         newest = self.frames[-1]
         span = newest["t"] - self.frames[-2]["t"] if len(self.frames) > 1 else SIM_MS / 1000.0
-        rt = now - min(0.1, max(0.016, span))           # one simulation step behind: always between two frames
+        rt = now - min(0.3, max(0.016, 1.2 * span))     # a step behind, with room for a late timer: always between two frames
         fa, fb, u = pick(self.frames, rt)
         return interpolate(fa, fb, u)
 
@@ -528,7 +561,13 @@ class Renderer:
         gl.DrawArrays(X.GL_TRIANGLE_STRIP, 0, 4)
         gl.Enable(X.GL_BLEND)
         p = Painter(f.get("glow_r", 22))
-        vizpaint.paint(p, f, f["pal"], f.get("hub", "hexagon"))
+        if f.get("field"):
+            vizpaint.paint_field(p, f["field"])
+        if f.get("pts"):
+            if f.get("viz") is not None:
+                vizpaint.paint(p, f, f["pal"], f.get("hub", "hexagon"))
+            elif "e" in f:
+                vizpaint.paint_still(p, f)
         n = len(p.v) // 8
         if n:
             arr = array("f", p.v)                   # ~5x faster than a ctypes array built from the list
@@ -596,57 +635,70 @@ def _cpu_ticks(pid):
 
 
 def demo(seconds):
-    """Its own full-screen window, fake music, Home's 30 Hz simulation in-process; prints CPU use."""
+    """Its own full-screen window, Home's simulations in-process: the first half the quiet particles (10 Hz, as
+    Home sends them), the second half the visualizer with fake music (30 Hz). Prints fps and CPU for each."""
     sys.path[:0] = [str(HERE), str(HERE / "widgets")]
     import random
     import shapes
     r = Renderer(0, 0, 0)
     print("renderer:", r.renderer, "| direct:", r.direct, "| vsync:", r.vsync, "| msaa:", r.samples, flush=True)
     sw, sh = r.w, r.h
+    scale = sh / 1080.0
+    xorg = [p for p in os.listdir("/proc") if p.isdigit() and _comm(p) in ("Xorg", "X", "Xwayland")]
+    common = {"tails": None, "fade": 1.0, "cur": None, "prev": None, "hub": "hexagon",
+              "glow_r": max(8, round(22 * scale)), "pal": list(shapes.DEFAULT_PALETTE)}
+    field = shapes.Field(sw, sh, random.Random(2))
+
+    def quiet(now, dt):
+        field.step(dt, 1.0)
+        fr = field.frame(now, reach=0.16 * sw)
+        return dict(common, t=now, scale=scale, pts=[], alphas=[], links=[], lv={}, viz=None, dim=0.0,
+                    field={"scale": scale, "pts": fr["pts"], "alpha": fr["alpha"], "links": fr["links"]})
+
     base = shapes.wave_shape()
     base["pts"] = [(x * sw, y * sh) for x, y in base["pts"]]
     viz = shapes.Viz(base, sw, sh, random.Random(1))
-    scale = sh / 1080.0
-    lv = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "beat": 0.0}
-    prev_pts, last_sim, start = None, 0.0, time.monotonic()
-    frames_drawn, t_cpu0 = 0, _cpu_ticks(os.getpid())
-    xorg = [p for p in os.listdir("/proc") if p.isdigit() and _comm(p) in ("Xorg", "X", "Xwayland")]
-    x_cpu0 = {p: _cpu_ticks(p) for p in xorg}
-    r.frames = []
-    while time.monotonic() - start < seconds:
-        now = time.monotonic()
-        if now - last_sim >= SIM_MS / 1000.0:
-            dt = min(0.2, now - last_sim) if last_sim else SIM_MS / 1000.0
-            last_sim = now
-            t = now - start
-            tgt = {"bass": 0.5 + 0.5 * math.sin(t * 3.1), "mid": 0.5 + 0.4 * math.sin(t * 1.7),
-                   "treble": 0.5 + 0.5 * math.sin(t * 5.3), "beat": max(0.0, 1.0 - ((t * 1.8) % 1.0) * 2.5)}
-            lv = shapes.ease_levels(lv, tgt, dt)
-            viz.step(dt, lv, beat=(t * 1.8) % 1.0 < dt * 1.8, t=now, auto=True)
-            fr = viz.frame(now, lv)
-            pts = fr["pts"]
-            tails = None
-            if prev_pts and len(prev_pts) == len(pts):
-                k = 0.4 / dt
-                tails = [(x - k * (x - px), y - k * (y - py)) for (x, y), (px, py) in zip(pts, prev_pts)]
-            prev_pts = pts
-            r.handle(("frame", {"t": now, "scale": scale, "pts": pts, "tails": tails if fr["trail"] > 0.02 else None,
-                                "alphas": list(fr["alpha"]), "links": fr["links"], "lv": dict(lv), "fade": 1.0,
-                                "dim": 1.0, "cur": None, "prev": None, "pal": viz.palette, "hub": "hexagon",
-                                "glow_r": max(8, round(22 * scale)), "viz": fr}))
-            if not r.shown:
-                r.set_shown(True)
-        r.present()
-        frames_drawn += 1
-    secs = time.monotonic() - start
+    st = {"lv": {"bass": 0.0, "mid": 0.0, "treble": 0.0, "beat": 0.0}, "prev": None, "t0": None}
+
+    def music(now, dt):
+        st["t0"] = st["t0"] or now
+        t = now - st["t0"]
+        tgt = {"bass": 0.5 + 0.5 * math.sin(t * 3.1), "mid": 0.5 + 0.4 * math.sin(t * 1.7),
+               "treble": 0.5 + 0.5 * math.sin(t * 5.3), "beat": max(0.0, 1.0 - ((t * 1.8) % 1.0) * 2.5)}
+        lv = st["lv"] = shapes.ease_levels(st["lv"], tgt, dt)
+        viz.step(dt, lv, beat=(t * 1.8) % 1.0 < dt * 1.8, t=now, auto=True)
+        fr = viz.frame(now, lv)
+        pts, prev, tails = fr["pts"], st["prev"], None
+        if prev and len(prev) == len(pts):
+            k = 0.4 / dt
+            tails = [(x - k * (x - px), y - k * (y - py)) for (x, y), (px, py) in zip(pts, prev)]
+        st["prev"] = pts
+        return dict(common, t=now, scale=scale, pts=pts, tails=tails if fr["trail"] > 0.02 else None,
+                    alphas=list(fr["alpha"]), links=fr["links"], lv=dict(lv), dim=1.0, pal=viz.palette, viz=fr)
+
     hz = os.sysconf("SC_CLK_TCK")
-    own = (_cpu_ticks(os.getpid()) - t_cpu0) / hz / secs * 100
-    print("frames drawn: %d (%.1f fps)" % (frames_drawn, frames_drawn / secs))
-    print("renderer + simulation CPU: %.1f%% of one core" % own)
-    for p in xorg:
-        a, b = x_cpu0.get(p), _cpu_ticks(p)
-        if a is not None and b is not None:
-            print("Xorg (pid %s) CPU: %.1f%% of one core" % (p, (b - a) / hz / secs * 100))
+    for name, step, period in (("quiet particles", quiet, 0.1), ("music visualizer", music, SIM_MS / 1000.0)):
+        r.frames = []
+        last_sim, start, drawn = 0.0, time.monotonic(), 0
+        t_cpu0, x_cpu0 = _cpu_ticks(os.getpid()), {p: _cpu_ticks(p) for p in xorg}
+        while time.monotonic() - start < seconds / 2:
+            now = time.monotonic()
+            if now - last_sim >= period:
+                dt = min(0.2, now - last_sim) if last_sim else period
+                last_sim = now
+                r.handle(("frame", step(now, dt)))
+                if not r.shown:
+                    r.set_shown(True)
+            r.present()
+            drawn += 1
+        secs = time.monotonic() - start
+        own = (_cpu_ticks(os.getpid()) - t_cpu0) / hz / secs * 100
+        print("== %s: %d frames drawn (%.1f fps), renderer + simulation CPU %.1f%% of one core"
+              % (name, drawn, drawn / secs, own))
+        for p in xorg:
+            a, b = x_cpu0.get(p), _cpu_ticks(p)
+            if a is not None and b is not None:
+                print("   Xorg (pid %s) CPU: %.1f%% of one core" % (p, (b - a) / hz / secs * 100))
 
 
 def _comm(pid):

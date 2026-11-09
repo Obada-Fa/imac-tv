@@ -71,6 +71,8 @@ SHAPE_MS = 66            # ~15 fps while a shape is morphing
 VIZ_MS = 100             # 10 fps for the music visualizer: it repaints ~40% of the screen in software each frame
 GL_SIM_MS = gl_ambient.SIM_MS   # ~30 Hz simulation while the GPU draws the visualizer (gpu.py, gl_ambient.py)
 FIELD_MS = 200           # 5 fps: the quiet floating particles drift a few px/s (each frame repaints ~25% of the screen)
+FIELD_GL_MS = 100        # 10 Hz while the GPU draws them (interpolated to the refresh rate; cairo only fills the holes)
+FIELD_CAIRO_PACE = 0.35  # cairo's particles drift this much slower: ~0.7 px per 5 fps frame reads as a glide, 2 px jumped
 SETTLE_S = 6.0           # calm Home: tiles drift this long after input, then hold still (no timer, ~0% CPU)
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
 MUSIC_DIM = 0.22         # how far the photo darkens behind the visualizer
@@ -596,6 +598,7 @@ class AmbientHomeScreen(Screen):
         self.field_geom = None
         self.field_cells = set()
         self.last_field = 0.0
+        self.field_period = FIELD_MS
         self.still = None              # the still shape the dots hold (sky-line, doodle or wave)
         self.shaped = False            # a shape has been chosen for this ambient stretch
         self.shape_since = 0.0
@@ -1124,7 +1127,11 @@ class AmbientHomeScreen(Screen):
         if self.field_id or not self.active() or self.shape_drives():
             return
         self.last_field = time.monotonic()
-        self.field_id = GLib.timeout_add(FIELD_MS, self.field_tick)
+        self.field_period = self.field_ms()
+        self.field_id = GLib.timeout_add(self.field_period, self.field_tick)
+
+    def field_ms(self):
+        return FIELD_GL_MS if getattr(self, "gl_on", False) else FIELD_MS
 
     def field_tick(self):
         if PERF:
@@ -1142,8 +1149,13 @@ class AmbientHomeScreen(Screen):
             self.field_id = 0
             return False
         self.step_field(dt, now)
+        self.gl_sync()
         if self.field_target() <= 0.0 and (self.field is None or self.field.amt <= 0.0):
             self.field_id = 0
+            return False
+        if self.field_ms() != self.field_period:          # the GPU took over (or gave back): new frame rate
+            self.field_id = 0
+            self.start_field_timer()
             return False
         return True
 
@@ -1152,6 +1164,7 @@ class AmbientHomeScreen(Screen):
         if self.field is None:
             self.field = shapes.Field(self.shell.sw, self.shell.sh, self.rng)
         f = self.field
+        f.pace = fade_step(f.pace, 1.0 if getattr(self, "gl_on", False) else FIELD_CAIRO_PACE, dt, 2.0)
         f.step(dt, self.field_target())
         if f.amt <= 0.0:
             if self.field_geom is not None:
@@ -1165,32 +1178,18 @@ class AmbientHomeScreen(Screen):
         geo = [(i, j, math.hypot(fr["pts"][i][0] - fr["pts"][j][0], fr["pts"][i][1] - fr["pts"][j][1]))
                for i, j, _ in fr["links"]]
         cells = network.geometry_cells({"pts": fr["pts"], "n": 0, "links": geo}, margin=round(8 * s))
-        self.field_geom = dict(fr, scale=s)
+        self.field_geom = dict(fr, scale=s, t=now)
         dirty = cells | self.field_cells
         self.field_cells = cells
-        self.invalidate_cells(dirty)
+        self.invalidate_cells(dirty, batch=False)            # under the clock too: as often as the GPU is fed
 
     def draw_field(self, cr):
         g = self.field_geom
         if not g:
             return
-        s, pts, al = g["scale"], g["pts"], g["alpha"]
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        wd = max(1.0, 1.0 * s)
-        segs = [(WHITE, min(0.32, 0.34 * a), wd, *pts[i], *pts[j]) for i, j, a in g["links"]]
-        stroke_batches(cr, batch_segments(segs, 8, 0.32))
-        for (x, y), a in zip(pts, al):
-            if a < 0.02:
-                continue
-            d = 3.0 * s
-            cr.set_source_rgba(1, 1, 1, min(0.85, 0.9 * a))
-            cr.move_to(x, y - d)
-            cr.line_to(x + d, y)
-            cr.line_to(x, y + d)
-            cr.line_to(x - d, y)
-            cr.close_path()
-            cr.fill()
+        vizpaint.paint_field(CairoPainter(cr, None, 0), g)
         cr.restore()
 
     # ---- ambient shapes + visualizer
@@ -1423,9 +1422,9 @@ class AmbientHomeScreen(Screen):
                 self.step_field(dt, now)
             if self.idle.ambient and self.canvas.fading() and not self.anim_id:
                 self.canvas.step(dt)
+        self.gl_sync()
         if not self.shape_needs_timer():
             self.shape_id = 0
-            self.gl_hide()
             self.shape_handoff()
             return False
         lively = (self.morph.moving or self.fake_levels and now >= self.fake_from or self.viz is not None
@@ -1480,7 +1479,6 @@ class AmbientHomeScreen(Screen):
                 self.canvas.dim = level
                 self.canvas.queue_draw()
         if m.target is None:
-            self.gl_hide()
             self.viz = None
             self.viz_prev = None
             if self.shape_geom is not None:
@@ -1510,7 +1508,6 @@ class AmbientHomeScreen(Screen):
                 m.release()
         elif (not m.moving and self.shape_geom is not None and max(self.lv.values()) < 0.01
               and not (self.fake_levels and now >= self.fake_from)):
-            self.gl_hide()
             return                                  # holding still and silent: nothing to repaint
         s = self.shell.scale
         pts = m.positions(self.origin, now)
@@ -1535,7 +1532,6 @@ class AmbientHomeScreen(Screen):
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
                            "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
                            "tails": tails, "beat": beat}
-        self.gl_sync()
         cells = network.geometry_cells(geom, margin=round(22 * s))
         dirty = cells | self.shape_cells
         self.shape_cells = cells
@@ -1562,8 +1558,8 @@ class AmbientHomeScreen(Screen):
             geo += [(q, q, 0.0) for q in range(k, len(geo_pts))]
         return links, {"pts": geo_pts, "n": len(geo_pts), "links": geo}
 
-    def invalidate_cells(self, cells):
-        if self.gl_on:                               # cairo only fills the holes under the clock: 10 fps is plenty
+    def invalidate_cells(self, cells, batch=True):
+        if self.gl_on and batch:                     # cairo only fills the holes under the clock: 10 fps is plenty
             self.gl_cells = getattr(self, "gl_cells", set()) | cells
             self.gl_tick = (getattr(self, "gl_tick", 0) + 1) % 3
             if self.gl_tick:
@@ -1579,10 +1575,17 @@ class AmbientHomeScreen(Screen):
 
     # ---- the GPU visualizer (gl_ambient.py)
     def gl_wanted(self):
-        """The visualizer's stage is fully set (ambient, photo dimmed, music on) and the GPU should draw it."""
-        return (self.viz is not None and not self.viz_stop and self.idle.ambient and self.canvas.dim >= 1.0
-                and self.shape_geom is not None and self.shape_geom.get("viz") is not None
-                and not gl_ambient.GLLink.failed and self.active() and gpu.use_gpu_viz(self.cfg))
+        """Ambient's stage is set (the tiles have faded out) and something moves on it that the GPU can draw:
+        the quiet particles, a shape (sky-line, doodle, morph) or the visualizer. Everything cairo would paint
+        outside the holes must be in the frame, so not while the network's own dust still shows."""
+        if (self.style != "network" or not self.idle.ambient or self.chrome > 0.0 or gl_ambient.GLLink.failed
+                or not self.active()):
+            return False
+        if self.morph.target is None and self.dust_amt > 0.003:
+            return False                               # network.draw_network still paints the drifting dust
+        if self.shape_geom is None and self.field_geom is None:
+            return False
+        return gpu.use_gpu_viz(self.cfg)
 
     def gl_start(self):
         win = self.get_toplevel().get_window()
@@ -1648,16 +1651,27 @@ class AmbientHomeScreen(Screen):
             for x, y, w, h in holes:
                 region.union(cairo.RectangleInt(x, y, w, h))
             cv.only = region
-        g = self.shape_geom
-        self.gl.frame({"t": g["t"], "scale": g["scale"], "pts": g["pts"], "tails": g["tails"],
-                       "alphas": g["alphas"], "links": g["links"], "lv": g["lv"], "viz": g["viz"],
-                       "fade": cv.fade, "dim": cv.dim, "cur": keys[0], "prev": keys[1],
-                       "pal": list(self.viz.palette) if self.viz else list(shapes.DEFAULT_PALETTE),
-                       "hub": self.cfg["node_shape"], "glow_r": self.glow_sprite()[1]})
+        self.gl.frame(self.gl_frame(keys))
         if not self.gl_on:
             self.gl_on = True
             cv.only = cv.only if self.gl_holes else cairo.Region()
             self.gl.show(True)
+
+    def gl_frame(self, keys):
+        """This step's picture for the renderer (gl_ambient.GLLink.frame)."""
+        cv, g, f = self.canvas, self.shape_geom, self.field_geom
+        out = {"t": time.monotonic(), "scale": self.shell.scale, "pts": [], "tails": None, "alphas": [],
+               "links": [], "lv": {}, "viz": None, "fade": cv.fade, "dim": cv.dim, "cur": keys[0], "prev": keys[1],
+               "pal": list(self.viz.palette) if self.viz else list(shapes.DEFAULT_PALETTE),
+               "hub": self.cfg["node_shape"], "glow_r": self.glow_sprite()[1],
+               "field": {k: f[k] for k in ("scale", "pts", "alpha", "links")} if f else None}
+        if g:
+            out.update({k: g[k] for k in ("t", "scale", "pts", "tails", "alphas", "links", "lv", "viz")})
+            if g["viz"] is None:
+                out.update(e=g["e"], centre=g["centre"], rmax=g["rmax"])
+        if f:
+            out["t"] = f["t"]                          # a still shape keeps its old time; the particles move on
+        return out
 
     def gl_hole_rects(self):
         """[(x, y, w, h)] of the GTK widgets showing over Home (the clock, islands, notices), in window pixels."""
@@ -1699,34 +1713,9 @@ class AmbientHomeScreen(Screen):
         if g["viz"] is not None:
             self.draw_viz(cr, g)
             return
-        s, t, pts, lv, e = g["scale"], g["t"], g["pts"], g["lv"], g["e"]
-        cx, cy = g["centre"]
-        rmax = g["rmax"] * 1.05
         cr.save()
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
-        wd = max(1.3, 1.3 * s)
-        segs = []
-        for i, j, _a in g["links"]:
-            a = 0.30 * e * e + 0.10 * lv["mid"] * e
-            if lv["beat"] > 0.02:
-                mx, my = (pts[i][0] + pts[j][0]) / 2, (pts[i][1] + pts[j][1]) / 2
-                a += shapes.wave_boost(math.hypot(mx - cx, my - cy) / rmax, lv["beat"]) * e
-            if a < 0.01:
-                continue
-            segs.append((WHITE, min(0.9, a), wd, *pts[i], *pts[j]))
-        stroke_batches(cr, batch_segments(segs, 8, 0.9))
-        for i, (x, y) in enumerate(pts):
-            a = g["alphas"][i] * 0.85
-            if a < 0.01:
-                continue
-            d = 3.2 * s
-            cr.set_source_rgba(1, 1, 1, min(1.0, a))
-            cr.move_to(x, y - d)
-            cr.line_to(x + d, y)
-            cr.line_to(x, y + d)
-            cr.line_to(x - d, y)
-            cr.close_path()
-            cr.fill()
+        vizpaint.paint_still(CairoPainter(cr, None, 0), g)
         cr.restore()
 
     def glow_sprite(self):

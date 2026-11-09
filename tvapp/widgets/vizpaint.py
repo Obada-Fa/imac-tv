@@ -1,7 +1,8 @@
-"""What the music visualizer draws, independent of how: one description, two painters.
+"""What ambient Home draws over the photo, independent of how: one description, two painters.
 
-`paint(p, g, palette, hub, glow_r)` walks one frame of the visualizer (`HomeScreen.shape_geom` with a "viz" frame)
-and calls the painter `p`:
+`paint(p, g, palette, hub)` walks one frame of the visualizer (`HomeScreen.shape_geom` with a "viz" frame),
+`paint_still(p, g)` the dots of a shape without music (the sky-line, a doodle, a morph between them) and
+`paint_field(p, f)` the quiet floating particles (`HomeScreen.field_geom`). Each calls the painter `p`:
   p.segs(segs, alpha_steps, amax)   segs: [(rgb, alpha, width, x0, y0, x1, y1)], round caps
   p.fill(poly, rgb, alpha)          a filled polygon [(x, y), ...]
   p.outline(poly, rgb, alpha, wd)   a closed polygon's outline
@@ -119,3 +120,38 @@ def paint(p, g, pal, hub):
     p.segs(outlines, 8, 0.7)
     for _x0, _y0, x1, y1, a in fr["pulses"]:
         p.glow(x1, y1, spark, 0.45 * a)
+
+
+def paint_field(p, f):
+    """The quiet floating particles: f = {"scale", "pts", "alpha", "links": [(i, j, a)]}."""
+    s, pts, al = f["scale"], f["pts"], f["alpha"]
+    wd = max(1.0, 1.0 * s)
+    p.segs([(WHITE, min(0.32, 0.34 * a), wd, *pts[i], *pts[j]) for i, j, a in f["links"] if a > 0.01], 8, 0.32)
+    d = 3.0 * s
+    for (x, y), a in zip(pts, al):
+        if a >= 0.02:
+            p.fill([(x, y - d), (x + d, y), (x, y + d), (x - d, y)], WHITE, min(0.85, 0.9 * a))
+
+
+def paint_still(p, g):
+    """A shape's dots and lines without the visualizer (g["viz"] is None): the sky-line, a doodle, a morph.
+    Music without a visualizer still swells the lines a little (mid) and sends a wave out on beats."""
+    s, pts, lv, e = g["scale"], g["pts"], g["lv"], g["e"]
+    cx, cy = g["centre"]
+    rmax = g["rmax"] * 1.05
+    mid, beat = lv.get("mid", 0.0), lv.get("beat", 0.0)
+    wd = max(1.3, 1.3 * s)
+    segs = []
+    for i, j, _a in g["links"]:
+        a = 0.30 * e * e + 0.10 * mid * e
+        if beat > 0.02:
+            mx, my = (pts[i][0] + pts[j][0]) / 2, (pts[i][1] + pts[j][1]) / 2
+            a += shapes.wave_boost(math.hypot(mx - cx, my - cy) / rmax, beat) * e
+        if a >= 0.01:
+            segs.append((WHITE, min(0.9, a), wd, *pts[i], *pts[j]))
+    p.segs(segs, 8, 0.9)
+    d = 3.2 * s
+    for i, (x, y) in enumerate(pts):
+        a = g["alphas"][i] * 0.85
+        if a >= 0.01:
+            p.fill([(x, y - d), (x + d, y), (x, y + d), (x - d, y)], WHITE, min(1.0, a))

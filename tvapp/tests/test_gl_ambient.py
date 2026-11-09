@@ -54,6 +54,29 @@ class InterpolationTest(unittest.TestCase):
         self.assertIs(gl_ambient.interpolate(a, b, 0.5), b)
         self.assertIs(gl_ambient.interpolate(None, b, 0.5), b)
 
+    def test_particles_blend_and_links_fade(self):
+        a = {"scale": 1.0, "pts": [(0.0, 0.0), (10.0, 0.0), (500.0, 0.0)], "alpha": [1.0, 0.0, 0.0],
+             "links": [(0, 1, 0.4)]}
+        b = {"scale": 1.0, "pts": [(2.0, 0.0), (12.0, 0.0), (-50.0, 300.0)], "alpha": [0.5, 1.0, 0.2],
+             "links": [(1, 2, 0.2)]}
+        f = gl_ambient.interpolate_field(a, b, 0.5)
+        self.assertEqual(f["pts"][0], (1.0, 0.0))
+        self.assertAlmostEqual(f["alpha"][0], 0.75)
+        self.assertEqual(f["pts"][2], (-50.0, 300.0))       # left and came back in elsewhere: no sweep across
+        self.assertEqual(f["alpha"][2], 0.2)
+        self.assertEqual(f["links"], [(0, 1, 0.2), (1, 2, 0.1)])   # one fading out, one fading in
+
+    def test_particles_blend_without_a_shape(self):
+        def quiet(t, x):
+            f = dict(frame(t, n=0), viz=None)
+            f["field"] = {"scale": 1.0, "pts": [(x, 5.0)], "alpha": [1.0], "links": []}
+            return f
+        f = gl_ambient.interpolate(quiet(1.0, 0.0), quiet(2.0, 10.0), 0.25)
+        self.assertEqual(f["field"]["pts"], [(2.5, 5.0)])
+        self.assertAlmostEqual(f["t"], 1.25)
+        g = dict(frame(2.0, n=4), field=quiet(2.0, 10.0)["field"])     # a shape appears: particles still glide
+        self.assertEqual(gl_ambient.interpolate(quiet(1.0, 0.0), g, 0.5)["field"]["pts"], [(5.0, 5.0)])
+
     def test_pick_brackets_render_time(self):
         fs = [frame(1.0), frame(2.0), frame(3.0)]
         fa, fb, u = gl_ambient.pick(fs, 2.25)
@@ -87,6 +110,17 @@ class PainterTest(unittest.TestCase):
         self.assertGreater(len(p.v), 0)
         self.assertEqual(len(p.v) % 8, 0)
 
+    def test_paints_particles_and_a_still_shape(self):
+        import vizpaint
+        p = gl_ambient.Painter(10)
+        vizpaint.paint_field(p, {"scale": 1.0, "pts": [(0, 0), (50, 0), (90, 0)], "alpha": [1.0, 0.5, 0.0],
+                                 "links": [(0, 1, 0.5), (1, 2, 0.0)]})
+        self.assertEqual(len(p.v), (6 + 6 + 6) * 8)      # one line, two diamonds; the invisible ones dropped
+        p = gl_ambient.Painter(10)
+        g = dict(frame(1.0), viz=None, e=1.0, centre=(0.0, 0.0), rmax=100.0)
+        vizpaint.paint_still(p, g)
+        self.assertEqual(len(p.v), (6 + 3 * 6) * 8)      # one line, three diamonds
+
 
 @unittest.skipIf(homescreen is None, "GTK bindings unavailable")
 class HomeHandOverTest(unittest.TestCase):
@@ -98,6 +132,9 @@ class HomeHandOverTest(unittest.TestCase):
         s.canvas = mock.Mock(dim=1.0, cur=None, prev=None, fade=1.0, only=None)
         s.canvas.fading.return_value = False
         s.shape_geom = dict(frame(1.0), viz={"x": 1})
+        s.field_geom = None
+        s.style, s.chrome, s.dust_amt = "network", 0.0, 0.0
+        s.shell.scale = 1.0
         s.cfg = {"gpu_viz": "auto", "node_shape": "hexagon"}
         s.active.return_value = True
         s.glow_sprite.return_value = (None, 10)
@@ -108,6 +145,7 @@ class HomeHandOverTest(unittest.TestCase):
         s.gl_wanted = lambda: S.gl_wanted(s)
         s.gl_hide = lambda: S.gl_hide(s)
         s.gl_stop = lambda: S.gl_stop(s)
+        s.gl_frame = lambda keys: S.gl_frame(s, keys)
         return s
 
     def setUp(self):
@@ -157,11 +195,47 @@ class HomeHandOverTest(unittest.TestCase):
         link = mock.Mock(ready=True)
         link.alive.return_value = True
         s = self.screen(gl=link, gl_on=True)
-        s.viz_stop = True                                    # the music stopped
+        s.idle.ambient = False                               # woken up: the tiles come back on cairo
         with mock.patch.object(homescreen.gpu, "use_gpu_viz", return_value=True):
             homescreen.AmbientHomeScreen.gl_sync(s)
         link.show.assert_called_once_with(False)
         self.assertFalse(s.gl_on)
+
+    def test_quiet_particles_go_to_the_gpu(self):
+        link = mock.Mock(ready=True)
+        link.alive.return_value = True
+        fg = {"scale": 1.0, "pts": [(1.0, 2.0)], "alpha": [1.0], "links": [], "t": 5.0}
+        s = self.screen(gl=link, shape_geom=None, field_geom=fg, viz=None)
+        s.canvas.dim = 0.0
+        with mock.patch.object(homescreen.gpu, "use_gpu_viz", return_value=True):
+            homescreen.AmbientHomeScreen.gl_sync(s)
+        self.assertTrue(s.gl_on)
+        sent = link.frame.call_args[0][0]
+        self.assertEqual(sent["field"]["pts"], [(1.0, 2.0)])
+        self.assertEqual((sent["pts"], sent["t"], sent["dim"]), ([], 5.0, 0.0))
+
+    def test_still_shape_carries_what_paint_still_needs(self):
+        link = mock.Mock(ready=True)
+        link.alive.return_value = True
+        g = dict(frame(1.0), viz=None, e=0.8, centre=(3.0, 4.0), rmax=50.0)
+        s = self.screen(gl=link, shape_geom=g, viz=None)
+        with mock.patch.object(homescreen.gpu, "use_gpu_viz", return_value=True):
+            homescreen.AmbientHomeScreen.gl_sync(s)
+        sent = link.frame.call_args[0][0]
+        self.assertEqual((sent["e"], sent["centre"], sent["rmax"], sent["viz"]), (0.8, (3.0, 4.0), 50.0, None))
+
+    def test_not_while_cairo_still_paints_outside_the_frame(self):
+        with mock.patch.object(homescreen.gpu, "use_gpu_viz", return_value=True):
+            s = self.screen(chrome=0.4)                      # tiles still fading out
+            self.assertFalse(homescreen.AmbientHomeScreen.gl_wanted(s))
+            s = self.screen(dust_amt=0.6)                    # the network's dust drifts on its own
+            s.morph.target = None
+            self.assertFalse(homescreen.AmbientHomeScreen.gl_wanted(s))
+            s = self.screen(shape_geom=None)                 # nothing moves on the stage
+            self.assertFalse(homescreen.AmbientHomeScreen.gl_wanted(s))
+            s = self.screen(style="bubbles")
+            self.assertFalse(homescreen.AmbientHomeScreen.gl_wanted(s))
+            self.assertTrue(homescreen.AmbientHomeScreen.gl_wanted(self.screen()))
 
     def test_another_app_in_front_hides_it(self):
         """supervise() stops the timer when Home isn't active; the GPU window must go with it, or the

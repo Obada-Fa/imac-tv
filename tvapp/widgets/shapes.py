@@ -367,6 +367,7 @@ class Field:
         self.margin = 0.05 * sw
         self.speed = speed or 0.0055 * sw          # px/s: ~10 px/s on a 1080p screen
         self.amt = 0.0                             # 0..1 overall visibility, eased
+        self.pace = 1.0                            # speed factor (homescreen: slower when cairo draws at 5 fps)
         self.p = []
         for _ in range(n):
             self.p.append(self._new(inside=True))
@@ -389,9 +390,9 @@ class Field:
         self.amt = min(target, a + dt / FIELD_FADE) if a < target else max(target, a - dt / FIELD_FADE)
         m = self.margin * 1.5
         for q in self.p:
-            q["hd"] += q["curve"] * dt
-            q["x"] += math.cos(q["hd"]) * q["v"] * dt
-            q["y"] += math.sin(q["hd"]) * q["v"] * dt
+            q["hd"] += q["curve"] * self.pace * dt
+            q["x"] += math.cos(q["hd"]) * q["v"] * self.pace * dt
+            q["y"] += math.sin(q["hd"]) * q["v"] * self.pace * dt
             if not (-m < q["x"] < self.sw + m and -m < q["y"] < self.sh + m):
                 q.update(self._new())
 

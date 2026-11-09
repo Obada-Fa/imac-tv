@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run ON THE TV (it draws on the real screen for ~20 s): does the GPU visualizer run smoothly and cheaply here?
-# Prints the GL renderer Nexus TV detected, then shows the visualizer full screen with fake music and reports
-# frames per second, its own CPU, Xorg's CPU and the Intel GPU clock. Press nothing; it ends by itself.
+# Prints the GL renderer Nexus TV detected, then shows the quiet ambient particles and the visualizer (fake music)
+# full screen, half the time each, and reports frames per second, its own CPU, Xorg's CPU and the Intel GPU clock.
+# Press nothing; it ends by itself.
 # usage: scripts/gl-check.sh [seconds=20]
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
