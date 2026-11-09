@@ -854,6 +854,11 @@ class Home(Gtk.Window):
             if home is not None and hasattr(home, "next_viz") and home.next_viz():
                 self.write_viz_state(force=True)
             return
+        if name == "notice":                    # the server says something (cast music paused, a new song): app stays
+            if isinstance(req.get("text"), str) and req["text"]:
+                secs = req.get("secs") if isinstance(req.get("secs"), (int, float)) else 4
+                self.toast(req["text"][:120], secs, req.get("kind") if isinstance(req.get("kind"), str) else None)
+            return
         if name == "pair":                      # an unpaired phone wants the code: the app in front stays
             self.show_pair_code(req.get("code"))
             return

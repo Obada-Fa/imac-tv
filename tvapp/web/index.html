@@ -22,6 +22,11 @@
   <div id="remote-activity">
     <button id="update-notice" type="button" class="nextbtn glass" hidden>TV update available · Update now</button>
     <button id="phone-media" type="button" class="phone-media nextbtn glass" aria-pressed="false" hidden>Show in phone media controls</button>
+    <div id="mc" class="yt mc glass" hidden>
+      <div class="yt-main"><img id="mc-art" alt="" hidden><span class="yt-text"><small class="mc-kick" id="mc-kick">Music on the TV</small><b id="mc-title">Music</b><small id="mc-artist"></small></span></div>
+      <div class="yt-seek" id="mc-seekrow"><span id="mc-pos">0:00</span><input id="mc-range" type="range" min="0" max="1" step="1" value="0" aria-label="Music position"><span id="mc-dur">-0:00</span></div>
+      <div class="yt-ctl"><button id="mc-prev" type="button" class="hb" data-mc="previous" aria-label="Previous song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M18 6l-8 6 8 6z"/></svg></button><button id="mc-play" type="button" class="hb lit" data-mc="play_pause" aria-label="Play or pause the music"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6L18 12z"/></svg></button><button id="mc-next" type="button" class="hb" data-mc="next" aria-label="Next song"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M6 6l8 6-8 6z"/></svg></button><button id="mc-stop" type="button" class="hb" data-mc="stop" aria-label="Stop the music"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button></div>
+    </div>
     <div id="yt" class="yt glass" hidden>
       <button id="yt-open" type="button" class="yt-main" aria-label="Show YouTube on the TV"><img id="yt-art" alt="" hidden><span class="yt-text"><b id="yt-title">YouTube</b><small id="yt-artist"></small></span></button>
       <div class="yt-seek" id="yt-seekrow"><span id="yt-pos">0:00</span><input id="yt-range" type="range" min="0" max="1" step="1" value="0" aria-label="YouTube position"><span id="yt-dur">-0:00</span></div>

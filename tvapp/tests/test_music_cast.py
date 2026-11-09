@@ -85,6 +85,104 @@ class TvControls(unittest.TestCase):
             self.assertFalse(music_cast.toggle(empty))
 
 
+class FakeControl:
+    """Stands in for receiver.mjs's control socket: records each command and answers ok."""
+    def __init__(self, path, ok=True):
+        self.commands, self.ok = [], ok
+        self.srv = socket.socket(socket.AF_UNIX)
+        self.srv.bind(path)
+        self.srv.listen()
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        while True:
+            try:
+                c, _ = self.srv.accept()
+            except OSError:
+                return
+            with c:
+                self.commands.append(json.loads(c.recv(4096).split(b"\n")[0]))
+                c.sendall(json.dumps({"ok": self.ok}).encode() + b"\n")
+
+
+class ReceiverControl(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(dir="/tmp")
+        self.ctl = FakeControl(os.path.join(self.dir, music_cast.CTL_NAME))
+        self.mpv = FakeMpv(os.path.join(self.dir, music_cast.SOCK_NAME))
+
+    def tearDown(self):
+        import shutil
+        self.ctl.srv.close()
+        self.mpv.srv.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_commands_go_through_the_receiver_not_mpv(self):
+        self.assertTrue(music_cast.control(self.dir, "next"))
+        self.assertTrue(music_cast.control(self.dir, "seek", offset=-10))
+        self.assertTrue(music_cast.toggle(self.dir))
+        self.assertEqual(self.ctl.commands, [{"cmd": "next"}, {"cmd": "seek", "offset": -10}, {"cmd": "play_pause"}])
+        self.assertEqual(self.mpv.commands, [])
+
+    def test_pause_asks_the_receiver_only_while_playing(self):
+        now = Path(self.dir, music_cast.NOW_FILE)
+        now.write_text(json.dumps({"status": "Paused", "updated": time.time()}))
+        self.assertFalse(music_cast.pause(self.dir))
+        now.write_text(json.dumps({"status": "Playing", "updated": time.time()}))
+        self.assertTrue(music_cast.pause(self.dir))
+        self.assertEqual(self.ctl.commands, [{"cmd": "pause"}])
+
+    def test_unknown_commands_are_refused(self):
+        with self.assertRaises(ValueError):
+            music_cast.control(self.dir, "rm -rf")
+
+    def test_no_control_socket_is_none(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as empty:
+            self.assertIsNone(music_cast.control(empty, "stop"))
+
+
+class OnePlayer(unittest.TestCase):
+    """Cast music and YouTube: whichever started last plays, the other is paused."""
+    song = {"status": "Playing", "id": "a", "title": "A"}
+
+    def test_youtube_starting_pauses_the_music(self):
+        arb = music_cast.Arbiter()
+        self.assertIsNone(arb.step("Paused", self.song))
+        self.assertEqual(arb.new_song, self.song)
+        self.assertIsNone(arb.step("Paused", self.song))
+        self.assertIsNone(arb.new_song)
+        self.assertEqual(arb.step("Playing", self.song), "pause_cast")
+        self.assertIsNone(arb.step("Playing", dict(self.song, status="Paused")))
+
+    def test_casting_a_song_pauses_youtube(self):
+        arb = music_cast.Arbiter()
+        self.assertIsNone(arb.step("Playing", None))
+        self.assertEqual(arb.step("Playing", self.song), "pause_youtube")
+        self.assertIsNone(arb.step("Paused", self.song))
+
+    def test_resuming_the_music_pauses_youtube_again(self):
+        arb = music_cast.Arbiter()
+        arb.step("Paused", self.song)
+        self.assertEqual(arb.step("Playing", self.song), "pause_cast")
+        self.assertIsNone(arb.step("Playing", dict(self.song, status="Paused")))
+        self.assertEqual(arb.step("Playing", self.song), "pause_youtube")
+
+    def test_next_song_while_youtube_plays_pauses_youtube(self):
+        arb = music_cast.Arbiter()
+        arb.step(None, self.song)
+        self.assertEqual(arb.step("Playing", self.song), "pause_cast")
+        arb.step("Playing", dict(self.song, status="Paused"))
+        self.assertEqual(arb.step("Playing", {"status": "Playing", "id": "b"}), "pause_youtube")
+
+    def test_both_already_playing_keeps_youtube(self):
+        self.assertEqual(music_cast.Arbiter().step("Playing", self.song), "pause_cast")
+
+    def test_server_settles_them_and_has_music_controls(self):
+        src = (Path(music_cast.__file__).parent / "server.py").read_text()
+        self.assertIn("self._one_player(", src)
+        self.assertIn('action == "music_media"', src)
+
+
 class Supervision(unittest.TestCase):
     def test_missing_pieces_leave_it_off(self):
         with mock.patch.object(music_cast, "node_bin", return_value=None), \

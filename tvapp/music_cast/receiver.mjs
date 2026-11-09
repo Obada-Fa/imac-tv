@@ -5,6 +5,7 @@
 // Started and restarted by the phone server (tvapp/music_cast.py). Environment:
 //   IMACTV_DATA_DIR    where the pairing store and music_cast_now.json live
 //   IMACTV_MUSIC_SOCK  mpv's JSON IPC socket
+//   IMACTV_MUSIC_CTL   our own control socket: the TV and the phone remote send play_pause/next/stop/... here
 //   IMACTV_MUSIC_PORT  DIAL port the phone apps discover (default 8766)
 //   IMACTV_MUSIC_MPV   mpv binary (default "mpv"); IMACTV_YTDLP: yt-dlp for mpv's ytdl hook
 //   IMACTV_JS_RUNTIME  passed to yt-dlp as --js-runtimes (set only when that yt-dlp knows the option)
@@ -18,6 +19,7 @@ import YouTubeCastReceiver, { Player, PLAYER_STATUSES, RESET_PLAYER_ON_DISCONNEC
 
 const DATA = process.env.IMACTV_DATA_DIR || path.join(os.homedir(), '.local/share/imactv');
 const SOCK = process.env.IMACTV_MUSIC_SOCK || path.join(DATA, 'music-mpv.sock');
+const CTL = process.env.IMACTV_MUSIC_CTL || path.join(DATA, 'music-ctl.sock');
 const PORT = Number(process.env.IMACTV_MUSIC_PORT || 8766);
 const MPV = process.env.IMACTV_MUSIC_MPV || 'mpv';
 const YTDLP = process.env.IMACTV_YTDLP || '';
@@ -282,11 +284,56 @@ export class MpvPlayer extends Player {
       const position = await this.doGetPosition();
       const duration = await this.doGetDuration();
       if (pub !== this.pubGen) return;
-      writeJson(this.nowFile, { status: name, ...track, position, duration, updated: Date.now() / 1000 });
+      let nav = {};
+      try { nav = this.getNavInfo() || {}; } catch { /* no queue yet */ }
+      writeJson(this.nowFile, { status: name, ...track, position, duration, can_next: Boolean(nav.hasNext),
+        can_prev: Boolean(nav.hasPrevious), updated: Date.now() / 1000 });
     };
     await write();
     if (pub === this.pubGen) this.heartbeat = setInterval(write, HEARTBEAT_MS);
   }
+}
+
+// ---- control from the TV and the phone remote (tvapp/music_cast.py `control`): one JSON line in, one out.
+// Going through the Player (not mpv directly) keeps the phone's YouTube Music app in step.
+export async function control(player, msg) {
+  const playing = player.status === PLAYER_STATUSES.PLAYING, paused = player.status === PLAYER_STATUSES.PAUSED;
+  switch (msg && msg.cmd) {
+    case 'play_pause': return playing ? player.pause() : paused ? player.resume() : false;
+    case 'pause': return playing ? player.pause() : paused;
+    case 'resume': case 'play': return paused ? player.resume() : playing;
+    case 'stop': return player.stop();
+    case 'next': return player.next();
+    case 'previous': return player.previous();
+    case 'seek': {
+      const offset = Number(msg.offset);
+      if (!Number.isFinite(offset)) return false;
+      return player.seek(Math.max(0, (await player.getPosition()) + offset));
+    }
+    case 'set_position': {
+      const position = Number(msg.position);
+      return Number.isFinite(position) ? player.seek(Math.max(0, position)) : false;
+    }
+    default: return false;
+  }
+}
+
+export function serveControl(player, sock = CTL) {
+  try { fs.unlinkSync(sock); } catch { /* not there */ }
+  const server = net.createServer((c) => {
+    let buf = '';
+    c.on('data', async (d) => {
+      buf += d.toString();
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      let ok = false, error = null;
+      try { ok = Boolean(await control(player, JSON.parse(buf.slice(0, nl)))); } catch (e) { error = e?.message || String(e); }
+      c.end(JSON.stringify({ ok, ...(error ? { error } : {}) }) + '\n');
+    });
+    c.on('error', () => {});
+  });
+  server.listen(sock);
+  return server;
 }
 
 async function setSystemVolume(volume) {
@@ -339,6 +386,7 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
   await receiver.start();
+  serveControl(player);
   writeJson(NOW_FILE, { status: 'Stopped', updated: Date.now() / 1000 });
   log(`Nexus TV music receiver on port ${PORT}`);
 }

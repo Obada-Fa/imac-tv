@@ -24,6 +24,8 @@ APP_DIR = Path(__file__).resolve().parent / "music_cast"
 LOCAL = Path.home() / ".local/share/imactv"
 NOW_FILE = "music_cast_now.json"
 SOCK_NAME = "music-mpv.sock"
+CTL_NAME = "music-ctl.sock"     # receiver.mjs `serveControl`: play_pause, pause, resume, stop, next, previous, seek
+COMMANDS = ("play_pause", "pause", "resume", "stop", "next", "previous", "seek", "set_position")
 PORT = int(os.environ.get("IMACTV_MUSIC_PORT", "8766"))
 MAX_AGE = 20.0          # s: the receiver rewrites the file every 5 s while a song is loaded
 MIN_NODE = (20, 10)    # youtubei.js (pulled in by yt-cast-receiver) uses import attributes: Node 18.19 can't load it
@@ -89,7 +91,8 @@ def parse_now(raw, now=None, max_age=MAX_AGE):
     return {"status": raw["status"], "title": str(raw.get("title") or "").strip() or "Music",
             "artist": str(raw.get("artist") or "").strip(), "art": raw.get("art") or None,
             "id": raw.get("id"), "position": raw.get("position"), "duration": raw.get("duration"),
-            "source": "cast"}
+            "can_next": bool(raw.get("can_next")), "can_prev": bool(raw.get("can_prev")),
+            "updated": updated, "source": "cast"}
 
 
 def now(data_dir):
@@ -125,16 +128,71 @@ def mpv_command(data_dir, cmd, timeout=1.0):
         return False
 
 
+def control(data_dir, cmd, timeout=6.0, **params):
+    """One command to the receiver's control socket (through its Player, so the phone app follows).
+    True/False as the receiver answered; None when no receiver listens (an older one, or none running)."""
+    if cmd not in COMMANDS:
+        raise ValueError("Unknown music command")
+    try:
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(timeout)
+            s.connect(str(Path(data_dir) / CTL_NAME))
+            s.sendall((json.dumps({"cmd": cmd, **params}) + "\n").encode())
+            buf = b""
+            while b"\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        return bool(json.loads(buf.split(b"\n")[0]).get("ok"))
+    except (OSError, ValueError):
+        return None
+
+
 def toggle(data_dir):
-    """Play/pause from the TV (Home's Now playing tile); the receiver tells the phone."""
-    return mpv_command(data_dir, ["cycle", "pause"])
+    """Play/pause from the TV (Home's Now playing tile) or the phone remote; the receiver tells the phone."""
+    done = control(data_dir, "play_pause")
+    return mpv_command(data_dir, ["cycle", "pause"]) if done is None else done
 
 
 def pause(data_dir):
-    """A movie or another app starts: pause the cast music (never resumed by us)."""
-    if now(data_dir):
-        return mpv_command(data_dir, ["set_property", "pause", True])
+    """A movie or YouTube starts: pause the cast music (never resumed by us)."""
+    st = now(data_dir)
+    if st and st["status"] == "Playing":
+        done = control(data_dir, "pause")
+        return mpv_command(data_dir, ["set_property", "pause", True]) if done is None else done
     return False
+
+
+class Arbiter:
+    """Only one of cast music and YouTube plays: whichever started last wins, the other is paused.
+
+    `step(youtube_status, cast)` every few seconds -> "pause_cast", "pause_youtube" or None; also reports a new
+    cast song so the TV can show it (`new_song`)."""
+
+    def __init__(self):
+        self.yt_playing = False
+        self.cast_key = None          # (id) of the cast song last seen playing
+        self.cast_playing = False
+        self.new_song = None
+
+    def step(self, youtube_status, cast):
+        yt = youtube_status == "Playing"
+        playing = bool(cast) and cast.get("status") == "Playing"
+        key = cast.get("id") or cast.get("title") if cast else None
+        cast_started = playing and (not self.cast_playing or key != self.cast_key)
+        yt_started = yt and not self.yt_playing
+        self.new_song = cast if playing and key != self.cast_key else None
+        if playing:
+            self.cast_key = key
+        elif not cast:
+            self.cast_key = None
+        action = None
+        if yt and playing:
+            action = "pause_youtube" if cast_started and not yt_started else "pause_cast"
+        self.yt_playing = yt and action != "pause_youtube"
+        self.cast_playing = playing and action != "pause_cast"
+        return action
 
 
 class Supervisor:
@@ -149,7 +207,7 @@ class Supervisor:
 
     def env(self):
         env = dict(os.environ, IMACTV_DATA_DIR=str(self.data_dir), IMACTV_MUSIC_PORT=str(PORT),
-                   IMACTV_MUSIC_SOCK=str(self.data_dir / SOCK_NAME))
+                   IMACTV_MUSIC_SOCK=str(self.data_dir / SOCK_NAME), IMACTV_MUSIC_CTL=str(self.data_dir / CTL_NAME))
         ytdlp = ytdlp_bin()
         if ytdlp:
             env["IMACTV_YTDLP"] = ytdlp

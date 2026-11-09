@@ -543,6 +543,7 @@ class Controller:
         self._yt_key = None             # track the decision below belongs to
         self._yt_decided = (None, None, False)
         self._yt_popped = None          # track VacuumTube was brought up for
+        self._music_arbiter = music_cast.Arbiter()
         self._yt_dismissed = None       # track the user sent back to Home
         self._yt_home_until = 0.0       # absorb a metadata gap when Home was pressed
         self._yt_viz_until = 0.0        # the visualizer showed recently: don't bring YouTube over it
@@ -957,6 +958,26 @@ class Controller:
         except Exception:
             return True
 
+    def _one_player(self, youtube_status):
+        """Cast music and YouTube never play at once: the one started last wins (music_cast.Arbiter). The TV says
+        so on its notice island, and names each new cast song over other apps (Home's tile shows it already)."""
+        try:
+            cast = music_cast.now(DATA)
+            action = self._music_arbiter.step(youtube_status, cast)
+            if action == "pause_cast" and music_cast.pause(DATA):
+                LOG.info("Paused cast music for YouTube")
+                self._ui_request("notice", text="Music paused · YouTube is playing", kind="play", secs=4)
+            elif action == "pause_youtube":
+                for name in nowplaying.pause_all_playing():
+                    LOG.info("Paused %s for cast music", name)
+                self._ui_request("notice", text="YouTube paused · music from your phone", kind="play", secs=4)
+            song = self._music_arbiter.new_song
+            if song and action is None and self.app != "home":
+                text = " · ".join(x for x in (song.get("title"), song.get("artist")) if x)
+                self._ui_request("notice", text="♪  " + (text or "Music from your phone"), kind="play", secs=4)
+        except Exception:
+            LOG.exception("Could not settle cast music against YouTube")
+
     def _youtube_tick(self):
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
         try:
@@ -966,6 +987,7 @@ class Controller:
             with self.lock:
                 generation = self.generation
             state = self.youtube_now()
+            self._one_player((state or {}).get("status"))
             key = nowplaying.track_key(state)
             with self.lock:
                 if generation != self.generation:
@@ -2513,6 +2535,25 @@ class Controller:
                 return self.set_youtube_mode(params.get("mode"))
             if action == "music_toggle":
                 return {"ok": music_cast.toggle(DATA)}
+            if action == "music_media":
+                cmd = params.get("cmd")
+                if cmd not in music_cast.COMMANDS:
+                    raise ValueError("Unknown music command")
+                extra = {}
+                if cmd in ("seek", "set_position"):
+                    key = "offset" if cmd == "seek" else "position"
+                    value = params.get(key)
+                    if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
+                        raise ValueError(f"{key} must be a number of seconds")
+                    extra[key] = value
+                if cmd == "play_pause":
+                    ok = music_cast.toggle(DATA)
+                else:
+                    ok = music_cast.control(DATA, cmd, **extra)
+                    if ok is None:
+                        raise RuntimeError("Restart the TV app to control cast music from here")
+                time.sleep(0.3)                                  # the receiver rewrites music_cast_now.json
+                return {"ok": bool(ok), "music_cast": music_cast.now(DATA)}
             if action == "youtube_media":
                 cmd = params.get("cmd")
                 if cmd not in nowplaying.COMMANDS:

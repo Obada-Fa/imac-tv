@@ -502,6 +502,58 @@
   };
   [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { send('select', {app: 'youtube'}).catch(() => {}); });
 
+  // Music cast from the YouTube / YouTube Music phone apps (sound only on the TV): its own card, so it can be
+  // paused, skipped or stopped from here even while YouTube or a movie is in front.
+  let mcPending = 0, mcState = null, mcAt = 0, mcDragging = false;
+  function mcPosition() {
+    if (!mcState || mcState.position == null) return 0;
+    const live = mcState.status === 'Playing' ? (Date.now() - mcAt) / 1000 : 0;
+    return Math.min(mcState.duration || Infinity, mcState.position + live);
+  }
+  function mcTick() {
+    if (!mcState || mcDragging || $('mc').hidden) return;
+    const pos = mcPosition(), len = mcState.duration || 0;
+    $('mc-range').value = pos; fillRange($('mc-range')); $('mc-pos').textContent = clock(pos); $('mc-dur').textContent = '-' + clock(len - pos);
+  }
+  setInterval(mcTick, 250);
+  function renderMusic(mc, view) {
+    const bar = $('mc');
+    bar.hidden = !mc || (view === 'playing' && mc.status !== 'Playing');
+    if (bar.hidden) { mcState = null; return; }
+    // the receiver writes position every 5 s: count from when it was written, not from when we heard it
+    mcState = mc; mcAt = mc.updated ? Math.min(Date.now(), mc.updated * 1000) : Date.now();
+    $('mc-kick').textContent = mc.status === 'Playing' ? 'Music on the TV · from your phone' : 'Music on the TV · paused';
+    $('mc-title').textContent = mc.title || 'Music';
+    $('mc-artist').textContent = mc.artist || '';
+    $('mc-artist').hidden = !mc.artist;
+    const art = $('mc-art');
+    if (mc.art) { if (art.getAttribute('src') !== mc.art) art.src = mc.art; art.hidden = false; art.onerror = () => { art.hidden = true; }; }
+    else { art.hidden = true; art.removeAttribute('src'); }
+    const seekable = mc.duration > 0 && mc.position != null;
+    $('mc-seekrow').hidden = !seekable;
+    if (seekable) { $('mc-range').max = mc.duration; mcTick(); }
+    $('mc-prev').hidden = !mc.can_prev;
+    $('mc-next').hidden = !mc.can_next;
+    if (Date.now() > mcPending) playGlyph($('mc-play'), mc.status === 'Playing');
+  }
+  async function mcSend(params, onFail) {
+    try { const r = await send('music_media', params); if (r && r.result) renderMusic(r.result.music_cast, $('controls').dataset.view); }
+    catch (e) { if (onFail) onFail(); message(e && e.message ? e.message : 'The music did not answer'); }
+  }
+  document.querySelectorAll('#mc [data-mc]').forEach(b => b.onclick = async () => {
+    const play = $('mc-play'), before = play.dataset.playing === '1';
+    if (b === play) { playGlyph(play, !before); mcPending = Date.now() + 2500; }
+    await mcSend({cmd: b.dataset.mc}, () => { if (b === play) playGlyph(play, before); });
+    mcPending = 0;
+  });
+  const mr = $('mc-range');
+  mr.addEventListener('input', () => { mcDragging = true; fillRange(mr); $('mc-pos').textContent = clock(+mr.value); $('mc-dur').textContent = '-' + clock((mcState && mcState.duration || 0) - mr.value); });
+  mr.addEventListener('change', () => {
+    const position = +mr.value;
+    if (mcState) { mcState.position = position; mcAt = Date.now(); }
+    mcSend({cmd: 'set_position', position}).then(() => { mcDragging = false; });
+  });
+
   // Playback prompts: each button is one server action; the TV answers the same prompts with OK / Back.
   let playbackPromptId = null;
   for (const [id, choice] of [['ph-switch', 'switch'], ['ph-dismiss', 'dismiss']]) {
@@ -545,6 +597,7 @@
     }
     $('remote').classList.toggle('media-first', view !== 'browse');
     renderYoutube(s.youtube_now, view);
+    renderMusic(s.music_cast, view);
     renderViz(s.visualizer, view);
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';

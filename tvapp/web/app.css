@@ -149,6 +149,9 @@ footer .quiet::before{content:"";width:9px;height:calc(9px / var(--hx-ar));backg
 .yt.open .yt-main{flex:1 1 0}
 .yt-mode{flex:1 1 100%;min-height:38px;margin-top:4px;font-size:13px;font-weight:500;background:none;border-color:transparent;color:var(--ink2);text-align:left;padding:0 4px}
 .yt-mode small{color:var(--ink3);margin-left:6px}
+.mc .yt-main img{width:48px;height:48px}
+.mc-kick{font-size:10px!important;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+.mc #mc-stop svg rect{fill:currentColor;stroke:none}
 .viz-next{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 14px;font-size:13px;font-weight:500;text-align:left}
 .viz-next small{color:var(--ink3);margin-left:auto;letter-spacing:.04em}
 

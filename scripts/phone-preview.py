@@ -62,6 +62,7 @@ class Preview(SimpleHTTPRequestHandler):
     apps_rev = 1
     desktop_app = None   # id of a "running" desktop app, for the touchpad view
     youtube = False      # pretend YouTube plays in the background (the Remote tab's YouTube overview)
+    music = False        # pretend a song is cast from the phone's YouTube Music app
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "tvapp/web"), **kwargs)
 
@@ -122,6 +123,10 @@ class Preview(SimpleHTTPRequestHandler):
                 extra["youtube_now"] = {"status": "Playing", "title": "Northern lights over the Lofoten islands, 4K",
                                         "artist": "Nature Relaxation Films", "art": "/api/yt-thumb.jpg", "source": "youtube",
                                         "length": 1520, "position": 312, "can_seek": True, "youtube_mode": "video"}
+            if self.music:
+                extra["music_cast"] = {"status": "Playing", "title": "Blinding Lights", "artist": "The Weeknd",
+                                       "art": "/api/yt-thumb.jpg", "source": "cast", "position": 74, "duration": 200,
+                                       "can_next": True, "can_prev": True, "updated": time.time()}
             self.json({**{"apps_rev": self.apps_rev}, "app": "home", "phase": "ready", "gui": True, "playback": {"active": False},
                        "volume": 45, "muted": False, "brightness": {"level": 80, "available": True},
                        "fullscreen": True, "screen_off": False, "timer": {"active": False},
@@ -255,12 +260,14 @@ if __name__ == "__main__":
     ap.add_argument("--native-bridge", type=Path, help="Preview the Flutter app's bridge with inert native controls")
     ap.add_argument("--apps", type=int, default=12, help="How many sample PC apps the Apps sheet lists")
     ap.add_argument("--max-favorites", type=int, default=6)
+    ap.add_argument("--music", action="store_true", help="Pretend a song is cast to the TV from YouTube Music")
     ap.add_argument("--youtube", action="store_true", help="Pretend YouTube plays on the TV (the Remote tab's YouTube overview)")
     ap.add_argument("--desktop-app", action="store_true", help="Pretend a desktop app is selected on the TV (touchpad view)")
     args = ap.parse_args()
     Preview.apps = sample_apps(args.apps)
     Preview.max_favorites = args.max_favorites
     Preview.youtube = args.youtube
+    Preview.music = args.music
     if args.desktop_app:
         Preview.desktop_app = next(a["id"] for a in Preview.apps if a["kind"] == "desktop")
     if args.native_bridge:

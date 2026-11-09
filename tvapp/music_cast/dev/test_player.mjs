@@ -1,6 +1,7 @@
 import fs from 'node:fs'; import path from 'node:path'; import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { Mpv, MpvPlayer } from '../receiver.mjs';
+import net from 'node:net';
+import { Mpv, MpvPlayer, control, serveControl } from '../receiver.mjs';
 // Player checks against a stand-in mpv (dev/fake_mpv.py). Needs node_modules: npm ci in music_cast/.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 import { PLAYER_STATUSES as P, DefaultLogger } from 'yt-cast-receiver';
@@ -19,7 +20,7 @@ try {
   assert.equal(await player.play(video('A1'), 0), true);
   assert.equal(player.status, P.PLAYING); await wait(150);
   let n = now(); console.log('playing:', n.status, n.title, n.artist, n.art);
-  assert.equal(n.status, 'Playing'); assert.equal(n.title, 'Song A1');
+  assert.equal(n.status, 'Playing'); assert.equal(n.title, 'Song A1'); assert.equal(n.can_next, false);
   const args = JSON.parse(fs.readFileSync(ARGS, 'utf8')); console.log('mpv args:', args.join(' '));
   assert.ok(args.includes('--no-video') && args.includes('--ytdl-format=bestaudio/best'));
   await player.pause(); assert.equal(player.status, P.PAUSED); await wait(100); assert.equal(now().status, 'Paused');
@@ -37,6 +38,20 @@ try {
   assert.equal(mpv.ytdlModes[0]['js-runtimes'], 'node:/n/node', 'the mode that worked leads');
   assert.equal(await player.play(video('nojs2'), 0), true, 'falls back the other way too');
   assert.ok(!args.some((a) => a.startsWith('--ytdl-raw-options')), 'no JS runtime on the command line');
+  // the TV / phone remote control socket
+  assert.equal(await player.play(video('C3'), 0), true);
+  assert.equal(await control(player, { cmd: 'play_pause' }), true); assert.equal(player.status, P.PAUSED);
+  assert.equal(await control(player, { cmd: 'play_pause' }), true); assert.equal(player.status, P.PLAYING);
+  assert.equal(await control(player, { cmd: 'nonsense' }), false);
+  const ctl = path.join(dir, 'ctl.sock'), srv = serveControl(player, ctl); await wait(50);
+  const ask = (msg) => new Promise((res) => { const c = net.createConnection(ctl); let b = '';
+    c.on('connect', () => c.write(JSON.stringify(msg) + '\n')); c.on('data', (d) => { b += d; }); c.on('end', () => res(JSON.parse(b))); });
+  assert.equal((await ask({ cmd: 'pause' })).ok, true); assert.equal(player.status, P.PAUSED);
+  assert.equal((await ask({ cmd: 'pause' })).ok, true, 'pausing a paused song is fine');
+  assert.equal((await ask({ cmd: 'resume' })).ok, true); assert.equal(player.status, P.PLAYING);
+  assert.equal((await ask({ cmd: 'stop' })).ok, true); await wait(100);
+  assert.equal(now().status, 'Stopped', 'stop from the TV'); srv.close();
+  console.log('control socket ok');
   assert.equal(await player.play(video('B2'), 0), true);
   await wait(2600);                                                            // the song ends: queue empty -> stop
   console.log('after end:', player.status, now().status);

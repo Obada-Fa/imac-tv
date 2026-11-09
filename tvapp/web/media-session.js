@@ -43,6 +43,12 @@ class TVMediaControls {
         art: media.poster, paused: Boolean(pb.paused), duration: pb.duration, position: pb.position,
         seekable: pb.duration > 0, next: Boolean(media.next), previous: false, pausable: true};
     }
+    const mc = state?.music_cast;
+    const music = mc && ['Playing', 'Paused'].includes(mc.status) ? {kind: 'music', title: mc.title || 'Music',
+      artist: mc.artist || 'Music on Nexus TV', art: mc.art, paused: mc.status === 'Paused', duration: mc.duration,
+      position: mc.position, seekable: mc.duration > 0 && Number.isFinite(mc.position), next: Boolean(mc.can_next),
+      previous: Boolean(mc.can_prev), pausable: true} : null;
+    if (music && (music.paused === false || !(yt && yt.status === 'Playing'))) return music;
     if (yt && ['Playing', 'Paused'].includes(yt.status)) {
       return {kind: 'youtube', title: yt.title || 'YouTube', artist: yt.artist || 'YouTube on Nexus TV',
         art: yt.art, paused: yt.status === 'Paused', duration: yt.length, position: yt.position,
@@ -167,6 +173,20 @@ class TVMediaControls {
       const t = this.track;
       if (!this.enabled || !this.started || !t || t.kind !== kind || !this.handlers.has(action)) return;
       let command, params;
+      if (kind === 'music') {
+        // cast music has the same command words as YouTube, under its own action
+        const yt = {play: 'resume', pause: 'pause', stop: 'stop', nexttrack: 'next', previoustrack: 'previous'}[action];
+        if (yt) params = {cmd: yt};
+        else {
+          const offset = Number.isFinite(details.seekOffset) && details.seekOffset > 0 ? details.seekOffset : 10;
+          const seconds = action === 'seekto' ? details.seekTime : this.position() + (action === 'seekbackward' ? -offset : offset);
+          if (!Number.isFinite(seconds)) return;
+          params = {cmd: 'set_position', position: Math.max(0, Math.min(t.duration, 86400, seconds))};
+        }
+        await this.send('music_media', params);
+        this.update(await this.readState());
+        return;
+      }
       if (action === 'play' || action === 'pause') {
         command = kind === 'youtube' ? 'youtube_media' : 'set_paused';
         params = kind === 'youtube' ? {cmd: action} : {paused: action === 'pause'};
