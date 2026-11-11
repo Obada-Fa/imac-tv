@@ -1,5 +1,10 @@
 /* The TV plays the real media. A silent HTML audio loop gives mobile browsers
  * a local session to expose in the notification shade / lock screen. */
+function youtubePlaybackSource(yt, music) {
+  if (music?.status === 'Playing' || (music?.status === 'Paused' && yt?.status !== 'Playing')) return 'music';
+  return yt ? 'youtube' : null;
+}
+
 class TVMediaControls {
   constructor({button, send, readState, message}) {
     this.button = button;
@@ -44,11 +49,10 @@ class TVMediaControls {
         seekable: pb.duration > 0, next: Boolean(media.next), previous: false, pausable: true};
     }
     const mc = state?.music_cast;
-    const music = mc && ['Playing', 'Paused'].includes(mc.status) ? {kind: 'music', title: mc.title || 'Music',
+    if (youtubePlaybackSource(yt, mc) === 'music') return {kind: 'music', title: mc.title || 'Music',
       artist: mc.artist || 'Music on Nexus TV', art: mc.art, paused: mc.status === 'Paused', duration: mc.duration,
       position: mc.position, seekable: mc.duration > 0 && Number.isFinite(mc.position), next: Boolean(mc.can_next),
-      previous: Boolean(mc.can_prev), pausable: true} : null;
-    if (music && (music.paused === false || !(yt && yt.status === 'Playing'))) return music;
+      previous: Boolean(mc.can_prev), pausable: true};
     if (yt && ['Playing', 'Paused'].includes(yt.status)) {
       return {kind: 'youtube', title: yt.title || 'YouTube', artist: yt.artist || 'YouTube on Nexus TV',
         art: yt.art, paused: yt.status === 'Paused', duration: yt.length, position: yt.position,

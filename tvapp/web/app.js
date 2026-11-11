@@ -473,7 +473,7 @@
     }
   }
   async function ytSend(params, onFail) {
-    try { const r = await send('youtube_media', params); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
+    try { const r = await send('youtube_media', params); if (r && r.result && !$('yt').hidden) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
     catch (e) { if (onFail) onFail(); }
   }
   document.querySelectorAll('#yt [data-yt]').forEach(b => b.onclick = async () => {
@@ -497,13 +497,12 @@
   });
   $('yt-mode').onclick = async () => {
     
-    try { const r = await send('youtube_mode', {mode: $('yt-mode').dataset.mode}); if (r && r.result) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
+    try { const r = await send('youtube_mode', {mode: $('yt-mode').dataset.mode}); if (r && r.result && !$('yt').hidden) renderYoutube(r.result.youtube_now, $('controls').dataset.view); }
     catch (e) {}
   };
   [$('yt-open'), $('yt-show')].forEach(b => b.onclick = () => { send('select', {app: 'youtube'}).catch(() => {}); });
 
-  // Music cast from the YouTube / YouTube Music phone apps (sound only on the TV): its own card, so it can be
-  // paused, skipped or stopped from here even while YouTube or a movie is in front.
+  // Controls for audio cast from the YouTube and YouTube Music phone apps.
   let mcPending = 0, mcState = null, mcAt = 0, mcDragging = false;
   function mcPosition() {
     if (!mcState || mcState.position == null) return 0;
@@ -537,7 +536,7 @@
     if (Date.now() > mcPending) playGlyph($('mc-play'), mc.status === 'Playing');
   }
   async function mcSend(params, onFail) {
-    try { const r = await send('music_media', params); if (r && r.result) renderMusic(r.result.music_cast, $('controls').dataset.view); }
+    try { const r = await send('music_media', params); if (r && r.result && !$('mc').hidden) renderMusic(r.result.music_cast, $('controls').dataset.view); }
     catch (e) { if (onFail) onFail(); message(e && e.message ? e.message : 'The music did not answer'); }
   }
   document.querySelectorAll('#mc [data-mc]').forEach(b => b.onclick = async () => {
@@ -596,8 +595,9 @@
       if (view !== 'playing') { subDelay = 0; sigs = {}; if (sheetName === 'subs' || sheetName === 'audio') closeSheet(); }
     }
     $('remote').classList.toggle('media-first', view !== 'browse');
-    renderYoutube(s.youtube_now, view);
-    renderMusic(s.music_cast, view);
+    const source = youtubePlaybackSource(s.youtube_now, s.music_cast);
+    renderYoutube(source === 'youtube' ? s.youtube_now : null, view);
+    renderMusic(source === 'music' ? s.music_cast : null, view);
     renderViz(s.visualizer, view);
     $('apps').hidden = view === 'playing';
     $('browse').hidden = view !== 'browse';
@@ -1761,6 +1761,7 @@
       }
     }
     renderConnections();
+    renderMusicCasting();
     renderSystem();
   }
   // Connections: the TV's glass QR card says "scan to connect"; here the same card shows the link it made.
@@ -1782,6 +1783,17 @@
       rows.append(b);
     }
     access.append(card, rows);
+  }
+  function renderMusicCasting() {
+    const container = $('settings-music-cast'), cast = setState && setState.music_cast_service;
+    if (!changed(container, cast)) return;
+    container.replaceChildren();
+    if (!cast) return;
+    const text = {running: 'Receiver is running', starting: 'Starting…', off: 'Off',
+      missing: 'Missing ' + (cast.missing || []).join(', ')}[cast.state] || '';
+    const box = section(container, 'Music casting');
+    box.append(switchRow('Cast from YouTube Music', text, !!cast.enabled, on => settingsCall('music_cast_service', {cmd: on ? 'start' : 'stop'})),
+      actionRow('Restart casting', 'When "Nexus TV" is missing from the cast menu', () => settingsCall('music_cast_service', {cmd: 'restart'})));
   }
   // ---- iMac: live stats and stuck-app controls, polled only while this panel is on screen ----
   let systemTimer = null;

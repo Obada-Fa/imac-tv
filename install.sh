@@ -232,6 +232,7 @@ fi
 # Music casting: "Nexus TV" in the YouTube Music cast menu, sound only (Node.js, yt-dlp, receiver packages)
 bash "$ROOT_DIR/scripts/install-music-cast.sh" || printf "${YELLOW}Music casting setup failed; the TV works without it.${NC}\n"
 mkdir -p "$HOME/.local/bin" && ln -sf "$ROOT_DIR/scripts/pair-code.sh" "$HOME/.local/bin/nexus-tv-pair"
+ln -sf "$ROOT_DIR/scripts/cast.sh" "$HOME/.local/bin/nexus-tv-cast"
 
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
 printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"

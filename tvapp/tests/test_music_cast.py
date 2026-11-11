@@ -177,6 +177,15 @@ class OnePlayer(unittest.TestCase):
     def test_both_already_playing_keeps_youtube(self):
         self.assertEqual(music_cast.Arbiter().step("Playing", self.song), "pause_cast")
 
+    def test_pause_retries_keep_the_same_winner_until_the_loser_pauses(self):
+        arb = music_cast.Arbiter()
+        arb.step("Playing", None)
+        self.assertEqual(arb.step("Playing", self.song), "pause_youtube")
+        self.assertEqual(arb.step("Playing", self.song), "pause_youtube")
+        self.assertIsNone(arb.step("Paused", self.song))
+        self.assertEqual(arb.step("Playing", self.song), "pause_cast")
+        self.assertEqual(arb.step("Playing", self.song), "pause_cast")
+
     def test_server_settles_them_and_has_music_controls(self):
         src = (Path(music_cast.__file__).parent / "server.py").read_text()
         self.assertIn("self._one_player(", src)
@@ -238,10 +247,92 @@ class Supervision(unittest.TestCase):
             self.assertEqual(sorted(music_cast.Supervisor(data).stale_pids(root)), [101, 102])
 
 
+class ServiceControl(unittest.TestCase):
+    """Settings -> Playback -> Music casting, the phone's switch and `nexus-tv-cast`."""
+
+    def make(self, data, alive=None):
+        def popen(*_a, **_k):
+            up = threading.Event()                 # each receiver process lives until it is terminated
+            up.set()
+            proc = mock.Mock()
+            proc.poll.side_effect = lambda: None if up.is_set() else 0
+            proc.wait.side_effect = lambda timeout=None: self.block(up)
+            proc.terminate.side_effect = up.clear
+            return proc
+        sup = music_cast.Supervisor(data, popen=mock.Mock(side_effect=popen))
+        sup.kill_stale = mock.Mock()
+        return sup
+
+    @staticmethod
+    def block(up):
+        while up.is_set():
+            time.sleep(0.01)
+        return 0
+
+    def wait_for(self, check):
+        for _ in range(200):
+            if check():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def test_stop_keeps_it_off_until_started_again(self):
+        with tempfile.TemporaryDirectory() as data, mock.patch.object(music_cast, "missing", return_value=[]), \
+                mock.patch.object(music_cast, "node_bin", return_value="/n/node"), \
+                mock.patch.object(music_cast, "ytdlp_bin", return_value=None):
+            sup = self.make(data)
+            self.assertEqual(sup.status()["state"], "starting")
+            self.assertTrue(sup.start())
+            self.assertTrue(self.wait_for(sup.running))
+            self.assertEqual(sup.status()["state"], "running")
+            sup.switch_off()
+            self.assertEqual(sup.status(), {"enabled": False, "state": "off", "missing": [], "port": music_cast.PORT})
+            self.assertFalse(music_cast.Supervisor(data).enabled())          # survives a restart of the TV
+            self.assertFalse(music_cast.Supervisor(data, popen=mock.Mock()).start())
+            self.assertTrue(sup.start(force=True))
+            self.assertTrue(self.wait_for(sup.running))
+            self.assertTrue(sup.enabled())
+            sup.stop()
+
+    def test_restart_runs_one_receiver(self):
+        with tempfile.TemporaryDirectory() as data, mock.patch.object(music_cast, "missing", return_value=[]), \
+                mock.patch.object(music_cast, "node_bin", return_value="/n/node"), \
+                mock.patch.object(music_cast, "ytdlp_bin", return_value=None):
+            sup = self.make(data)
+            sup.start()
+            self.assertTrue(self.wait_for(lambda: sup.popen.call_count == 1))
+            first = sup.thread
+            sup.stop()
+            sup.start()
+            self.assertTrue(self.wait_for(lambda: sup.popen.call_count == 2))
+            first.join(2)
+            self.assertFalse(first.is_alive())                               # the old loop ended, it did not respawn
+            time.sleep(0.1)
+            self.assertEqual(sup.popen.call_count, 2)
+            sup.stop()
+
+    def test_a_slow_boot_reports_what_is_missing(self):
+        with tempfile.TemporaryDirectory() as data, \
+                mock.patch.object(music_cast, "missing", return_value=["Node.js 20.10+"]), \
+                mock.patch.object(music_cast.threading, "Thread") as thread:
+            sup = music_cast.Supervisor(data, popen=mock.Mock())
+            self.assertFalse(sup.start())
+            thread.assert_called_once()                                      # the 30 s re-check
+            self.assertEqual(thread.call_args.kwargs["target"], sup._retry_start)
+            self.assertEqual(sup.status()["state"], "missing")
+            self.assertIn("Node.js", music_cast.describe(sup.status()))
+
+    def test_server_action(self):
+        src = (Path(music_cast.__file__).parent / "server.py").read_text()
+        self.assertIn('"music_cast_service"', src)
+        self.assertIn("MUSIC.switch_off()", src)
+
+
 class Wiring(unittest.TestCase):
     def test_server_starts_it_and_handles_the_tv_toggle(self):
         src = (Path(music_cast.__file__).parent / "server.py").read_text()
-        self.assertIn("music_cast.Supervisor(DATA).start()", src)
+        self.assertIn("MUSIC = music_cast.Supervisor(DATA)", src)
+        self.assertIn("MUSIC.start()", src)
         self.assertIn('action == "music_toggle"', src)
         self.assertIn("music_cast.pause(DATA)", src)
 

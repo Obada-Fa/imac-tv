@@ -766,6 +766,7 @@ class Controller:
         self.updater.capture_running()
         youtube_volume.ensure_flag()
         threading.Thread(target=self._check_audio, daemon=True).start()
+        threading.Thread(target=self._watch_music_handoff, daemon=True).start()
         while True:
             time.sleep(2)
             self.updater.tick()
@@ -958,25 +959,39 @@ class Controller:
         except Exception:
             return True
 
-    def _one_player(self, youtube_status):
-        """Cast music and YouTube never play at once: the one started last wins (music_cast.Arbiter). The TV says
-        so on its notice island, and names each new cast song over other apps (Home's tile shows it already)."""
-        try:
-            cast = music_cast.now(DATA)
-            action = self._music_arbiter.step(youtube_status, cast)
-            if action == "pause_cast" and music_cast.pause(DATA):
-                LOG.info("Paused cast music for YouTube")
-                self._ui_request("notice", text="Music paused · YouTube is playing", kind="play", secs=4)
-            elif action == "pause_youtube":
-                for name in nowplaying.pause_all_playing():
-                    LOG.info("Paused %s for cast music", name)
-                self._ui_request("notice", text="YouTube paused · music from your phone", kind="play", secs=4)
-            song = self._music_arbiter.new_song
-            if song and action is None and self.app != "home":
-                text = " · ".join(x for x in (song.get("title"), song.get("artist")) if x)
-                self._ui_request("notice", text="♪  " + (text or "Music from your phone"), kind="play", secs=4)
-        except Exception:
-            LOG.exception("Could not settle cast music against YouTube")
+    def _watch_music_handoff(self):
+        """Check the audio handoff independently of YouTube classification and window management."""
+        while True:
+            try:
+                self._one_player()
+            except Exception:
+                LOG.exception("Could not settle cast music against YouTube")
+            time.sleep(0.5)
+
+    def _one_player(self):
+        cast = music_cast.now(DATA)
+        if not cast or cast["status"] != "Playing":
+            # Only read D-Bus at the faster rate when the cast receiver is playing.
+            with self.lock:
+                cached = getattr(self, "_yt_cache", None)
+            state = cached[1] if cached else None
+            self._music_arbiter.step((state or {}).get("status"), cast)
+            return
+        state = nowplaying.current()
+        action = self._music_arbiter.step((state or {}).get("status"), cast)
+        if action == "pause_cast" and music_cast.pause(DATA):
+            LOG.info("Paused cast music for YouTube")
+            self._ui_request("notice", text="Music paused · YouTube is playing", kind="play", secs=4)
+        elif action == "pause_youtube":
+            nowplaying.control("pause")
+            with self.lock:
+                self._yt_cache = None
+            LOG.info("Paused YouTube for cast music")
+            self._ui_request("notice", text="YouTube paused · music from your phone", kind="play", secs=4)
+        song = self._music_arbiter.new_song
+        if song and action is None and self.app != "home":
+            text = " · ".join(x for x in (song.get("title"), song.get("artist")) if x)
+            self._ui_request("notice", text="♪  " + (text or "Music from your phone"), kind="play", secs=4)
 
     def _youtube_tick(self):
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
@@ -987,7 +1002,6 @@ class Controller:
             with self.lock:
                 generation = self.generation
             state = self.youtube_now()
-            self._one_player((state or {}).get("status"))
             key = nowplaying.track_key(state)
             with self.lock:
                 if generation != self.generation:
@@ -2222,7 +2236,7 @@ class Controller:
         return {"mic": mic, "mic_muted": mic and PHONE_MIC.muted, "speaker": PHONE_SPEAKER.active}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
-                        "background_set", "retro_toggle", "retro_remove", "setting_set")
+                        "background_set", "retro_toggle", "retro_remove", "setting_set", "music_cast_service")
 
     def background_state(self):
         cfg = widgets.load_config(DATA)
@@ -2242,6 +2256,7 @@ class Controller:
         out = {"outputs": [], "trial": {"active": False}, "display_error": "", "background": self.background_state(),
                "torbox": {"configured": bool(media_config.read_key())},
                "arabic": media_arabic.status_public(),
+               "music_cast_service": MUSIC.status(),
                "fields": settings_model.FIELDS,
                "values": settings_model.values(widgets.load_config(DATA), media_config.load()),
                "youtube_close_after_paused_min": media_config.load().get("youtube_close_after_paused_min") or 0}
@@ -2258,6 +2273,24 @@ class Controller:
 
     def settings_action(self, action, params):
         """Runs outside action_lock: xrandr can take a second and must not stall the remote."""
+        if action == "music_cast_service":
+            # Settings -> Playback -> Music casting (TV and phone) and `nexus-tv-cast`: the receiver that puts
+            # "Nexus TV" in the YouTube Music cast menu. "stop" keeps it off across restarts of the TV.
+            cmd = params.get("cmd")
+            if cmd not in ("start", "stop", "restart", "status"):
+                raise ValueError("Use start, stop, restart or status")
+            if cmd == "start":
+                MUSIC.start(force=True)
+            elif cmd == "stop":
+                MUSIC.switch_off()
+            elif cmd == "restart":
+                MUSIC.restart()
+            if cmd in ("start", "restart"):
+                for _ in range(20):                      # up to 2 s for Node to come up, so the answer says "running"
+                    if MUSIC.running() or MUSIC.need:
+                        break
+                    time.sleep(0.1)
+            return {"music_cast_service": MUSIC.status()}
         if action == "setting_set":
             key = params.get("key")
             value = settings_model.validate(key, params.get("value"))
@@ -2875,6 +2908,7 @@ class Controller:
 
 
 CONTROL = None
+MUSIC = music_cast.Supervisor(DATA)       # the cast receiver; Settings can stop, start and restart it
 
 
 SYSTEM = sysinfo.Sampler()
@@ -3361,7 +3395,7 @@ def serve():
     for handler in logging.getLogger().handlers:
         handler.addFilter(_RedactFilter())
     CONTROL = Controller()
-    music_cast.Supervisor(DATA).start()       # "Nexus TV" in the YouTube Music cast menu, sound only
+    MUSIC.start()                             # "Nexus TV" in the YouTube Music cast menu, sound only
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
     LOG.info("Listening on port %d", PORT)

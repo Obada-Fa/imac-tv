@@ -24,6 +24,7 @@ APP_DIR = Path(__file__).resolve().parent / "music_cast"
 LOCAL = Path.home() / ".local/share/imactv"
 NOW_FILE = "music_cast_now.json"
 SOCK_NAME = "music-mpv.sock"
+SERVICE_FILE = "music_cast_service.json"   # {"enabled": false} once casting is switched off in Settings
 CTL_NAME = "music-ctl.sock"     # receiver.mjs `serveControl`: play_pause, pause, resume, stop, next, previous, seek
 COMMANDS = ("play_pause", "pause", "resume", "stop", "next", "previous", "seek", "set_position")
 PORT = int(os.environ.get("IMACTV_MUSIC_PORT", "8766"))
@@ -34,7 +35,7 @@ MIN_NODE = (20, 10)    # youtubei.js (pulled in by yt-cast-receiver) uses import
 def node_version(binary):
     """(major, minor) of a Node.js binary, (0, 0) when it doesn't run."""
     try:
-        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=5).stdout
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30).stdout   # a cold boot can take >5 s to page Node in
         major, minor = out.strip().lstrip("v").split(".")[:2]
         return int(major), int(minor)
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -167,7 +168,7 @@ def pause(data_dir):
 class Arbiter:
     """Only one of cast music and YouTube plays: whichever started last wins, the other is paused.
 
-    `step(youtube_status, cast)` every few seconds -> "pause_cast", "pause_youtube" or None; also reports a new
+    `step(youtube_status, cast)` returns "pause_cast", "pause_youtube" or None and also reports a new
     cast song so the TV can show it (`new_song`)."""
 
     def __init__(self):
@@ -175,6 +176,7 @@ class Arbiter:
         self.cast_key = None          # (id) of the cast song last seen playing
         self.cast_playing = False
         self.new_song = None
+        self.pending = None
 
     def step(self, youtube_status, cast):
         yt = youtube_status == "Playing"
@@ -189,10 +191,27 @@ class Arbiter:
             self.cast_key = None
         action = None
         if yt and playing:
-            action = "pause_youtube" if cast_started and not yt_started else "pause_cast"
-        self.yt_playing = yt and action != "pause_youtube"
-        self.cast_playing = playing and action != "pause_cast"
+            action = self.pending
+            if action is None or cast_started or yt_started:
+                action = "pause_youtube" if cast_started and not yt_started else "pause_cast"
+        self.pending = action
+        self.yt_playing = yt
+        self.cast_playing = playing
         return action
+
+
+def describe(status):
+    """One line for Settings from Supervisor.status()."""
+    state = (status or {}).get("state")
+    if state == "running":
+        return "On · Receiver is running"
+    if state == "starting":
+        return "Starting…"
+    if state == "missing":
+        return "Not available  ·  missing: " + ", ".join(status.get("missing") or ["?"]) + "  ·  run install.sh again"
+    if state == "off":
+        return "Off  ·  the TV is not in the cast menu"
+    return "Could not reach the controller"
 
 
 class Supervisor:
@@ -204,6 +223,9 @@ class Supervisor:
         self.proc = None
         self.stopping = False
         self.thread = None
+        self.need = []                 # what was missing at the last start, for Settings
+        self.gen = 0                   # each _run belongs to one start; a stop or restart retires it
+        self.lock = threading.Lock()   # start/stop/restart come from the watcher and from Settings
 
     def env(self):
         env = dict(os.environ, IMACTV_DATA_DIR=str(self.data_dir), IMACTV_MUSIC_PORT=str(PORT),
@@ -216,14 +238,83 @@ class Supervisor:
             env["IMACTV_JS_RUNTIME"] = "node:" + node    # yt-dlp solves YouTube's player challenge with it
         return env
 
-    def start(self):
-        need = missing()
-        if need:
-            LOG.info("Music casting is off; missing: %s", ", ".join(need))
-            return False
-        self.thread = threading.Thread(target=self._run, daemon=True, name="music-cast")
+    # ---- on/off, kept in $DATA/music_cast_service.json so "off" survives a restart of the TV
+    def enabled(self):
+        try:
+            return json.loads((self.data_dir / SERVICE_FILE).read_text()).get("enabled") is not False
+        except (OSError, ValueError, AttributeError):
+            return True
+
+    def set_enabled(self, on):
+        path = self.data_dir / SERVICE_FILE
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"enabled": bool(on)}))
+        os.replace(tmp, path)
+
+    def running(self):
+        proc = self.proc
+        return bool(proc and proc.poll() is None)
+
+    def status(self):
+        """For Settings on the TV and the phone: {"enabled", "state", "missing"}. state is one of
+        running, starting (enabled, the receiver is not up yet), missing (something it needs is not installed), off."""
+        on = self.enabled()
+        if not on:
+            state = "off"
+        elif self.running():
+            state = "running"
+        elif self.need and not self.thread:
+            state = "missing"
+        else:
+            state = "starting"
+        return {"enabled": on, "state": state, "missing": list(self.need) if state == "missing" else [], "port": PORT}
+
+    def start(self, force=False):
+        """Start the receiver if casting is switched on (force: switch it on first). True when it is starting."""
+        with self.lock:
+            if force:
+                self.set_enabled(True)
+            elif not self.enabled():
+                LOG.info("Music casting is switched off in Settings")
+                return False
+            if self.thread and self.thread.is_alive():
+                return True
+            self.stopping = False
+            self.need = missing()
+            if self.need:
+                LOG.info("Music casting is off; missing: %s", ", ".join(self.need))
+                # Re-check every 30 s for 5 minutes: right after boot a slow disk or load can make a present
+                # Node look missing (a 2010 iMac took over 5 s to page Node in at login).
+                threading.Thread(target=self._retry_start, daemon=True, name="music-cast-retry").start()
+                return False
+            self._spawn()
+            return True
+
+    def _spawn(self):
+        self.gen += 1
+        self.thread = threading.Thread(target=self._run, args=(self.gen,), daemon=True, name="music-cast")
         self.thread.start()
-        return True
+
+    def _retry_start(self):
+        for _ in range(10):
+            time.sleep(30)
+            with self.lock:
+                if self.stopping or (self.thread and self.thread.is_alive()) or not self.enabled():
+                    return
+                self.need = missing()
+                if not self.need:
+                    LOG.info("Music casting dependencies found; starting the receiver")
+                    self._spawn()
+                    return
+
+    def restart(self):
+        self.stop()
+        return self.start(force=True)
+
+    def switch_off(self):
+        """Settings: stop the receiver and keep it off until it is started again (also after a reboot)."""
+        self.set_enabled(False)
+        self.stop()
 
     def stale_pids(self, proc_root="/proc"):
         """Receivers and their mpv left from an earlier run of this TV (same data dir): a receiver killed
@@ -249,9 +340,10 @@ class Supervisor:
             except OSError:
                 pass
 
-    def _run(self):
+    def _run(self, gen=None):
+        gen = self.gen if gen is None else gen
         delay = 5.0
-        while not self.stopping:
+        while not self.stopping and gen == self.gen:
             self.kill_stale()
             started = time.monotonic()
             log_path = self.data_dir / "music_cast.log"
@@ -267,14 +359,21 @@ class Supervisor:
             except OSError as exc:
                 LOG.warning("Music receiver could not start: %s", exc)
                 code = None
-            if self.stopping:
+            if self.stopping or gen != self.gen:
                 return
             delay = 5.0 if time.monotonic() - started > 120 else min(delay * 2, 300.0)
             LOG.warning("Music receiver exited (%s); restarting in %.0f s", code, delay)
-            time.sleep(delay)
+            waited = 0.0
+            while waited < delay and not self.stopping and gen == self.gen:     # a stop or restart ends the wait
+                time.sleep(0.5)
+                waited += 0.5
 
     def stop(self):
-        self.stopping = True
+        """Stop the receiver and its mpv (it starts again with start() or the next start of the TV)."""
+        with self.lock:
+            self.stopping = True
+            self.gen += 1
+            self.thread = None
         proc = self.proc
         if proc and proc.poll() is None:
             proc.terminate()
@@ -282,3 +381,4 @@ class Supervisor:
                 proc.wait(timeout=4)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        self.kill_stale()              # its mpv, if the receiver died before stopping it

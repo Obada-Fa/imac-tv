@@ -18,6 +18,7 @@ import backgrounds  # noqa: E402
 import wallpapers  # noqa: E402
 import display  # noqa: E402
 import gpu
+import music_cast
 import settings_model
 import widgets  # noqa: E402
 from widgets import glass, pairing, vitals  # noqa: E402
@@ -420,6 +421,7 @@ class SettingsScreen(Screen):
         if self.category in ('Appearance', 'Ambient', 'Playback'):
             self.render_fields()
         if self.category == 'Playback':
+            self.render_music_cast()
             cfg = media_config.load()
             mins = cfg['youtube_close_after_paused_min']
             self.section('YouTube')
@@ -491,6 +493,38 @@ class SettingsScreen(Screen):
         pair.pack_start(side, True, True, 0)
         self.content.pack_start(pair, False, False, 0)
         self.render_torbox()
+
+    def render_music_cast(self):
+        """Music casting on/off and restart: the receiver that puts "Nexus TV" in the YouTube Music cast menu."""
+        self.section('Music casting')
+        self.cast_status = self.note("Checking…", top=0)
+        on = music_cast.Supervisor(display.DATA).enabled()
+        self.grid([self.button('Cast from YouTube Music', 'Sound only, from the YouTube or YouTube Music app', False,
+                               ('cast', 'toggle'), lambda: self.cast_service('stop' if on else 'start'), toggle=on),
+                   self.button('Restart casting', 'When "Nexus TV" is missing from the cast menu', False,
+                               ('cast', 'restart'), lambda: self.cast_service('restart'))])
+        self.cast_service('status')
+
+    def cast_service(self, command):
+        if command != 'status':
+            self.cast_status.set_text({'start': 'Starting…', 'stop': 'Stopping…', 'restart': 'Restarting…'}[command])
+
+        def work():
+            result = cmd('music_cast_service', {'cmd': command}, timeout=15)
+            GLib.idle_add(done, result)
+
+        def done(result):
+            if self.disposed or self.category != 'Playback':
+                return False
+            status = ((result or {}).get('result') or {}).get('music_cast_service')
+            if command == 'status':
+                self.cast_status.set_text(music_cast.describe(status))
+            else:
+                if not status:
+                    self.shell.toast((result or {}).get('error', 'Could not reach the controller'), 5)
+                self.rerender(('cast', 'toggle' if command != 'restart' else 'restart'))
+            return False
+        threading.Thread(target=work, daemon=True).start()
 
     def render_torbox(self):
         px = self.shell.px
