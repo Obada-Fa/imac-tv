@@ -62,6 +62,26 @@ export function lanAddresses(names, ifaces = os.networkInterfaces()) {
   return out;
 }
 
+// Searches heard from other devices (phones), newest first: the one fact `nexus-tv-cast check` can't get by
+// searching from the TV itself. No entry after the cast menu was opened = the search never reached this PC
+// (router keeps Wi-Fi devices apart, guest network, firewall on UDP 1900).
+const heard = new Map();
+let onHeard = null;
+export function setOnHeard(fn) { onHeard = fn; }
+export function heardList(max = 5) {
+  return [...heard.entries()].reverse().slice(0, max).map(([address, h]) => ({ address, ...h }));   // kept in order heard
+}
+export function noteSearch(remote, local, names, ifaces = os.networkInterfaces()) {
+  if (lanAddresses(names.length ? names : Object.keys(ifaces), ifaces).some((a) => a.address === remote)) return;
+  if (/^127\./.test(remote || '')) return;                               // our own check
+  const fresh = !heard.has(remote);
+  const h = heard.get(remote) || { count: 0 };
+  heard.delete(remote);
+  heard.set(remote, { at: Date.now() / 1000, count: h.count + 1, answered_from: local || null });
+  while (heard.size > 20) heard.delete(heard.keys().next().value);
+  if (onHeard) { try { onHeard(fresh); } catch { /* reporting only */ } }
+}
+
 function sendFrom(local, args) {
   const [msg, offset, length, port, address, cb] = args;
   const s = dgram.createSocket({ type: 'udp4', reuseAddr: true });
@@ -93,6 +113,7 @@ export function patchSsdp(names, log = () => {}, require = createRequire(import.
     if (this.__seen.has(key)) return undefined;        // the same search, received on another socket
     this.__seen.set(key, now);
     const local = localAddressFor(address.address, names);
+    noteSearch(address.address, local, names);
     if (!local) return reply.call(this, headers, address, callback);     // unknown subnet: answer the old way
     const real = this.ucSocket;
     this.ucSocket = { send: (make) => sendFrom(local, make(local)) };

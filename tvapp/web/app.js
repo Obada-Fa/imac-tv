@@ -1794,6 +1794,31 @@
     const box = section(container, 'Music casting');
     box.append(switchRow('Cast from YouTube Music', text, !!cast.enabled, on => settingsCall('music_cast_service', {cmd: on ? 'start' : 'stop'})),
       actionRow('Restart casting', 'When "Nexus TV" is missing from the cast menu', () => settingsCall('music_cast_service', {cmd: 'restart'})));
+    if (cast.state !== 'running') return;
+    // "Nexus TV" missing from the cast menu: link the YouTube app with a code instead, or see which step fails.
+    const out = el('p', 'hint cast-out');
+    out.style.whiteSpace = 'pre-line';
+    const ask = async cmd => { const r = await send('music_cast_service', {cmd}); return (r && r.result) || r || {}; };
+    const codeRow = actionRow('YouTube TV code', 'YouTube Music app → Settings → Watch on TV → Enter TV code', async () => {
+      out.textContent = 'Asking YouTube for a code…';
+      try {
+        for (let i = 0; i < 9; i++) {
+          const code = (await ask('pair_code')).pair_code || {};
+          if (code.code) { out.textContent = 'TV code: ' + code.code + '\nEnter it in the YouTube or YouTube Music app: Settings → Watch on TV → Enter TV code.'; return; }
+          if (code.error) { out.textContent = "YouTube didn't give a code: " + code.error; return; }
+          await new Promise(r => setTimeout(r, 1500));
+        }
+        out.textContent = "YouTube didn't answer; check the TV's internet.";
+      } catch (e) { out.textContent = e.message; }
+    });
+    const checkRow = actionRow('Check casting', 'Find out why "Nexus TV" is missing from the cast menu', async () => {
+      out.textContent = 'Checking… open the cast menu in YouTube Music first, so the TV can tell whether it hears this phone.';
+      try {
+        const lines = (await ask('check')).check || [];
+        out.textContent = lines.map(l => (l.ok === true ? '✓ ' : l.ok === false ? '✗ ' : '• ') + l.text).join('\n') || 'No answer from the TV.';
+      } catch (e) { out.textContent = e.message; }
+    });
+    box.append(codeRow, checkRow, out);
   }
   // ---- iMac: live stats and stuck-app controls, polled only while this panel is on screen ----
   let systemTimer = null;

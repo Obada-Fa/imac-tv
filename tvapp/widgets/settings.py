@@ -421,7 +421,6 @@ class SettingsScreen(Screen):
         if self.category in ('Appearance', 'Ambient', 'Playback'):
             self.render_fields()
         if self.category == 'Playback':
-            self.render_music_cast()
             cfg = media_config.load()
             mins = cfg['youtube_close_after_paused_min']
             self.section('YouTube')
@@ -492,6 +491,7 @@ class SettingsScreen(Screen):
                                lambda: self.confirm_access('old_link'))], into=side)
         pair.pack_start(side, True, True, 0)
         self.content.pack_start(pair, False, False, 0)
+        self.render_music_cast()                         # beside phone pairing: it's the other thing a phone links to
         self.render_torbox()
 
     def render_music_cast(self):
@@ -520,7 +520,7 @@ class SettingsScreen(Screen):
         self._code_timer = GLib.timeout_add_seconds(60, self._code_tick)
 
     def _code_tick(self):
-        if self.disposed or self.category != 'Playback':
+        if self.disposed or self.category != 'Connections':
             self._code_timer = None
             return False
         if music_cast.Supervisor(display.DATA).enabled():
@@ -533,7 +533,7 @@ class SettingsScreen(Screen):
 
     def _cast_call(self, command, on_done, timeout=15):
         """music_cast_service `command` off the GTK thread; on_done(result dict or None) on it, only while
-        Playback is still the page shown."""
+        Connections is still the page shown."""
         page = self.category
 
         def work():
@@ -541,7 +541,7 @@ class SettingsScreen(Screen):
             GLib.idle_add(done, result)
 
         def done(result):
-            if not self.disposed and self.category == page == 'Playback':
+            if not self.disposed and self.category == page == 'Connections':
                 on_done((result or {}).get('result'), result)
             return False
         threading.Thread(target=work, daemon=True).start()

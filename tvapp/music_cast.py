@@ -183,7 +183,7 @@ def pair_code(data_dir):
     return {"code": format_code(code) or None, "pending": not code and not error, "error": error}
 
 
-# ---- "Why isn't Nexus TV in my cast menu?": Settings -> Playback -> Check casting, and `nexus-tv-cast check`
+# ---- "Why isn't Nexus TV in my cast menu?": Settings -> Connections -> Check casting, and `nexus-tv-cast check`
 SSDP = ("239.255.255.250", 1900)
 DIAL_ST = "urn:dial-multiscreen-org:service:dial:1"
 
@@ -235,7 +235,7 @@ def firewall(etc="/etc"):
     return None
 
 
-def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc"):
+def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc", clock=time.time):
     """Each step a phone goes through to list "Nexus TV": [(ok True/False/None for advice, text)]."""
     data_dir = Path(data_dir)
     state = (status or {}).get("state")
@@ -270,12 +270,41 @@ def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc"):
             lines.append((False, "Its page doesn't answer on %s:%d: restart casting." % (addr, port)))
         else:
             lines.append((False, "It doesn't answer searches on %s (%s): restart casting." % (addr, a.get("iface"))))
+    lines.extend(heard_lines(net, port, clock()))
     if firewall(etc) == "ufw":
         lines.append((None, "The firewall is on: phones can't reach the TV unless it allows UDP 1900 and TCP %d "
                             "(sudo ufw allow 1900/udp && sudo ufw allow %d/tcp, or run ./install.sh again)." % (port, port)))
     lines.append((None, "The phone must be on the same Wi-Fi (not a guest network, which hides other devices). "
                         "Still missing? Use Link with TV code in the YouTube app: it works on any network."))
     return lines
+
+
+def ago(seconds):
+    seconds = max(0, int(seconds))
+    return "%d s" % seconds if seconds < 90 else "%d min" % (seconds // 60) if seconds < 5400 else "%d h" % (seconds // 3600)
+
+
+def heard_lines(net, port, now):
+    """Did a phone's own search reach this PC? The receiver notes every search from another device
+    (lan.mjs noteSearch); searching from the TV itself can't tell."""
+    heard = net.get("heard")
+    if not isinstance(heard, list):                  # a receiver from before this was kept
+        return []
+    recent = [h for h in heard if isinstance(h, dict) and now - float(h.get("at") or 0) < 600]
+    if recent:
+        h = recent[0]
+        if not h.get("answered_from"):
+            return [(False, "%s searched %s ago but is on another network than this PC: put both on the same Wi-Fi."
+                     % (h.get("address"), ago(now - h["at"])))]
+        return [(True, "A device at %s searched for TVs %s ago and was answered. Not listed there? The phone "
+                       "couldn't open this PC's page (TCP %d, firewall), or the app needs closing and reopening."
+                 % (h.get("address"), ago(now - h["at"]), port))]
+    since = now - float(net.get("started") or now)
+    return [(None, "No phone's search has reached this PC%s. Open the cast menu in the YouTube Music app, then "
+                   "check again within a few minutes. Still none: the router keeps Wi-Fi devices apart (client "
+                   "isolation, guest network), the phone is on mobile data or a VPN, or the firewall drops "
+                   "UDP 1900. Link with TV code works in all of those cases."
+             % (" in the %s since casting started" % ago(since) if since > 5 else ""))]
 
 
 def toggle(data_dir):

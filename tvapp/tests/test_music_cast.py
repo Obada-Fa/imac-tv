@@ -248,7 +248,7 @@ class Supervision(unittest.TestCase):
 
 
 class ServiceControl(unittest.TestCase):
-    """Settings -> Playback -> Music casting, the phone's switch and `nexus-tv-cast`."""
+    """Settings -> Connections -> Music casting, the phone's switch and `nexus-tv-cast`."""
 
     def make(self, data, alive=None):
         def popen(*_a, **_k):
@@ -370,7 +370,7 @@ class ReceiverPlayer(unittest.TestCase):
 
 
 class Discoverable(unittest.TestCase):
-    """Settings -> Playback -> Check casting / Link with TV code, and `nexus-tv-cast check|code`."""
+    """Settings -> Connections -> Check casting / Link with TV code, and `nexus-tv-cast check|code`."""
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(dir="/tmp"))
         self.running = {"enabled": True, "state": "running", "missing": [], "port": 8766}
@@ -395,6 +395,26 @@ class Discoverable(unittest.TestCase):
         self.assertEqual(lines[1], (True, "Discoverable on 192.168.1.40 (wlp2s0)"))
         self.assertFalse(any(ok is False for ok, _ in lines))
         self.assertIn("Link with TV code", lines[-1][1])
+
+    def heard(self, heard, started=1000.0):
+        net = json.loads((self.dir / music_cast.NET_FILE).read_text())
+        net.update(heard=heard, started=started)
+        (self.dir / music_cast.NET_FILE).write_text(json.dumps(net))
+        return music_cast.check(self.dir, self.running, etc=str(self.dir), clock=lambda: 2000.0,
+                                search=lambda a: ["http://%s:8766/x" % a], page=lambda a, p: True)
+
+    def test_says_whether_a_phones_search_reached_the_tv(self):
+        self.net(["192.168.1.40"])
+        lines = self.heard([])
+        self.assertEqual(lines[2][0], None)
+        self.assertIn("No phone's search has reached this PC in the 16 min since casting started", lines[2][1])
+        lines = self.heard([{"address": "192.168.1.77", "at": 1970.0, "count": 3, "answered_from": "192.168.1.40"}])
+        self.assertEqual(lines[2][0], True)
+        self.assertIn("192.168.1.77 searched for TVs 30 s ago and was answered", lines[2][1])
+        lines = self.heard([{"address": "10.9.9.9", "at": 1990.0, "count": 1, "answered_from": None}])
+        self.assertEqual(lines[2][0], False)
+        lines = self.heard([{"address": "192.168.1.77", "at": 900.0, "count": 1, "answered_from": "192.168.1.40"}])
+        self.assertIn("No phone's search", lines[2][1])                  # 18 min old: not this try
 
     def test_unanswered_search_and_firewall_are_named(self):
         self.net(["192.168.1.40"])

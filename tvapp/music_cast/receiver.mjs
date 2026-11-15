@@ -16,7 +16,7 @@ import net from 'node:net';
 import path from 'node:path';
 import os from 'node:os';
 import YouTubeCastReceiver, { Player, PLAYER_STATUSES, RESET_PLAYER_ON_DISCONNECT_POLICIES } from 'yt-cast-receiver';
-import { lanInterfaces, lanAddresses, patchSsdp } from './lan.mjs';
+import { lanInterfaces, lanAddresses, patchSsdp, heardList, setOnHeard } from './lan.mjs';
 
 const DATA = process.env.IMACTV_DATA_DIR || path.join(os.homedir(), '.local/share/imactv');
 const SOCK = process.env.IMACTV_MUSIC_SOCK || path.join(DATA, 'music-mpv.sock');
@@ -405,8 +405,15 @@ async function main() {
   const player = new MpvPlayer(mpv);
   const ifaces = lanInterfaces();
   patchSsdp(ifaces, log);
-  const net_ = () => ({ port: PORT, ifaces, addresses: lanAddresses(ifaces), updated: Date.now() / 1000 });
+  const started = Date.now() / 1000;
+  const net_ = () => ({ port: PORT, ifaces, addresses: lanAddresses(ifaces), started, heard: heardList(),
+    updated: Date.now() / 1000 });
   writeJson(NET_FILE, net_());
+  let wrote = 0;                                   // a phone's search shows in the check at once
+  setOnHeard((fresh) => {
+    if (fresh) log('a device searched for TVs:', heardList(1)[0]?.address);
+    if (fresh || Date.now() - wrote > 2000) { wrote = Date.now(); writeJson(NET_FILE, net_()); }
+  });
   setInterval(() => writeJson(NET_FILE, net_()), 30000).unref();
   log('advertising on', ifaces.length ? ifaces.join(', ') : 'every interface (no physical one found)');
   const receiver = new YouTubeCastReceiver(player, {

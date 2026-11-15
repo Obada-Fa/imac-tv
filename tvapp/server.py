@@ -2274,7 +2274,7 @@ class Controller:
     def settings_action(self, action, params):
         """Runs outside action_lock: xrandr can take a second and must not stall the remote."""
         if action == "music_cast_service":
-            # Settings -> Playback -> Music casting (TV and phone) and `nexus-tv-cast`: the receiver that puts
+            # Settings -> Connections -> Music casting (TV and phone) and `nexus-tv-cast`: the receiver that puts
             # "Nexus TV" in the YouTube Music cast menu. "stop" keeps it off across restarts of the TV.
             cmd = params.get("cmd")
             if cmd not in ("start", "stop", "restart", "status", "check", "pair_code"):

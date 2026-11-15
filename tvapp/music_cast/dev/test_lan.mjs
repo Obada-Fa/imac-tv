@@ -2,7 +2,7 @@
 // from the address on the phone's subnet. Needs node_modules (npm ci in music_cast/) for the SSDP part.
 import fs from 'node:fs'; import path from 'node:path'; import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
-import { lanInterfaces, localAddressFor, lanAddresses, patchSsdp } from '../lan.mjs';
+import { lanInterfaces, localAddressFor, lanAddresses, patchSsdp, noteSearch, heardList, setOnHeard } from '../lan.mjs';
 
 const sys = fs.mkdtempSync('/tmp/nexus-lan-');
 const nic = (n, { device = false, brif = [], bonding = false } = {}) => {
@@ -34,6 +34,20 @@ try {
   assert.equal(localAddressFor('172.17.0.3', [], ifaces), null);        // virtual names skipped without a list too
   assert.equal(localAddressFor('not-an-ip', names, ifaces), null);
   assert.deepEqual(lanAddresses(names, ifaces), [{ iface: 'enp1s0', address: '10.0.0.5' }, { iface: 'wlp2s0', address: '192.168.1.40' }]);
+
+  // Searches from other devices are kept for the check; the TV's own are not.
+  const news = [];
+  setOnHeard((fresh) => news.push(fresh));
+  noteSearch('192.168.1.40', '192.168.1.40', names, ifaces);             // the TV's own check
+  noteSearch('127.0.0.1', null, names, ifaces);
+  assert.deepEqual(heardList(), []);
+  noteSearch('192.168.1.77', '192.168.1.40', names, ifaces);
+  noteSearch('192.168.1.78', '192.168.1.40', names, ifaces);
+  noteSearch('192.168.1.77', '192.168.1.40', names, ifaces);
+  assert.deepEqual(heardList().map((h) => [h.address, h.count, h.answered_from]),
+    [['192.168.1.77', 2, '192.168.1.40'], ['192.168.1.78', 1, '192.168.1.40']]);
+  assert.deepEqual(news, [true, true, false]);
+  setOnHeard(null);
 
   // One answer per search, sent from 127.0.0.1 when the "phone" is on 127.0.0.0/8 (lo stands in for the Wi-Fi).
   let proto;
