@@ -16,6 +16,7 @@ import net from 'node:net';
 import path from 'node:path';
 import os from 'node:os';
 import YouTubeCastReceiver, { Player, PLAYER_STATUSES, RESET_PLAYER_ON_DISCONNECT_POLICIES } from 'yt-cast-receiver';
+import { lanInterfaces, lanAddresses, patchSsdp } from './lan.mjs';
 
 const DATA = process.env.IMACTV_DATA_DIR || path.join(os.homedir(), '.local/share/imactv');
 const SOCK = process.env.IMACTV_MUSIC_SOCK || path.join(DATA, 'music-mpv.sock');
@@ -28,6 +29,9 @@ const NAME = process.env.IMACTV_MUSIC_NAME || 'Nexus TV';
 const NOW_FILE = path.join(DATA, 'music_cast_now.json');
 const STORE_FILE = path.join(DATA, 'music_cast_store.json');
 const VOLUME_FILE = path.join(DATA, 'volume_event.json');
+const CODE_FILE = path.join(DATA, 'music_cast_code.json');   // "Link with TV code", while Settings shows it
+const NET_FILE = path.join(DATA, 'music_cast_net.json');     // interfaces and addresses we're discoverable on
+const CODE_MS = 15 * 60 * 1000;     // how long a code request keeps fetching codes (YouTube renews them every 5 min)
 const LOAD_TIMEOUT_MS = 45000;      // yt-dlp on a weak laptop can take a while to resolve a stream
 const HEARTBEAT_MS = 5000;          // the TV treats a now-playing file older than ~20 s as gone
 
@@ -296,7 +300,9 @@ export class MpvPlayer extends Player {
 
 // ---- control from the TV and the phone remote (tvapp/music_cast.py `control`): one JSON line in, one out.
 // Going through the Player (not mpv directly) keeps the phone's YouTube Music app in step.
-export async function control(player, msg) {
+export async function control(player, msg, hooks = {}) {
+  if (msg && msg.cmd === 'pair_code') return hooks.pairCode ? hooks.pairCode() : false;
+  if (msg && msg.cmd === 'net') return hooks.net ? hooks.net() : false;
   const playing = player.status === PLAYER_STATUSES.PLAYING, paused = player.status === PLAYER_STATUSES.PAUSED;
   switch (msg && msg.cmd) {
     case 'play_pause': return playing ? player.pause() : paused ? player.resume() : false;
@@ -318,7 +324,7 @@ export async function control(player, msg) {
   }
 }
 
-export function serveControl(player, sock = CTL) {
+export function serveControl(player, sock = CTL, hooks = {}) {
   try { fs.unlinkSync(sock); } catch { /* not there */ }
   const server = net.createServer((c) => {
     let buf = '';
@@ -326,12 +332,16 @@ export function serveControl(player, sock = CTL) {
       buf += d.toString();
       const nl = buf.indexOf('\n');
       if (nl < 0) return;
-      let ok = false, error = null;
-      try { ok = Boolean(await control(player, JSON.parse(buf.slice(0, nl)))); } catch (e) { error = e?.message || String(e); }
-      c.end(JSON.stringify({ ok, ...(error ? { error } : {}) }) + '\n');
+      let ok = false, error = null, data;
+      try {
+        const out = await control(player, JSON.parse(buf.slice(0, nl)), hooks);
+        if (out && typeof out === 'object') { ok = true; data = out; } else ok = Boolean(out);
+      } catch (e) { error = e?.message || String(e); }
+      c.end(JSON.stringify({ ok, ...(data ? { data } : {}), ...(error ? { error } : {}) }) + '\n');
     });
     c.on('error', () => {});
   });
+  server.on('error', (e) => log('control socket failed:', e?.message || e));   // playback and casting go on
   server.listen(sock);
   return server;
 }
@@ -362,13 +372,46 @@ class FileStore {
   async clear() { writeJson(this.file, {}); }
 }
 
+// "Link with TV code" (YouTube app -> Settings -> Watch on TV -> Enter TV code): pairs the phone's YouTube
+// account with this TV through YouTube's servers, after which "Nexus TV" is listed for that phone even when the
+// Wi-Fi discovery (SSDP) can't get through. The pairing is kept in music_cast_store.json.
+function pairCodes(receiver) {
+  let service = null, timer = null, code = null;
+  const stop = () => { clearTimeout(timer); timer = null; try { service?.stop(); } catch { /* stopped */ } };
+  return () => {
+    if (!service) {
+      service = receiver.getPairingCodeRequestService();
+      service.on('response', (c) => { code = c; writeJson(CODE_FILE, { code: c, updated: Date.now() / 1000 }); });
+      service.on('error', (e) => {
+        log('pairing code failed:', e?.message || e);
+        writeJson(CODE_FILE, { error: String(e?.message || e), updated: Date.now() / 1000 });
+        clearTimeout(timer); timer = null;
+      });
+    }
+    if (!timer) {
+      code = null;
+      try { fs.unlinkSync(CODE_FILE); } catch { /* none */ }
+      service.start();
+    }
+    clearTimeout(timer);
+    timer = setTimeout(() => { stop(); try { fs.unlinkSync(CODE_FILE); } catch { /* none */ } }, CODE_MS);
+    return { code, pending: !code };
+  };
+}
+
 async function main() {
   fs.mkdirSync(DATA, { recursive: true });
   const mpv = new Mpv();
   const player = new MpvPlayer(mpv);
+  const ifaces = lanInterfaces();
+  patchSsdp(ifaces, log);
+  const net_ = () => ({ port: PORT, ifaces, addresses: lanAddresses(ifaces), updated: Date.now() / 1000 });
+  writeJson(NET_FILE, net_());
+  setInterval(() => writeJson(NET_FILE, net_()), 30000).unref();
+  log('advertising on', ifaces.length ? ifaces.join(', ') : 'every interface (no physical one found)');
   const receiver = new YouTubeCastReceiver(player, {
     device: { name: NAME, screenName: NAME, brand: 'Nexus', model: 'Nexus TV' },
-    dial: { port: PORT },
+    dial: { port: PORT, ...(ifaces.length ? { bindToInterfaces: ifaces } : {}) },
     app: { resetPlayerOnDisconnectPolicy: RESET_PLAYER_ON_DISCONNECT_POLICIES.ALL_EXPLICITLY_DISCONNECTED },
     dataStore: new FileStore(STORE_FILE),
     logLevel: process.env.IMACTV_MUSIC_LOG || 'warn',
@@ -386,7 +429,7 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
   await receiver.start();
-  serveControl(player);
+  serveControl(player, CTL, { pairCode: pairCodes(receiver), net: net_ });
   writeJson(NOW_FILE, { status: 'Stopped', updated: Date.now() / 1000 });
   log(`Nexus TV music receiver on port ${PORT}`);
 }

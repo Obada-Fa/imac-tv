@@ -369,5 +369,126 @@ class ReceiverPlayer(unittest.TestCase):
         self.assertIn("ALL PLAYER CHECKS PASSED", out.stdout, out.stdout + out.stderr)
 
 
+class Discoverable(unittest.TestCase):
+    """Settings -> Playback -> Check casting / Link with TV code, and `nexus-tv-cast check|code`."""
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(dir="/tmp"))
+        self.running = {"enabled": True, "state": "running", "missing": [], "port": 8766}
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def net(self, addresses):
+        (self.dir / music_cast.NET_FILE).write_text(json.dumps(
+            {"port": 8766, "ifaces": ["wlp2s0"], "addresses": [{"iface": "wlp2s0", "address": a} for a in addresses]}))
+
+    def test_codes_read_in_threes(self):
+        self.assertEqual(music_cast.format_code("324419547823"), "324 419 547 823")
+        self.assertEqual(music_cast.format_code(None), "")
+
+    def test_a_working_receiver_checks_out(self):
+        self.net(["192.168.1.40"])
+        lines = music_cast.check(self.dir, self.running, etc=str(self.dir),
+                                 search=lambda a: ["http://%s:8766/ytcr/ssdp/device-desc.xml" % a],
+                                 page=lambda a, p: True)
+        self.assertEqual(lines[1], (True, "Discoverable on 192.168.1.40 (wlp2s0)"))
+        self.assertFalse(any(ok is False for ok, _ in lines))
+        self.assertIn("Link with TV code", lines[-1][1])
+
+    def test_unanswered_search_and_firewall_are_named(self):
+        self.net(["192.168.1.40"])
+        (self.dir / "ufw").mkdir()
+        (self.dir / "ufw/ufw.conf").write_text("ENABLED=yes\nLOGLEVEL=low\n")
+        lines = music_cast.check(self.dir, self.running, etc=str(self.dir),
+                                 search=lambda a: ["http://172.17.0.1:8766/ytcr/ssdp/device-desc.xml"],
+                                 page=lambda a, p: True)
+        self.assertEqual(lines[1][0], False)
+        self.assertIn("doesn't answer searches", lines[1][1])
+        self.assertTrue(any("sudo ufw allow 1900/udp" in t for _, t in lines))
+
+    def test_no_wifi_address(self):
+        self.net([])
+        lines = music_cast.check(self.dir, self.running, search=lambda a: [], page=lambda a, p: False)
+        self.assertEqual(lines[-1][0], False)
+        self.assertIn("Wi-Fi", lines[-1][1])
+
+    def test_off_or_missing_stops_early_with_advice(self):
+        lines = music_cast.check(self.dir, {"enabled": False, "state": "off"})
+        self.assertEqual([ok for ok, _ in lines], [False, None])
+        lines = music_cast.check(self.dir, {"state": "missing", "missing": ["mpv"]})
+        self.assertIn("install.sh", lines[-1][1])
+
+    def test_pair_code_from_the_receiver(self):
+        srv = socket.socket(socket.AF_UNIX)
+        srv.bind(str(self.dir / music_cast.CTL_NAME))
+        srv.listen()
+        answers = [{"ok": True, "data": {"code": None, "pending": True}},
+                   {"ok": True, "data": {"code": "111222333444", "pending": False}}]
+
+        def serve():
+            for answer in answers:
+                c, _ = srv.accept()
+                with c:
+                    self.assertEqual(json.loads(c.recv(4096))["cmd"], "pair_code")
+                    c.sendall(json.dumps(answer).encode() + b"\n")
+        threading.Thread(target=serve, daemon=True).start()
+        self.assertEqual(music_cast.pair_code(self.dir), {"code": None, "pending": True, "error": None})
+        self.assertEqual(music_cast.pair_code(self.dir)["code"], "111 222 333 444")
+        srv.close()
+        self.assertIsNone(music_cast.pair_code(self.dir))                 # no receiver
+
+    def test_search_finds_a_local_responder(self):
+        """ssdp_search really talks SSDP: a stand-in device on 127.0.0.1 answers the M-SEARCH."""
+        dev = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        dev.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            dev.bind(("", 1900))
+            dev.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                           socket.inet_aton("239.255.255.250") + socket.inet_aton("127.0.0.1"))
+        except OSError as exc:
+            dev.close()
+            self.skipTest("no multicast on lo here: %s" % exc)
+
+        def answer():
+            dev.settimeout(3)
+            try:
+                while True:
+                    msg, frm = dev.recvfrom(4096)
+                    if music_cast.DIAL_ST.encode() in msg:
+                        dev.sendto(b"HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.1:8766/ytcr/ssdp/device-desc.xml\r\n\r\n", frm)
+                        return
+            except OSError:
+                pass
+        threading.Thread(target=answer, daemon=True).start()
+        try:
+            found = music_cast.ssdp_search("127.0.0.1", timeout=1.5)
+        finally:
+            dev.close()
+        if not found:
+            self.skipTest("multicast loopback on lo not delivered here")
+        self.assertIn("http://127.0.0.1:8766/ytcr/ssdp/device-desc.xml", found)
+
+    def test_server_and_settings_offer_it(self):
+        src = (Path(music_cast.__file__).parent / "server.py").read_text()
+        self.assertIn('"check", "pair_code"', src)
+        settings = (Path(music_cast.__file__).parent / "widgets/settings.py").read_text()
+        self.assertIn("YouTube TV code", settings)
+        self.assertIn("_code_tick", settings)
+        self.assertIn("'Check casting'", settings)
+        js = (music_cast.APP_DIR / "receiver.mjs").read_text()
+        self.assertIn("bindToInterfaces", js)
+        self.assertIn("patchSsdp", js)
+
+    def test_lan_rules_in_node(self):
+        import subprocess
+        node = music_cast.node_bin()
+        if not node:
+            self.skipTest("Node 20.10+ needed")
+        out = subprocess.run([node, str(music_cast.APP_DIR / "dev/test_lan.mjs")], capture_output=True,
+                             text=True, timeout=60)
+        self.assertIn("ALL LAN CHECKS PASSED", out.stdout, out.stdout + out.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

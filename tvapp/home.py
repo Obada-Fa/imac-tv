@@ -122,6 +122,9 @@ def update_state(updates):
     return 'available' if updates.get('can_update') else None
 
 
+# Wi-Fi name, signal and address for the status chip and the pairing QR: two helper processes (ip, nmcli) each time
+NET_CHECK_S = 20
+
 class Home(Gtk.Window):
     """Window shell: header, screen stack with back stack, key routing, polling."""
 
@@ -1127,7 +1130,7 @@ class Home(Gtk.Window):
             now = time.monotonic()
             if live:                    # screen off: no clock, no Wi-Fi label, /api/state every 30 s
                 self.clock.set_now(datetime.datetime.now())
-                if now - self.last_net_check >= 4:
+                if now - self.last_net_check >= NET_CHECK_S:
                     self.last_net_check = now
                     self.trigger_network_refresh()
             busy = self.buffering.get_visible() or now < self.fast_until or self.prev_app == "player"

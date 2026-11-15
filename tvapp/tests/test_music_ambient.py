@@ -59,6 +59,8 @@ class AmbientMusicTests(unittest.TestCase):
                                  start_shape_timer=mock.Mock())
         screen.start_audio = mock.Mock(side_effect=lambda: setattr(screen, "audio", mock.Mock()))
         screen.stop_audio = mock.Mock()
+        screen.now_state, screen.heard_at = None, 8.0      # ambient began 2 s ago: still inside the listening hold
+        screen.listen_now = lambda now: homescreen.AmbientHomeScreen.listen_now(screen, now)
         homescreen.AmbientHomeScreen.sync_shapes(screen, 10)
         screen.start_audio.assert_called_once()
         screen.start_shape_timer.assert_called_once()

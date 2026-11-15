@@ -2277,8 +2277,13 @@ class Controller:
             # Settings -> Playback -> Music casting (TV and phone) and `nexus-tv-cast`: the receiver that puts
             # "Nexus TV" in the YouTube Music cast menu. "stop" keeps it off across restarts of the TV.
             cmd = params.get("cmd")
-            if cmd not in ("start", "stop", "restart", "status"):
-                raise ValueError("Use start, stop, restart or status")
+            if cmd not in ("start", "stop", "restart", "status", "check", "pair_code"):
+                raise ValueError("Use start, stop, restart, status, check or pair_code")
+            if cmd == "check":                           # a few seconds: searches the Wi-Fi like a phone would
+                return {"music_cast_service": MUSIC.status(),
+                        "check": [{"ok": ok, "text": text} for ok, text in music_cast.check(DATA, MUSIC.status())]}
+            if cmd == "pair_code":
+                return {"music_cast_service": MUSIC.status(), "pair_code": music_cast.pair_code(DATA)}
             if cmd == "start":
                 MUSIC.start(force=True)
             elif cmd == "stop":

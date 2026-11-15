@@ -495,36 +495,115 @@ class SettingsScreen(Screen):
         self.render_torbox()
 
     def render_music_cast(self):
-        """Music casting on/off and restart: the receiver that puts "Nexus TV" in the YouTube Music cast menu."""
+        """Music casting: on/off, restart, a "Link with TV code" for when the phone can't find the TV over the
+        Wi-Fi, and a check of each step a phone goes through to list "Nexus TV" (music_cast.check)."""
         self.section('Music casting')
         self.cast_status = self.note("Checking…", top=0)
+        # The YouTube app's "Enter TV code", always on show: linking with it lists "Nexus TV" on that phone even when
+        # the Wi-Fi search can't find the TV. YouTube renews the code every few minutes; we re-read it every minute.
         on = music_cast.Supervisor(display.DATA).enabled()
+        self.cast_code_label = self.note("YouTube TV code  ·  asking YouTube…" if on else
+                                         "YouTube TV code  ·  switch casting on to get one", top=0)
+        self.cast_detail = self.note("", top=0)          # the check, right where the eye already is
+        self.cast_detail.set_no_show_all(True)
         self.grid([self.button('Cast from YouTube Music', 'Sound only, from the YouTube or YouTube Music app', False,
                                ('cast', 'toggle'), lambda: self.cast_service('stop' if on else 'start'), toggle=on),
-                   self.button('Restart casting', 'When "Nexus TV" is missing from the cast menu', False,
+                   self.button('Check casting', 'Find out why "Nexus TV" is missing from the cast menu', False,
+                               ('cast', 'check'), self.cast_check),
+                   self.button('Restart casting', 'Starts the receiver again', False,
                                ('cast', 'restart'), lambda: self.cast_service('restart'))])
         self.cast_service('status')
+        if on:
+            self.cast_code()
+        if getattr(self, '_code_timer', None):
+            GLib.source_remove(self._code_timer)
+        self._code_timer = GLib.timeout_add_seconds(60, self._code_tick)
+
+    def _code_tick(self):
+        if self.disposed or self.category != 'Playback':
+            self._code_timer = None
+            return False
+        if music_cast.Supervisor(display.DATA).enabled():
+            self.cast_code()
+        return True
+
+    def _cast_detail(self, text):
+        self.cast_detail.set_text(text)
+        self.cast_detail.set_visible(bool(text))
+
+    def _cast_call(self, command, on_done, timeout=15):
+        """music_cast_service `command` off the GTK thread; on_done(result dict or None) on it, only while
+        Playback is still the page shown."""
+        page = self.category
+
+        def work():
+            result = cmd('music_cast_service', {'cmd': command}, timeout=timeout)
+            GLib.idle_add(done, result)
+
+        def done(result):
+            if not self.disposed and self.category == page == 'Playback':
+                on_done((result or {}).get('result'), result)
+            return False
+        threading.Thread(target=work, daemon=True).start()
+
+    def cast_code(self, tries=0):
+        label = self.cast_code_label
+        how = "YouTube or YouTube Music app → Settings → Watch on TV → Enter TV code"
+
+        def show(text):
+            if label is self.cast_code_label:            # not a page that was rebuilt since
+                label.set_text(text)
+
+        def again():
+            if label is self.cast_code_label and not self.disposed:
+                self.cast_code(tries + 1)
+            return False
+
+        def done(res, raw):
+            code = (res or {}).get('pair_code') or {}
+            if code.get('code'):
+                show("YouTube TV code  %s\n%s. The link stays after the code changes." % (code['code'], how))
+            elif code.get('error'):
+                show("YouTube TV code  ·  YouTube didn't give one: %s" % code['error'])
+            elif tries < 8:                              # YouTube's first code, or a receiver still starting
+                GLib.timeout_add(1500, again)
+            elif not res:
+                show("YouTube TV code  ·  %s" % (raw or {}).get('error', 'could not reach the controller'))
+            elif not (res or {}).get('pair_code'):
+                show("YouTube TV code  ·  casting isn't running yet")
+            else:
+                show("YouTube TV code  ·  YouTube didn't answer; check the TV's internet")
+        self._cast_call('pair_code', done)
+
+    def cast_check(self):
+        self._cast_detail("Checking, as a phone on the Wi-Fi would…")
+        marks = {True: '✓', False: '✗', None: '•'}
+
+        def done(res, raw):
+            lines = (res or {}).get('check')
+            if not lines:
+                self._cast_detail((raw or {}).get('error', 'Could not reach the controller'))
+                return
+            status = (res or {}).get('music_cast_service')
+            if status:
+                self.cast_status.set_text(music_cast.describe(status))
+            shown = [l for l in lines if not (l.get('ok') and l.get('text', '').startswith('Receiver:'))]  # the status line says it
+            self._cast_detail("\n".join("%s  %s" % (marks.get(l.get('ok')), l.get('text', '')) for l in shown))
+        self._cast_call('check', done, timeout=40)
 
     def cast_service(self, command):
         if command != 'status':
             self.cast_status.set_text({'start': 'Starting…', 'stop': 'Stopping…', 'restart': 'Restarting…'}[command])
 
-        def work():
-            result = cmd('music_cast_service', {'cmd': command}, timeout=15)
-            GLib.idle_add(done, result)
-
-        def done(result):
-            if self.disposed or self.category != 'Playback':
-                return False
-            status = ((result or {}).get('result') or {}).get('music_cast_service')
+        def done(res, raw):
+            status = (res or {}).get('music_cast_service')
             if command == 'status':
                 self.cast_status.set_text(music_cast.describe(status))
             else:
                 if not status:
-                    self.shell.toast((result or {}).get('error', 'Could not reach the controller'), 5)
+                    self.shell.toast((raw or {}).get('error', 'Could not reach the controller'), 5)
                 self.rerender(('cast', 'toggle' if command != 'restart' else 'restart'))
-            return False
-        threading.Thread(target=work, daemon=True).start()
+        self._cast_call(command, done)
 
     def render_torbox(self):
         px = self.shell.px

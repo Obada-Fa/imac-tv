@@ -71,9 +71,11 @@ SHAPE_MS = 66            # ~15 fps while a shape is morphing
 VIZ_MS = 100             # 10 fps for the music visualizer: it repaints ~40% of the screen in software each frame
 GL_SIM_MS = gl_ambient.SIM_MS   # ~30 Hz simulation while the GPU draws the visualizer (gpu.py, gl_ambient.py)
 FIELD_MS = 200           # 5 fps: the quiet floating particles drift a few px/s (each frame repaints ~25% of the screen)
-FIELD_GL_MS = 100        # 10 Hz while the GPU draws them (interpolated to the refresh rate; cairo only fills the holes)
+FIELD_GL_MS = 200        # 5 Hz while the GPU draws them (it blends between steps; cairo only fills the holes). At 10 Hz the
+                         # steps and hole repaints were ~9% of a core on a 2010 iMac for particles that drift a few px/s
 FIELD_CAIRO_PACE = 0.35  # cairo's particles drift this much slower: ~0.7 px per 5 fps frame reads as a glide, 2 px jumped
 SETTLE_S = 6.0           # calm Home: tiles drift this long after input, then hold still (no timer, ~0% CPU)
+EQ_MS = 200             # 5 fps for a playing tile's "now playing" bars while the rest of calm Home holds still
 ANIMAL_EVERY = 300.0     # seconds between doodles while still (shapes: photo+animals)
 MUSIC_DIM = 0.22         # how far the photo darkens behind the visualizer
 DIM_FADE = 1.6           # seconds for the photo to darken when the visualizer starts
@@ -106,6 +108,8 @@ class IdleTracker:
 
 
 MUSIC_IDLE = 30.0       # seconds before the visualizer when YouTube plays music behind Home
+LISTEN_HOLD = 20.0      # s the visualizer keeps listening after the last sound or known playback
+LISTEN_EVERY, LISTEN_PROBE = 20.0, 3.0   # quiet ambient: listen this many seconds out of every LISTEN_EVERY
 
 
 def idle_delay(quiet, music, state, audio=MUSIC_IDLE):
@@ -317,6 +321,11 @@ def load_surface(path, w, h):
     sc.get_source().set_filter(cairo.FILTER_BEST)
     sc.paint()
     return surf, small
+
+
+def gl_holes_only(screen):
+    """The GPU is drawing the stage: cairo only repaints the holes under the widgets that stay up."""
+    return bool(getattr(screen, "gl_on", False)) and getattr(screen.canvas, "only", None) is not None
 
 
 class PhotoCanvas(Gtk.DrawingArea):
@@ -551,6 +560,7 @@ class AmbientHomeScreen(Screen):
         self.idle_quiet, self.idle_music = amb["idle"], amb["idle_music"]
         self.chrome = 1.0
         self.anim_id = 0
+        self.eq_id = 0
         self.last_anim = time.monotonic()
         self.drift_t = self.last_anim       # the tiles' drift clock: runs only while Home animates, so it resumes
         self.stir_until = self.last_anim + SETTLE_S     # without a jump after the tiles settled
@@ -767,6 +777,7 @@ class AmbientHomeScreen(Screen):
             print("ambient cursor:", exc)
 
     def enter_ambient(self):
+        self.heard_at = time.monotonic()      # listen for the first LISTEN_HOLD seconds of ambient
         self.ambient_cursor(True)
         self.volume_line.reserve(True)
         self.canvas.ambient = True
@@ -1177,6 +1188,11 @@ class AmbientHomeScreen(Screen):
         fr["links"] = [(i, j, a) for i, j, a in fr["links"] if a > 0.01]
         geo = [(i, j, math.hypot(fr["pts"][i][0] - fr["pts"][j][0], fr["pts"][i][1] - fr["pts"][j][1]))
                for i, j, _ in fr["links"]]
+        if gl_holes_only(self):
+            self.field_geom = dict(fr, scale=s, t=now)
+            self.field_cells = set()
+            self.gl_touch(batch=False)
+            return
         cells = network.geometry_cells({"pts": fr["pts"], "n": 0, "links": geo}, margin=round(8 * s))
         self.field_geom = dict(fr, scale=s, t=now)
         dirty = cells | self.field_cells
@@ -1349,6 +1365,8 @@ class AmbientHomeScreen(Screen):
                   and not self.morph.moving and now - self.shape_since >= ANIMAL_EVERY):
                 self.reform(now, prefer_other=True)
         listen = self.viz_on and self.idle.ambient and self.active() and self.chrome <= 0.0
+        if listen and not self.fake_levels:
+            listen = self.listen_now(now)
         if listen and not self.audio and not self.fake_levels and now >= self.audio_retry_due:
             self.start_audio()
             if not self.audio:
@@ -1357,6 +1375,19 @@ class AmbientHomeScreen(Screen):
             self.stop_audio()
         if listen or self.audio:
             self.start_shape_timer()
+
+    def listen_now(self, now):
+        """Whether to record the speakers for the visualizer right now. Listening costs ~4% of a core even in
+        silence (parec, PulseAudio's resampler, the analyser), so in a quiet ambient Home only samples
+        LISTEN_PROBE s out of every LISTEN_EVERY; it listens all the time while something is known to play,
+        while there is sound, and for LISTEN_HOLD s after either."""
+        known = bool(self.now_state and self.now_state.get("status") == "Playing")
+        heard = bool(self.audio and self.audio.levels().get("active"))
+        if known or heard:
+            self.heard_at = now
+        if now - getattr(self, "heard_at", -1e9) < LISTEN_HOLD:
+            return True
+        return now % LISTEN_EVERY < LISTEN_PROBE
 
     def start_audio(self):
         if audiolevel is None:
@@ -1532,6 +1563,10 @@ class AmbientHomeScreen(Screen):
         self.shape_geom = {"pts": pts, "links": links, "alphas": alphas, "t": now, "scale": s, "e": m.e(),
                            "centre": (m.cx, m.cy), "rmax": m.rmax, "lv": dict(self.lv), "viz": fr,
                            "tails": tails, "beat": beat}
+        if gl_holes_only(self):
+            self.shape_cells = set()
+            self.gl_touch()
+            return
         cells = network.geometry_cells(geom, margin=round(22 * s))
         dirty = cells | self.shape_cells
         self.shape_cells = cells
@@ -1557,6 +1592,16 @@ class AmbientHomeScreen(Screen):
             geo_pts = list(geo_pts) + [(x1, y1) for _x0, _y0, x1, y1, _a in fr["pulses"]]
             geo += [(q, q, 0.0) for q in range(k, len(geo_pts))]
         return links, {"pts": geo_pts, "n": len(geo_pts), "links": geo}
+
+    def gl_touch(self, batch=True):
+        """Repaint the holes after a step, without working out which grid cells the lines crossed: that walk
+        (network.geometry_cells) was over half of every visualizer step, to clip a repaint the canvas already
+        limits to the holes. The visualizer's 30 Hz steps repaint them at 10 fps (batch)."""
+        if batch:
+            self.gl_tick = (getattr(self, "gl_tick", 0) + 1) % 3
+            if self.gl_tick:
+                return
+        self.canvas.queue_draw()
 
     def invalidate_cells(self, cells, batch=True):
         if self.gl_on and batch:                     # cairo only fills the holes under the clock: 10 fps is plenty
@@ -1759,17 +1804,35 @@ class AmbientHomeScreen(Screen):
         self.start_anim()
 
     def stirred(self):
-        """Calm Home keeps moving: just after input, or while a tile shows live "now playing" bars."""
-        if time.monotonic() < self.stir_until:
-            return True
-        return any(getattr(n, "now", None) == "Playing"
-                   for w in getattr(self, "items", ()) if w.slot == "row" for n in w.focus_items())
+        """Calm Home keeps moving just after input. A tile that shows live "now playing" bars does not keep the
+        whole Home animating (that cost more than a core at 1440p): eq_tick moves only its bars."""
+        return time.monotonic() < self.stir_until
+
+    def playing_nodes(self):
+        return [n for w in getattr(self, "items", ()) if w.slot == "row" for n in w.focus_items()
+                if getattr(n, "now", None) == "Playing" and hasattr(n, "eq_tick")]
+
+    def eq_check(self):
+        """While calm Home holds still, a slow timer keeps the "now playing" bars of a playing tile moving."""
+        if not self.eq_id and not self.anim_id and not self.idle.ambient and self.cfg.get("visual_effects", True) \
+                and self.playing_nodes():
+            self.eq_id = GLib.timeout_add(EQ_MS, self.eq_tick)
+
+    def eq_tick(self):
+        nodes = [] if (self.anim_id or self.idle.ambient or not self.active()) else self.playing_nodes()
+        if not nodes:
+            self.eq_id = 0
+            return False
+        for n in nodes:
+            n.eq_tick(EQ_MS / 1000.0)
+        return True
 
     def settled_check(self):
         """1 s, while calm Home holds still: wake the tiles when something moved them without input (a row
         rebuilt, focus moved, the QR drop-down opened or closed), so links, focus and dodging catch up."""
         if self.anim_id or self.idle.ambient or not self.cfg["visual_effects"]:
             return
+        self.eq_check()
         pw = next((w for w in getattr(self, "items", ()) if hasattr(w, "drop_rect")), None)
         if (pw.drop_rect() if pw else None) != self.shell.avoid_rect:
             self.stir(2.0)

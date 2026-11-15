@@ -25,6 +25,8 @@ LOCAL = Path.home() / ".local/share/imactv"
 NOW_FILE = "music_cast_now.json"
 SOCK_NAME = "music-mpv.sock"
 SERVICE_FILE = "music_cast_service.json"   # {"enabled": false} once casting is switched off in Settings
+NET_FILE = "music_cast_net.json"     # receiver.mjs: the interfaces and addresses it is discoverable on
+CODE_FILE = "music_cast_code.json"   # receiver.mjs: the current "Link with TV code"
 CTL_NAME = "music-ctl.sock"     # receiver.mjs `serveControl`: play_pause, pause, resume, stop, next, previous, seek
 COMMANDS = ("play_pause", "pause", "resume", "stop", "next", "previous", "seek", "set_position")
 PORT = int(os.environ.get("IMACTV_MUSIC_PORT", "8766"))
@@ -129,25 +131,151 @@ def mpv_command(data_dir, cmd, timeout=1.0):
         return False
 
 
-def control(data_dir, cmd, timeout=6.0, **params):
-    """One command to the receiver's control socket (through its Player, so the phone app follows).
-    True/False as the receiver answered; None when no receiver listens (an older one, or none running)."""
-    if cmd not in COMMANDS:
-        raise ValueError("Unknown music command")
+def request(data_dir, msg, timeout=6.0):
+    """One JSON line to the receiver's control socket; its answer ({"ok", "data"?, "error"?}), or None when no
+    receiver listens (an older one, or none running)."""
     try:
         with socket.socket(socket.AF_UNIX) as s:
             s.settimeout(timeout)
             s.connect(str(Path(data_dir) / CTL_NAME))
-            s.sendall((json.dumps({"cmd": cmd, **params}) + "\n").encode())
+            s.sendall((json.dumps(msg) + "\n").encode())
             buf = b""
             while b"\n" not in buf:
                 chunk = s.recv(4096)
                 if not chunk:
                     break
                 buf += chunk
-        return bool(json.loads(buf.split(b"\n")[0]).get("ok"))
+        answer = json.loads(buf.split(b"\n")[0])
+        return answer if isinstance(answer, dict) else None
     except (OSError, ValueError):
         return None
+
+
+def control(data_dir, cmd, timeout=6.0, **params):
+    """One command to the receiver's control socket (through its Player, so the phone app follows).
+    True/False as the receiver answered; None when no receiver listens (an older one, or none running)."""
+    if cmd not in COMMANDS:
+        raise ValueError("Unknown music command")
+    answer = request(data_dir, {"cmd": cmd, **params}, timeout)
+    return None if answer is None else bool(answer.get("ok"))
+
+
+def format_code(code):
+    digits = "".join(ch for ch in str(code or "") if ch.isdigit())
+    return " ".join(digits[i:i + 3] for i in range(0, len(digits), 3))
+
+
+def pair_code(data_dir):
+    """"Link with TV code" for the YouTube / YouTube Music app (Settings -> Watch on TV -> Enter TV code).
+    Asking starts the receiver fetching codes for 15 minutes. {"code": "324 419 547 823" or None, "pending",
+    "error"}; None when no receiver answers."""
+    answer = request(data_dir, {"cmd": "pair_code"})
+    if not answer or not answer.get("ok"):
+        return None
+    data = answer.get("data") or {}
+    code, error = data.get("code"), None
+    try:
+        saved = json.loads((Path(data_dir) / CODE_FILE).read_text())
+        code = code or saved.get("code")
+        error = saved.get("error")
+    except (OSError, ValueError, AttributeError):
+        pass
+    return {"code": format_code(code) or None, "pending": not code and not error, "error": error}
+
+
+# ---- "Why isn't Nexus TV in my cast menu?": Settings -> Playback -> Check casting, and `nexus-tv-cast check`
+SSDP = ("239.255.255.250", 1900)
+DIAL_ST = "urn:dial-multiscreen-org:service:dial:1"
+
+
+def ssdp_search(local, timeout=2.0):
+    """Search for DIAL devices from the TV's own address `local`, as a phone on that network would; the
+    LOCATION of each answer."""
+    found = []
+    msg = ("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n"
+           "ST: %s\r\n\r\n" % DIAL_ST).encode()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local))
+            s.bind((local, 0))
+            s.sendto(msg, SSDP)
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                s.settimeout(max(0.05, end - time.monotonic()))
+                try:
+                    data, _ = s.recvfrom(4096)
+                except socket.timeout:
+                    break
+                for line in data.decode("latin-1").split("\r\n"):
+                    if line.upper().startswith("LOCATION:"):
+                        found.append(line.split(":", 1)[1].strip())
+    except OSError:
+        pass
+    return found
+
+
+def device_page(address, port, timeout=3.0):
+    """Whether the receiver's DIAL page answers on `address` (what a phone fetches after the search)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://%s:%d/ytcr/ssdp/device-desc.xml" % (address, port), timeout=timeout) as r:
+            return b"<friendlyName>" in r.read(8192)
+    except (OSError, ValueError):
+        return False
+
+
+def firewall(etc="/etc"):
+    """The firewall that can hide the TV: "ufw" when Ubuntu/Zorin's firewall is switched on, else None."""
+    try:
+        if "ENABLED=yes" in (Path(etc) / "ufw/ufw.conf").read_text():
+            return "ufw"
+    except OSError:
+        pass
+    return None
+
+
+def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc"):
+    """Each step a phone goes through to list "Nexus TV": [(ok True/False/None for advice, text)]."""
+    data_dir = Path(data_dir)
+    state = (status or {}).get("state")
+    lines = [(state == "running", "Receiver: " + describe(status))]
+    if state != "running":
+        if state == "missing":
+            lines.append((None, "Run ./install.sh again on this PC to install what is missing."))
+        elif state == "off":
+            lines.append((None, "Switch \"Cast from YouTube Music\" on."))
+        return lines
+    try:
+        net = json.loads((data_dir / NET_FILE).read_text())
+    except (OSError, ValueError):
+        net = None
+    if not isinstance(net, dict):
+        lines.append((None, "This receiver is too old to check: restart casting after updating the TV."))
+        return lines
+    port = int(net.get("port") or PORT)
+    addresses = [a for a in net.get("addresses") or [] if isinstance(a, dict) and a.get("address")]
+    if not addresses:
+        lines.append((False, "No Wi-Fi or Ethernet address on %s: connect this PC to the phone's Wi-Fi."
+                      % (", ".join(net.get("ifaces") or []) or "any network card")))
+        return lines
+    ours = ["://%s:%d/" % (a["address"], port) for a in addresses]   # Wi-Fi and Ethernet on one subnet: either will do
+    for a in addresses:
+        addr = a["address"]
+        page_ok = page(addr, port)
+        found = [loc for loc in search(addr) if any(o in loc for o in ours)]
+        if page_ok and found:
+            lines.append((True, "Discoverable on %s (%s)" % (addr, a.get("iface"))))
+        elif not page_ok:
+            lines.append((False, "Its page doesn't answer on %s:%d: restart casting." % (addr, port)))
+        else:
+            lines.append((False, "It doesn't answer searches on %s (%s): restart casting." % (addr, a.get("iface"))))
+    if firewall(etc) == "ufw":
+        lines.append((None, "The firewall is on: phones can't reach the TV unless it allows UDP 1900 and TCP %d "
+                            "(sudo ufw allow 1900/udp && sudo ufw allow %d/tcp, or run ./install.sh again)." % (port, port)))
+    lines.append((None, "The phone must be on the same Wi-Fi (not a guest network, which hides other devices). "
+                        "Still missing? Use Link with TV code in the YouTube app: it works on any network."))
+    return lines
 
 
 def toggle(data_dir):

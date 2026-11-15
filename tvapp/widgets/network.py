@@ -15,7 +15,7 @@ from gi.repository import Gtk, Gdk, GdkPixbuf, Pango
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import screens  # noqa: E402
-from .bubbles import RowBase, Bubble, _icon, TINTS, ease, in_circle, draw_eq, load_any  # noqa: E402
+from .bubbles import RowBase, Bubble, _icon, TINTS, ease, in_circle, draw_eq, eq_area, eq_tick, load_any  # noqa: E402
 
 try:
     import cairo
@@ -357,7 +357,11 @@ class TileNode(Node):
             self.text(cr, text, px, wt, x + 12, ty, tw, col, align=Pango.Alignment.LEFT)
             ty += px * 1.35
         if self.now:
-            draw_eq(cr, x + w - 30, y + 28, 16, self.t, self.now == "Playing")
+            self.eq_rect = eq_area(cr, x + w - 30, y + 28, 16, base)
+            draw_eq(cr, x + w - 30, y + 28, 16, self.t + getattr(self, "eq_t", 0.0), self.now == "Playing")
+
+    def eq_tick(self, dt):
+        eq_tick(self, dt)
 
 
 class RoundNode(Node):

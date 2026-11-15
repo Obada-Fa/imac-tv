@@ -285,10 +285,22 @@ class StaleFramesTest(unittest.TestCase):
         r.vsync, r.dpy, r.win = True, None, None              # a swap that returns at once (window not on screen)
         r.x = mock.Mock()
         r.draw = lambda now: None
+        r.frames = [{"viz": "edgeflow", "t": 0.0}]            # music: every refresh
         t0 = time.monotonic()
         for _ in range(6):
             r.present()
         self.assertGreaterEqual(time.monotonic() - t0, 5 / 60)
+
+    def test_quiet_particles_draw_at_half_rate(self):
+        # Nothing playing: the particles drift a few px/s, so 30 fps (half the renderer's CPU) looks the same.
+        r = gl_ambient.Renderer.__new__(gl_ambient.Renderer)
+        r.frames = []
+        self.assertEqual(r.fps_cap(), gl_ambient.QUIET_FPS)
+        r.frames = [{"field": [], "t": 0.0}]
+        self.assertEqual(r.fps_cap(), gl_ambient.QUIET_FPS)
+        r.frames = [{"field": [], "viz": "ridge", "t": 0.0}]
+        self.assertEqual(r.fps_cap(), 60)
+        self.assertLess(gl_ambient.QUIET_FPS, 60)
 
 
 class LiveRendererTest(unittest.TestCase):

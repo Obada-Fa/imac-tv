@@ -319,6 +319,9 @@ class Bubble(Gtk.DrawingArea):
         self.lean = ease(self.lean, self.lean_target, dt, 7.0)
         self.queue_draw()
 
+    def eq_tick(self, dt):
+        eq_tick(self, dt)
+
     # ---- input
     def inside(self, x, y):
         cx, cy = self.centre()
@@ -487,7 +490,8 @@ class Bubble(Gtk.DrawingArea):
             cr.arc(cx, cy, rad + 5 * s, 0, 2 * math.pi)
             cr.stroke()
         if self.now:
-            draw_eq(cr, cx + rad * 0.52, cy - rad * 0.52, 16 * s, t, self.now == "Playing")
+            self.eq_rect = eq_area(cr, cx + rad * 0.52, cy - rad * 0.52, 16 * s)
+            draw_eq(cr, cx + rad * 0.52, cy - rad * 0.52, 16 * s, t + getattr(self, "eq_t", 0.0), self.now == "Playing")
         # label under poster bubbles
         if self.label_h and self.title:
             ty = self.side - 4 * s + 2
@@ -516,6 +520,32 @@ def load_any(url, w, h, cb):
         threading.Thread(target=job, daemon=True).start()
     else:
         screens.load_art(url, w, h, cb)
+
+
+def eq_area(cr, x, y, h, base=None):
+    """Widget-coordinate (x, y, w, h) covering the bars draw_eq paints at (x, y, h), padded by 2 px. `base` is
+    the context's matrix at the start of the widget's draw when the bars are drawn under a transform."""
+    x0, y0 = cr.user_to_device(x, y - h)
+    x1, y1 = cr.user_to_device(x + h * 0.93, y)
+    if base is not None:
+        inv = cairo.Matrix(base.xx, base.yx, base.xy, base.yy, base.x0, base.y0)
+    else:
+        inv = cr.get_matrix()
+    inv.invert()
+    x0, y0 = inv.transform_point(x0, y0)
+    x1, y1 = inv.transform_point(x1, y1)
+    return (int(math.floor(min(x0, x1))) - 2, int(math.floor(min(y0, y1))) - 2,
+            int(math.ceil(abs(x1 - x0))) + 4, int(math.ceil(abs(y1 - y0))) + 4)
+
+
+def eq_tick(node, dt):
+    """Advance only this node's "now playing" bars and repaint just them (calm Home, nothing else moving)."""
+    node.eq_t = getattr(node, "eq_t", 0.0) + dt
+    area = getattr(node, "eq_rect", None)
+    if area:
+        node.queue_draw_area(*area)
+    else:
+        node.queue_draw()
 
 
 def draw_eq(cr, x, y, h, t, playing, alpha=0.95):

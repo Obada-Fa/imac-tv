@@ -37,6 +37,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SIM_MS = 33             # Home steps the simulation at ~30 Hz while the GPU draws; this file draws every vsync
 STALE_S = 0.4           # no new frame for this long: the picture has settled (frame_at), stop drawing
+QUIET_FPS = 30          # frame rate while nothing is playing (see Renderer.fps_cap)
 JUMP_PX = 120           # a particle that moved further than this between two frames left and came back in: no lerp
 MUSIC_DIM = 0.22        # = homescreen.MUSIC_DIM
 FRAME_KEYS = ("t", "scale", "pts", "tails", "alphas", "links", "lv", "fade", "dim", "cur", "prev", "pal", "hub",
@@ -589,9 +590,15 @@ class Renderer:
         self.x.glXSwapBuffers(self.dpy, self.win)
         # Never faster than ~60 fps, swap control or not: a swap the X server doesn't hold until the next
         # refresh (no swap control, or a window that isn't on screen) would otherwise spin a core.
-        left = 1 / 60 - (time.monotonic() - t0)
+        left = 1 / self.fps_cap() - (time.monotonic() - t0)
         if left > 0:
             time.sleep(left)
+
+    def fps_cap(self):
+        """The music visualizer gets every refresh. The quiet particles and sky-line shapes drift a few pixels
+        a second: 30 fps looks the same and halves this process's work (11% of a core at 60 fps on a 2010 iMac)."""
+        newest = self.frames[-1] if self.frames else None
+        return 60 if newest and newest.get("viz") is not None else QUIET_FPS
 
 
 def serve(parent, width, height):

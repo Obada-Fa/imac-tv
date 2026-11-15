@@ -416,8 +416,11 @@ class PairingWidget(Widget):
         sh = self.shell
         net, code = sh.net or {}, sh.code or "------"
         ip = net.get("ip", "127.0.0.1")
-        self.net_lbl.set_text(f"{net_line(net)}  ·  {ip}")
-        self.code_lbl.set_text(fmt_code(code))
+        # Only when the text changed: Gtk.Label.set_text always asks for a new layout, and this runs on every
+        # network check, so an unchanged label repainted three quarters of calm Home about once a second.
+        for lbl, text in ((self.net_lbl, f"{net_line(net)}  ·  {ip}"), (self.code_lbl, fmt_code(code))):
+            if lbl.get_text() != text:
+                lbl.set_text(text)
         url = f"http://{ip}:8765/?pair={code}"
         if url != self.last_url:
             self.last_url = url

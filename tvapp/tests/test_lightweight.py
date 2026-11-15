@@ -54,11 +54,67 @@ class CalmHomeSettles(unittest.TestCase):
         self.assertTrue(self.needs(calm_home(morph=SimpleNamespace(moving=True, target=None))))
         self.assertTrue(self.needs(calm_home(widget_fading=lambda: True)))
 
-    def test_a_playing_tile_keeps_its_bars_moving(self):
-        row = SimpleNamespace(slot="row", focus_items=lambda: [SimpleNamespace(now="Playing")])
-        self.assertTrue(self.needs(calm_home(items=[row])))
-        paused = SimpleNamespace(slot="row", focus_items=lambda: [SimpleNamespace(now="Paused")])
-        self.assertFalse(self.needs(calm_home(items=[paused])))
+    def test_a_playing_tile_moves_only_its_bars(self):
+        # A playing tile used to keep all of calm Home at 20 fps: Home 64% + Xorg 62% of a core on a 1440p iMac.
+        H = homescreen.AmbientHomeScreen
+        node = mock.Mock(now="Playing")
+        row = SimpleNamespace(slot="row", focus_items=lambda: [node])
+        screen = calm_home(items=[row], anim_id=0, eq_id=0, active=lambda: True, eq_tick=None)
+        screen.playing_nodes = lambda: H.playing_nodes(screen)
+        self.assertFalse(self.needs(screen))                 # the whole Home settles
+        with mock.patch.object(homescreen.GLib, "timeout_add", return_value=7) as add:
+            H.eq_check(screen)
+        add.assert_called_once_with(homescreen.EQ_MS, mock.ANY)
+        self.assertEqual(screen.eq_id, 7)
+        self.assertTrue(H.eq_tick(screen))
+        node.eq_tick.assert_called_once()
+        node.now = "Paused"                                  # paused: the slow timer ends itself
+        self.assertFalse(H.eq_tick(screen))
+        self.assertEqual(screen.eq_id, 0)
+
+    def test_the_bars_timer_yields_to_the_main_animation_and_ambient(self):
+        H = homescreen.AmbientHomeScreen
+        node = mock.Mock(now="Playing")
+        row = SimpleNamespace(slot="row", focus_items=lambda: [node])
+        for kw in ({"anim_id": 3}, {"idle": SimpleNamespace(ambient=True)}):
+            screen = calm_home(**{"items": [row], "anim_id": 0, "eq_id": 0, "active": lambda: True, **kw})
+            screen.playing_nodes = lambda: H.playing_nodes(screen)
+            with mock.patch.object(homescreen.GLib, "timeout_add") as add:
+                H.eq_check(screen)
+            add.assert_not_called()
+            self.assertFalse(H.eq_tick(screen))
+        node.eq_tick.assert_not_called()
+
+    def test_quiet_ambient_only_samples_the_speakers(self):
+        # Recording the speaker monitor cost ~4% of a core in silence (parec, PulseAudio, the analyser).
+        H = homescreen
+        listen = lambda screen, now: H.AmbientHomeScreen.listen_now(screen, now)
+        quiet = SimpleNamespace(now_state=None, audio=None, heard_at=0.0)
+        base = 1000.0 * H.LISTEN_EVERY
+        self.assertTrue(listen(quiet, base + 0.5))                         # inside the probe window
+        self.assertFalse(listen(quiet, base + H.LISTEN_PROBE + 1.0))       # the rest of the cycle: not recording
+        playing = SimpleNamespace(now_state={"status": "Playing"}, audio=None, heard_at=0.0)
+        self.assertTrue(listen(playing, base + H.LISTEN_PROBE + 1.0))      # something is known to play
+        playing.now_state = {"status": "Paused"}
+        self.assertTrue(listen(playing, base + H.LISTEN_PROBE + 2.0))      # held a while after it stops
+        self.assertFalse(listen(playing, base + H.LISTEN_PROBE + 2.0 + H.LISTEN_HOLD))
+        sound = SimpleNamespace(now_state=None, heard_at=0.0,
+                                audio=SimpleNamespace(levels=lambda: {"active": True}))
+        self.assertTrue(listen(sound, base + H.LISTEN_PROBE + 1.0))        # sound from anything else keeps it on
+
+    def test_gpu_steps_skip_the_dirty_cell_walk(self):
+        # network.geometry_cells was over half of each 30 Hz visualizer step while the GPU drew the picture.
+        H = homescreen
+        canvas = mock.Mock(only=object())
+        screen = SimpleNamespace(gl_on=True, canvas=canvas, gl_tick=0)
+        self.assertTrue(H.gl_holes_only(screen))
+        for _ in range(6):
+            H.AmbientHomeScreen.gl_touch(screen)
+        self.assertEqual(canvas.queue_draw.call_count, 2)                  # the holes at a third of the step rate
+        H.AmbientHomeScreen.gl_touch(screen, batch=False)
+        self.assertEqual(canvas.queue_draw.call_count, 3)
+        self.assertFalse(H.gl_holes_only(SimpleNamespace(gl_on=False, canvas=canvas)))
+        self.assertFalse(H.gl_holes_only(SimpleNamespace(gl_on=True, canvas=mock.Mock(only=None))))
 
     def test_ambient_rules_are_unchanged(self):
         screen = calm_home(idle=SimpleNamespace(ambient=True), chrome=0.0, dust_amt=0.0)

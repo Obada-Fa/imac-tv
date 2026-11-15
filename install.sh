@@ -233,6 +233,19 @@ fi
 bash "$ROOT_DIR/scripts/install-music-cast.sh" || printf "${YELLOW}Music casting setup failed; the TV works without it.${NC}\n"
 mkdir -p "$HOME/.local/bin" && ln -sf "$ROOT_DIR/scripts/pair-code.sh" "$HOME/.local/bin/nexus-tv-pair"
 ln -sf "$ROOT_DIR/scripts/cast.sh" "$HOME/.local/bin/nexus-tv-cast"
+# Phones find "Nexus TV" with an SSDP search (UDP 1900) and then fetch its DIAL page (TCP 8766); an active
+# firewall (ufw on Zorin/Ubuntu) drops both and the TV never shows in the cast menu.
+if command -v ufw >/dev/null && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; then
+  if [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; then
+    S=""; [ "$EUID" -eq 0 ] || S="sudo"
+    $S ufw allow 1900/udp comment 'Nexus TV cast discovery' >/dev/null && \
+      $S ufw allow 8766/tcp comment 'Nexus TV cast' >/dev/null && \
+      printf "${GREEN}✓ Firewall open for music casting (UDP 1900, TCP 8766)${NC}\n"
+  else
+    printf "${YELLOW}The firewall (ufw) is on and may hide \"Nexus TV\" from the cast menu. Run:${NC}\n"
+    printf "     ${CYAN}sudo ufw allow 1900/udp && sudo ufw allow 8766/tcp${NC}\n"
+  fi
+fi
 
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
 printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"
