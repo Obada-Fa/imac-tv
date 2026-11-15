@@ -19,6 +19,8 @@ import wallpapers  # noqa: E402
 import display  # noqa: E402
 import gpu
 import music_cast
+import wifi
+import bluetooth
 import settings_model
 import widgets  # noqa: E402
 from widgets import glass, pairing, vitals  # noqa: E402
@@ -102,11 +104,12 @@ SUBTITLES = {
     "Ambient": "Set the mood for the moments between watching.",
     "Display": "A comfortable picture matched to your screen, and where the sound goes.",
     "Playback": "Your languages, quality and watching preferences.",
+    "Network": "Wi-Fi and Bluetooth: get this TV and your devices connected.",
     "Connections": "Keep your phone and streaming services close.",
     "System": "Everything you need to keep your TV running smoothly.",
 }
 GLYPHS = {"Appearance": "appearance", "Ambient": "ambient", "Display": "display", "Playback": "playback",
-          "Connections": "connections", "System": "system"}
+          "Network": "network", "Connections": "connections", "System": "system"}
 RAIL_INDENT = (0, 30, 10, 38, 6, 26)      # a loose constellation, not a straight list
 HEADINGS = {'transparency': 'Surfaces & motion', 'style': 'Home screen', 'interval': 'Timing',
             'visualizer': 'While idle', 'sub_default': 'Languages & quality', 'autoplay_next': 'Episodes'}
@@ -429,6 +432,8 @@ class SettingsScreen(Screen):
                                                              lambda v: self.apply_setting('youtube_close', {'minutes': v}),
                                                              labels=['Never', 'After 30 min', 'After 60 min']),
                                    value='Never' if not mins else '%s min' % mins)])
+        if self.category == 'Network':
+            self.render_network()
         if self.category == 'Connections':
             self.render_connections()
         if self.category == 'System':
@@ -466,6 +471,186 @@ class SettingsScreen(Screen):
             self.section('Sound output')
             self.grid([self.button(o["name"], "", o["current"], ("sound", o["id"]), lambda i=o["id"]: self.pick_sound(i))
                        for o in self.sound_outputs])
+
+    # ---- Network: Wi-Fi and Bluetooth (wifi.py, bluetooth.py through the controller, so the phone sees the same)
+    def net_state(self):
+        if not hasattr(self.shell, 'net_devices'):
+            self.shell.net_devices = {'wifi': None, 'bluetooth': None}      # kept across visits: no empty flash
+        return self.shell.net_devices
+
+    def render_network(self):
+        state = self.net_state()
+        wf, bt = state['wifi'], state['bluetooth']
+        self.section('Wi-Fi')
+        if wf is None:
+            self.note("Looking…", top=0)
+        elif not wf.get('available'):
+            self.note(wifi.describe(wf), top=0)
+        else:
+            on = bool(wf.get('enabled'))
+            self.grid([self.button('Wi-Fi', wifi.describe(wf) if on else 'Off', False, ('wifi', 'power'),
+                                   lambda: self.net_call('wifi', {'cmd': 'power', 'on': not on},
+                                                         busy='Turning Wi-Fi %s…' % ('off' if on else 'on')), toggle=on)])
+            for n in (wf.get('networks') or [])[:14] if on else []:
+                sub = ('Connected' if n['active'] else 'Saved' if n['saved'] else
+                       'Needs a password' if n['secure'] else 'Open network')
+                strength = 'Strong' if n['signal'] >= 70 else 'Good' if n['signal'] >= 45 else 'Weak'
+                self.grid([self.button(n['ssid'], sub, n['active'], ('wifi', 'net', n['ssid']),
+                                       lambda n=n: self.wifi_pick(n), value=strength)])
+                if getattr(self, 'wifi_asking', None) == n['ssid']:
+                    self.wifi_entry = self._entry('Password for %s (type it with your phone or a keyboard)' % n['ssid'],
+                                                  ('wifi', 'password'), False, lambda s=n['ssid']: self.wifi_join(s), 64)
+                    self.grid([self.button('Connect', '', False, ('wifi', 'join'), lambda s=n['ssid']: self.wifi_join(s)),
+                               self.button('Cancel', '', False, ('wifi', 'cancel'), self.wifi_cancel)], columns=2)
+            if on:
+                self.grid([self.button('Look for networks', 'Search again for Wi-Fi nearby', False, ('wifi', 'scan'),
+                                       lambda: self.net_call('wifi', {'cmd': 'scan'}, busy='Looking for networks…'))])
+            if wf.get('ethernet'):
+                self.note("This PC is also on a wired network.", top=2)
+        self.section('Bluetooth')
+        if bt is None:
+            self.note("Looking…", top=0)
+        elif not bt.get('available'):
+            self.note(bluetooth.describe(bt), top=0)
+        else:
+            on = bool(bt.get('enabled'))
+            self.grid([self.button('Bluetooth', bluetooth.describe(bt), False, ('bt', 'power'),
+                                   lambda: self.net_call('bluetooth', {'cmd': 'power', 'on': not on},
+                                                         busy='Turning Bluetooth %s…' % ('off' if on else 'on')), toggle=on)])
+            for d in (bt.get('devices') or [])[:16] if on else []:
+                self.grid([self.button(d['name'], bluetooth.device_line(d), d['connected'], ('bt', 'dev', d['address']),
+                                       lambda d=d: self.bt_pick(d))])
+            if on:
+                scanning = bool(bt.get('scanning'))
+                self.grid([self.button('Looking for devices…' if scanning else 'Look for devices',
+                                       'Put the speaker, headphones, controller or keyboard in pairing mode', False,
+                                       ('bt', 'scan'), self.bt_scan)])
+                self.note("Devices that ask for a code to be typed need pairing once from the PC's own Bluetooth "
+                          "settings (All apps → PC Settings).", top=2)
+        if not getattr(self, '_net_quiet', False):
+            self.net_load()
+
+    def net_load(self):
+        self.net_call('wifi', {'cmd': 'status'}, timeout=15)
+        self.net_call('bluetooth', {'cmd': 'status'}, timeout=15)
+
+    def net_call(self, kind, params, busy=None, timeout=60, focus=None):
+        """`kind` ("wifi" or "bluetooth") command off the GTK thread; the answer's state redraws the page."""
+        if busy:
+            self.shell.toast(busy, 3)
+
+        def work():
+            GLib.idle_add(done, cmd(kind, params, timeout=timeout))
+
+        def done(result):
+            if self.disposed:
+                return False
+            res = (result or {}).get('result') or {}
+            if not result or not result.get('ok'):
+                if params.get('cmd') != 'status':
+                    self.shell.toast((result or {}).get('error', 'Could not reach the controller'), 5)
+            elif res.get('message') and params.get('cmd') not in ('status', 'scan'):
+                self.shell.toast(res['message'], 3 if res.get('done') else 7)
+            if isinstance(res.get(kind), dict):
+                changed = self.net_state()[kind] != res[kind]
+                self.net_state()[kind] = res[kind]
+                if changed or focus:
+                    self.net_refresh(focus)
+            if kind == 'bluetooth':
+                self.bt_watch()
+            return False
+        threading.Thread(target=work, daemon=True).start()
+
+    def net_refresh(self, focus=None):
+        """Redraw the Network page with new state, keeping the focus on the same row (or the one named)."""
+        if self.disposed or self.category != 'Network':
+            return
+        had = self.shell.get_focus()
+        key = focus or (getattr(had, 'sel_key', None) if had and had not in self.tabs and had.is_ancestor(self) else None)
+        text = self.wifi_entry.get_text() if getattr(self, 'wifi_asking', None) and getattr(self, 'wifi_entry', None) else ''
+        self.remember()
+        self._net_quiet = True
+        try:
+            self.render()
+        finally:
+            self._net_quiet = False
+        if text and getattr(self, 'wifi_asking', None):
+            self.wifi_entry.set_text(text)               # a scan result came in while the password was being typed
+            self.wifi_entry.set_position(-1)
+        if not key or self.shell.sheet or self.shell.current() is not self:
+            return
+        flat = [b for row in self.rows for b in row if b.get_sensitive()]
+        target = (next((b for b in flat if b.sel_key == key), None)
+                  or next((b for b in flat if b.sel_key[:1] == key[:1]), None))       # its device left: same section
+        if target:
+            target.grab_focus()
+            if isinstance(target, Gtk.Entry):
+                target.set_position(-1)
+
+    def wifi_pick(self, n):
+        ssid = n['ssid']
+        if n['active'] or n['saved']:
+            choices = ['keep', 'forget'] if n['active'] else ['connect', 'forget']
+            labels = ['Stay connected' if n['active'] else 'Connect', 'Forget this network']
+
+            def chosen(what):
+                if what == 'connect':
+                    self.wifi_connect(ssid)
+                elif what == 'forget':
+                    self.net_call('wifi', {'cmd': 'forget', 'ssid': ssid}, focus=('wifi', 'net', ssid))
+            self.choice_sheet(ssid, choices, choices[0], chosen, labels=labels)
+        elif n['secure']:
+            self.wifi_asking = ssid
+            self.net_refresh(('wifi', 'password'))
+        else:
+            self.wifi_connect(ssid)
+
+    def wifi_connect(self, ssid, password=''):
+        self.net_call('wifi', {'cmd': 'connect', 'ssid': ssid, 'password': password},
+                      busy='Connecting to %s…' % ssid, timeout=100, focus=('wifi', 'net', ssid))
+
+    def wifi_join(self, ssid):
+        password = self.wifi_entry.get_text()
+        if len(password) < 8:
+            self.shell.toast("Wi-Fi passwords have at least 8 characters", 4)
+            return
+        self.wifi_asking = None
+        self.net_refresh(('wifi', 'net', ssid))
+        self.wifi_connect(ssid, password)
+
+    def wifi_cancel(self):
+        ssid, self.wifi_asking = self.wifi_asking, None
+        self.net_refresh(('wifi', 'net', ssid))
+
+    def bt_pick(self, d):
+        address, key = d['address'], ('bt', 'dev', d['address'])
+        if not d['paired'] and not d['connected']:
+            self.net_call('bluetooth', {'cmd': 'connect', 'address': address}, busy='Pairing with %s…' % d['name'],
+                          timeout=120, focus=key)
+            return
+        first = 'disconnect' if d['connected'] else 'connect'
+
+        def chosen(what):
+            if what != 'cancel':
+                busy = {'connect': 'Connecting to %s…', 'disconnect': 'Disconnecting %s…', 'forget': 'Forgetting %s…'}[what]
+                self.net_call('bluetooth', {'cmd': what, 'address': address}, busy=busy % d['name'], timeout=80, focus=key)
+        self.choice_sheet(d['name'], [first, 'forget', 'cancel'], first, chosen,
+                          labels=['Disconnect' if d['connected'] else 'Connect', 'Forget this device', 'Cancel'])
+
+    def bt_scan(self):
+        self.net_call('bluetooth', {'cmd': 'scan'}, busy='Looking for Bluetooth devices…', focus=('bt', 'scan'))
+
+    def bt_watch(self):
+        """While Bluetooth is looking for devices, ask every 3 s so they show up as they are found."""
+        if getattr(self, '_bt_timer', None) or not (self.net_state()['bluetooth'] or {}).get('scanning'):
+            return
+
+        def tick():
+            self._bt_timer = None
+            if not self.disposed and self.category == 'Network':
+                self.net_call('bluetooth', {'cmd': 'status'}, timeout=15)
+            return False
+        self._bt_timer = GLib.timeout_add_seconds(3, tick)
 
     def render_connections(self):
         px = self.shell.px

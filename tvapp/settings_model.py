@@ -2,7 +2,7 @@
 import math
 import re
 
-CATEGORIES = ('Appearance', 'Ambient', 'Display', 'Playback', 'Connections', 'System')
+CATEGORIES = ('Appearance', 'Ambient', 'Display', 'Playback', 'Network', 'Connections', 'System')
 # key, category, label, kind, choices/range, Network-only
 FIELDS = [
     ('transparency', 'Appearance', 'Transparent surfaces', 'bool', [], False),

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Nexus TV firewall helper, installed root-owned as /usr/local/sbin/imactv-firewall by setup-privileges.sh and
+# allowed without a password in /etc/sudoers.d/imactv-tv. It takes no input beyond "open" or "status":
+#   open    let phones reach the TV through an active firewall (ufw, firewalld), then print the status
+#   status  print "off" (no firewall running), "open" or "closed"
+# Ports: 8765/tcp phone remote, 8766/tcp cast (DIAL) page, 1900/udp cast discovery (SSDP).
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+TCP="8765 8766"
+UDP="1900"
+
+ufw_on() { command -v ufw >/dev/null 2>&1 && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; }
+firewalld_on() { command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; }
+
+open_ports() {
+  if ufw_on; then
+    for p in $TCP; do ufw allow "$p/tcp" comment 'Nexus TV' >/dev/null 2>&1; done
+    for p in $UDP; do ufw allow "$p/udp" comment 'Nexus TV cast discovery' >/dev/null 2>&1; done
+  fi
+  if firewalld_on; then
+    for p in $TCP; do firewall-cmd -q --permanent --add-port="$p/tcp"; firewall-cmd -q --add-port="$p/tcp"; done
+    for p in $UDP; do firewall-cmd -q --permanent --add-port="$p/udp"; firewall-cmd -q --add-port="$p/udp"; done
+  fi
+}
+
+status() {
+  local any=0 closed=0 rules ports
+  if ufw_on; then
+    any=1
+    rules="$(ufw status 2>/dev/null)"
+    for p in $TCP; do printf '%s\n' "$rules" | grep -Eq "^$p/tcp +ALLOW" || closed=1; done
+    for p in $UDP; do printf '%s\n' "$rules" | grep -Eq "^$p/udp +ALLOW" || closed=1; done
+  fi
+  if firewalld_on; then
+    any=1
+    ports=" $(firewall-cmd --list-ports 2>/dev/null) "
+    for p in $TCP; do case "$ports" in *" $p/tcp "*) ;; *) closed=1 ;; esac; done
+    for p in $UDP; do case "$ports" in *" $p/udp "*) ;; *) closed=1 ;; esac; done
+  fi
+  if [ "$any" = 0 ]; then echo off; elif [ "$closed" = 0 ]; then echo open; else echo closed; fi
+}
+
+case "${1:-status}" in
+  open) open_ports; status ;;
+  status) status ;;
+  *) echo "usage: imactv-firewall open|status" >&2; exit 2 ;;
+esac

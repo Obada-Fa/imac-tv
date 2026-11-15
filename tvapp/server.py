@@ -36,6 +36,8 @@ import wallpapers
 import browser
 import nowplaying
 import music_cast
+import wifi
+import bluetooth
 import phonemic
 import audio_output
 import phonespeaker
@@ -2236,7 +2238,7 @@ class Controller:
         return {"mic": mic, "mic_muted": mic and PHONE_MIC.muted, "speaker": PHONE_SPEAKER.active}
 
     SETTINGS_ACTIONS = ("display_trial", "display_keep", "display_revert", "youtube_close",
-                        "background_set", "retro_toggle", "retro_remove", "setting_set", "music_cast_service")
+                        "background_set", "retro_toggle", "retro_remove", "setting_set", "music_cast_service", "wifi", "bluetooth")
 
     def background_state(self):
         cfg = widgets.load_config(DATA)
@@ -2271,8 +2273,36 @@ class Controller:
         out["trial"] = display.trial_state()
         return out
 
+    def network_action(self, action, params):
+        """Settings -> Network on the TV and the phone: Wi-Fi (nmcli) and Bluetooth (BlueZ). Every answer carries
+        the state after the command, with "done" and "message" for what the command itself did."""
+        cmd = params.get("cmd") or "status"
+        done, message = True, ""
+        if action == "wifi":
+            if cmd == "connect":
+                done, message = WIFI.connect(str(params.get("ssid") or ""), str(params.get("password") or ""))
+            elif cmd == "forget":
+                done, message = WIFI.forget(str(params.get("ssid") or ""))
+            elif cmd == "power":
+                done, message = WIFI.power(bool(params.get("on")))
+            elif cmd not in ("status", "scan"):
+                raise ValueError("Use status, scan, connect, forget or power")
+            return {"wifi": WIFI.status(rescan=cmd == "scan"), "done": done, "message": message}
+        address = str(params.get("address") or "")
+        if cmd == "scan":
+            done, message = BLUETOOTH.scan()
+        elif cmd == "power":
+            done, message = BLUETOOTH.power(bool(params.get("on")))
+        elif cmd in ("connect", "disconnect", "forget"):
+            done, message = getattr(BLUETOOTH, cmd)(address)
+        elif cmd != "status":
+            raise ValueError("Use status, scan, connect, disconnect, forget or power")
+        return {"bluetooth": BLUETOOTH.status(), "done": done, "message": message}
+
     def settings_action(self, action, params):
         """Runs outside action_lock: xrandr can take a second and must not stall the remote."""
+        if action in ("wifi", "bluetooth"):
+            return self.network_action(action, params)
         if action == "music_cast_service":
             # Settings -> Connections -> Music casting (TV and phone) and `nexus-tv-cast`: the receiver that puts
             # "Nexus TV" in the YouTube Music cast menu. "stop" keeps it off across restarts of the TV.
@@ -2913,6 +2943,8 @@ class Controller:
 
 
 CONTROL = None
+WIFI = wifi.Wifi()
+BLUETOOTH = bluetooth.Bluetooth()
 MUSIC = music_cast.Supervisor(DATA)       # the cast receiver; Settings can stop, start and restart it
 
 
@@ -3400,6 +3432,8 @@ def serve():
     for handler in logging.getLogger().handlers:
         handler.addFilter(_RedactFilter())
     CONTROL = Controller()
+    if not os.environ.get("IMACTV_DATA_DIR"):  # not in tests: let phones through an active firewall (no-op without the helper)
+        threading.Thread(target=music_cast.firewall_helper, args=("open",), daemon=True).start()
     MUSIC.start()                             # "Nexus TV" in the YouTube Music cast menu, sound only
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True

@@ -206,6 +206,17 @@ class Preview(SimpleHTTPRequestHandler):
         return {"apps": items,
                 "max_favorites": self.max_favorites}
 
+    network = {
+        "wifi": {"available": True, "enabled": True, "ssid": "Living room", "signal": 78, "ethernet": False,
+                 "networks": [{"ssid": "Living room", "signal": 78, "secure": True, "active": True, "saved": True},
+                              {"ssid": "Upstairs", "signal": 52, "secure": True, "active": False, "saved": False},
+                              {"ssid": "Cafe guests", "signal": 31, "secure": False, "active": False, "saved": False}]},
+        "bluetooth": {"available": True, "enabled": True, "scanning": False,
+                      "devices": [{"address": "AA", "name": "Couch Speaker", "kind": "audio", "paired": True,
+                                   "connected": True, "rssi": None, "battery": 80},
+                                  {"address": "BB", "name": "Game pad", "kind": "gamepad", "paired": False,
+                                   "connected": False, "rssi": -60, "battery": None}]}}
+
     def do_POST(self):
         # Only the apps commands act, on in-memory sample data; everything else stays disabled
         if urlsplit(self.path).path == "/api/commands":
@@ -246,6 +257,28 @@ class Preview(SimpleHTTPRequestHandler):
                 time.sleep(0.6)
                 return self.json({"result": {"sources": [{"label": l, "title": t, "pick": p, "info_hash": f"{i}" * 40}
                                                          for i, (l, t, p) in enumerate(rows, 1)]}})
+            if action in ("wifi", "bluetooth"):          # Settings -> Network on sample data; connect/pair just flip it
+                cmd, state = params.get("cmd"), self.network[action]
+                message = ""
+                if action == "wifi" and cmd == "connect":
+                    for n in state["networks"]:
+                        n["active"] = n["ssid"] == params.get("ssid")
+                        n["saved"] = n["saved"] or n["active"]
+                    state["ssid"], message = params.get("ssid"), "Connected to %s" % params.get("ssid")
+                elif action == "wifi" and cmd == "forget":
+                    for n in state["networks"]:
+                        if n["ssid"] == params.get("ssid"):
+                            n["active"] = n["saved"] = False
+                    message = "Forgot %s" % params.get("ssid")
+                elif cmd == "power":
+                    state["enabled"] = bool(params.get("on"))
+                elif action == "bluetooth" and cmd in ("connect", "disconnect", "forget"):
+                    for d in state["devices"]:
+                        if d["address"] == params.get("address"):
+                            d["connected"] = cmd == "connect"
+                            d["paired"] = cmd != "forget"
+                            message = {"connect": "Connected to ", "disconnect": "Disconnected ", "forget": "Forgot "}[cmd] + d["name"]
+                return self.json({"ok": True, "result": {action: state, "done": True, "message": message}})
             if action == "app_open":
                 app = next((a for a in self.apps if a["id"] == params.get("id")), None)
                 if not app:

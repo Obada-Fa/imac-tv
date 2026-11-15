@@ -68,7 +68,7 @@ ACCENT = (0.62, 0.80, 1.0)    # Home's glow colour, the default tint
 NAVY = ((0, 0.05, 0.07, 0.12), (0.55, 0.07, 0.09, 0.15), (1, 0.02, 0.03, 0.06))   # Home's no-photo gradient
 SOLID = (0.075, 0.105, 0.15)  # Home's glass with transparency off
 TINTS = {"Appearance": (0.62, 0.42, 0.84), "Ambient": (0.36, 0.52, 0.86), "Display": (0.28, 0.66, 0.62),
-         "Playback": (0.86, 0.56, 0.32), "Connections": (0.30, 0.62, 0.84), "System": (0.50, 0.56, 0.66)}
+         "Playback": (0.86, 0.56, 0.32), "Network": (0.40, 0.72, 0.48), "Connections": (0.30, 0.62, 0.84), "System": (0.50, 0.56, 0.66)}
 
 
 def scale_of(shell):
@@ -166,6 +166,13 @@ def glyph(cr, name, cx, cy, s, alpha=0.92):
             for k in (0.32, 0.56):
                 cr.arc(x0 + w * 0.5, cy - s * 0.05, s * (0.42 + k), -0.55, 0.55)
                 cr.stroke()
+    elif name == "network":                       # Wi-Fi fan: three arcs over a dot
+        by = cy + s * 0.52
+        for k in (0.40, 0.76, 1.12):
+            cr.arc(cx, by, s * k, -math.pi * 0.75, -math.pi * 0.25)
+            cr.stroke()
+        cr.arc(cx, by, s * 0.09, 0, 2 * math.pi)
+        cr.fill()
     elif name == "check":
         cr.move_to(cx - s * 0.48, cy + s * 0.02)
         cr.line_to(cx - s * 0.14, cy + s * 0.36)

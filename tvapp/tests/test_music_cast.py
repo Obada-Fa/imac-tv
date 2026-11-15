@@ -422,10 +422,33 @@ class Discoverable(unittest.TestCase):
         (self.dir / "ufw/ufw.conf").write_text("ENABLED=yes\nLOGLEVEL=low\n")
         lines = music_cast.check(self.dir, self.running, etc=str(self.dir),
                                  search=lambda a: ["http://172.17.0.1:8766/ytcr/ssdp/device-desc.xml"],
-                                 page=lambda a, p: True)
+                                 page=lambda a, p: True, fw=lambda arg: None)
         self.assertEqual(lines[1][0], False)
         self.assertIn("doesn't answer searches", lines[1][1])
-        self.assertTrue(any("sudo ufw allow 1900/udp" in t for _, t in lines))
+        self.assertTrue(any("sudo ufw allow 1900/udp" in t and ok is False for ok, t in lines))
+
+    def test_firewall_opened_by_the_helper(self):
+        self.net(["192.168.1.40"])
+        (self.dir / "ufw").mkdir()
+        (self.dir / "ufw/ufw.conf").write_text("ENABLED=yes\n")
+        asked = []
+        lines = music_cast.check(self.dir, self.running, etc=str(self.dir), search=lambda a: [], page=lambda a, p: True,
+                                 fw=lambda arg: asked.append(arg) or "open")
+        self.assertEqual(asked, ["open"])
+        self.assertTrue(any(ok is True and t.startswith("Firewall: open") for ok, t in lines))
+
+    def test_firewall_helper_needs_installing(self):
+        self.assertIsNone(music_cast.firewall_helper("open", helper=str(self.dir / "missing")))
+        helper = self.dir / "helper"
+        helper.write_text("#!/bin/sh\n")
+        helper.chmod(0o755)
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return type("P", (), {"returncode": 0, "stdout": "open\n"})()
+        self.assertEqual(music_cast.firewall_helper("open", helper=str(helper), run=run), "open")
+        self.assertEqual(calls, [["sudo", "-n", str(helper), "open"]])
 
     def test_no_wifi_address(self):
         self.net([])

@@ -220,6 +220,37 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(pb.get_height(), 80)
 
 
+class NetworkActionTests(unittest.TestCase):
+    """Settings -> Network: the `wifi` and `bluetooth` actions answer with the state after the command."""
+
+    def test_wifi_and_bluetooth_commands(self):
+        wifi = mock.Mock()
+        wifi.status.return_value = {"available": True}
+        wifi.connect.return_value = (False, "That password didn't work")
+        bt = mock.Mock()
+        bt.status.return_value = {"available": True, "devices": []}
+        bt.connect.return_value = (True, "Connected to Pad")
+        bt.scan.return_value = (True, "Looking for devices…")
+        with mock.patch.object(server, "WIFI", wifi), mock.patch.object(server, "BLUETOOTH", bt), \
+                mock.patch.object(server.threading, "Thread"):
+            c = server.Controller()
+            self.assertIn("wifi", c.SETTINGS_ACTIONS)
+            self.assertEqual(c.settings_action("wifi", {"cmd": "scan"}),
+                             {"wifi": {"available": True}, "done": True, "message": ""})
+            wifi.status.assert_called_with(rescan=True)
+            out = c.settings_action("wifi", {"cmd": "connect", "ssid": "Home", "password": "x"})
+            wifi.connect.assert_called_with("Home", "x")
+            self.assertEqual((out["done"], out["message"]), (False, "That password didn't work"))
+            out = c.settings_action("bluetooth", {"cmd": "connect", "address": "AA"})
+            bt.connect.assert_called_with("AA")
+            self.assertEqual(out["message"], "Connected to Pad")
+            self.assertTrue(c.settings_action("bluetooth", {"cmd": "scan"})["done"])
+            with self.assertRaises(ValueError):
+                c.settings_action("wifi", {"cmd": "nope"})
+            with self.assertRaises(ValueError):
+                c.settings_action("bluetooth", {"cmd": "nope"})
+
+
 class PlayMediaTests(unittest.TestCase):
     def controller(self):
         with mock.patch.object(server.threading, "Thread"):

@@ -214,6 +214,16 @@ def main():
             shell.page = page
             shell.root.add(page)
             page.outputs = outputs
+            shell.net_devices = {
+                "wifi": {"available": True, "enabled": True, "ssid": "Living room", "signal": 78, "ethernet": False,
+                         "networks": [{"ssid": "Living room", "signal": 78, "secure": True, "active": True, "saved": True},
+                                      {"ssid": "Upstairs", "signal": 52, "secure": True, "active": False, "saved": False},
+                                      {"ssid": "Cafe guests", "signal": 31, "secure": False, "active": False, "saved": False}]},
+                "bluetooth": {"available": True, "enabled": True, "scanning": False,
+                              "devices": [{"address": "AA", "name": "Couch Speaker", "kind": "audio", "paired": True,
+                                           "connected": True, "rssi": None, "battery": 80},
+                                          {"address": "BB", "name": "Game pad", "kind": "gamepad", "paired": False,
+                                           "connected": False, "rssi": -60, "battery": None}]}}
             for i, category in enumerate(settings.settings_model.CATEGORIES):
                 page.select_category(category)
                 capture(shell, "settings" if i == 0 else "settings-" + category.lower(), page.tabs[i])

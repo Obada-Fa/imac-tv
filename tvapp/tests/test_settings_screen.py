@@ -205,5 +205,77 @@ class CategoryNavigationTest(unittest.TestCase):
         self.assertEqual(glass.TICKER.src, 0)
 
 
+    def network_page(self):
+        """Settings -> Network over a stand-in controller: [(action, params)] of what the page asked for."""
+        from unittest import mock
+        calls = []
+
+        def fake_cmd(action, params=None, timeout=3):
+            calls.append((action, dict(params or {})))
+            return {'ok': True, 'result': {action: self.shell.net_devices[action], 'done': True, 'message': 'Done'}}
+
+        class Now:
+            def __init__(self, target=None, daemon=None):
+                self.target = target
+
+            def start(self):
+                self.target()
+        for patch in (mock.patch.object(settings, 'cmd', fake_cmd), mock.patch.object(settings.threading, 'Thread', Now)):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.shell.open_sheet = mock.Mock()
+        self.shell.close_sheet = mock.Mock()
+        self.shell.net_devices = {
+            'wifi': {'available': True, 'enabled': True, 'ssid': 'Home', 'signal': 70, 'ethernet': False,
+                     'networks': [{'ssid': 'Home', 'signal': 70, 'secure': True, 'active': True, 'saved': True},
+                                  {'ssid': 'Upstairs', 'signal': 50, 'secure': True, 'active': False, 'saved': False},
+                                  {'ssid': 'Cafe', 'signal': 30, 'secure': False, 'active': False, 'saved': False}]},
+            'bluetooth': {'available': True, 'enabled': True, 'scanning': False,
+                          'devices': [{'address': 'AA', 'name': 'Speaker', 'kind': 'audio', 'paired': True,
+                                       'connected': True, 'rssi': None, 'battery': None},
+                                      {'address': 'BB', 'name': 'Pad', 'kind': 'gamepad', 'paired': False,
+                                       'connected': False, 'rssi': -60, 'battery': None}]}}
+        self.screen.enter_category('Network')
+        self.drain()
+        return calls
+
+    def row(self, key):
+        return next(b for row in self.screen.rows for b in row if b.sel_key == key)
+
+    def test_network_asks_for_a_password_then_connects(self):
+        calls = self.network_page()
+        self.assertEqual(self.shell.get_focus().sel_key, ('wifi', 'power'))
+        self.row(('wifi', 'net', 'Upstairs')).on_activate()
+        self.drain()
+        entry = self.shell.get_focus()
+        self.assertEqual(entry.sel_key, ('wifi', 'password'))
+        entry.set_text('short')
+        self.row(('wifi', 'join')).on_activate()
+        self.assertFalse(any(p.get('cmd') == 'connect' for _a, p in calls))
+        entry.set_text('long enough')
+        self.screen.net_refresh()                                        # a scan answer redraws the page mid-typing
+        self.assertEqual(self.screen.wifi_entry.get_text(), 'long enough')
+        self.row(('wifi', 'join')).on_activate()
+        self.drain()
+        self.assertIn(('wifi', {'cmd': 'connect', 'ssid': 'Upstairs', 'password': 'long enough'}), calls)
+        self.assertEqual(self.shell.get_focus().sel_key, ('wifi', 'net', 'Upstairs'))
+        self.assertFalse(any(b.sel_key == ('wifi', 'password') for row in self.screen.rows for b in row))
+        self.row(('wifi', 'net', 'Cafe')).on_activate()                 # open network: straight in
+        self.assertIn(('wifi', {'cmd': 'connect', 'ssid': 'Cafe', 'password': ''}), calls)
+        self.row(('wifi', 'net', 'Home')).on_activate()                 # connected: stay or forget
+        self.assertEqual(self.shell.open_sheet.call_count, 1)
+
+    def test_network_pairs_new_bluetooth_devices_and_asks_about_known_ones(self):
+        calls = self.network_page()
+        self.row(('bt', 'dev', 'BB')).on_activate()
+        self.assertIn(('bluetooth', {'cmd': 'connect', 'address': 'BB'}), calls)
+        self.row(('bt', 'dev', 'AA')).on_activate()
+        self.assertEqual(self.shell.open_sheet.call_count, 1)
+        self.row(('bt', 'scan')).on_activate()
+        self.assertIn(('bluetooth', {'cmd': 'scan'}), calls)
+        self.row(('bt', 'power')).on_activate()
+        self.assertIn(('bluetooth', {'cmd': 'power', 'on': False}), calls)
+
+
 if __name__ == "__main__":
     unittest.main()

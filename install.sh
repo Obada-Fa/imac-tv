@@ -233,36 +233,42 @@ fi
 bash "$ROOT_DIR/scripts/install-music-cast.sh" || printf "${YELLOW}Music casting setup failed; the TV works without it.${NC}\n"
 mkdir -p "$HOME/.local/bin" && ln -sf "$ROOT_DIR/scripts/pair-code.sh" "$HOME/.local/bin/nexus-tv-pair"
 ln -sf "$ROOT_DIR/scripts/cast.sh" "$HOME/.local/bin/nexus-tv-cast"
-# Phones find "Nexus TV" with an SSDP search (UDP 1900) and then fetch its DIAL page (TCP 8766); an active
-# firewall (ufw on Zorin/Ubuntu) drops both and the TV never shows in the cast menu.
-if command -v ufw >/dev/null && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; then
-  if [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; then
-    S=""; [ "$EUID" -eq 0 ] || S="sudo"
-    $S ufw allow 1900/udp comment 'Nexus TV cast discovery' >/dev/null && \
-      $S ufw allow 8766/tcp comment 'Nexus TV cast' >/dev/null && \
-      printf "${GREEN}✓ Firewall open for music casting (UDP 1900, TCP 8766)${NC}\n"
-  else
-    printf "${YELLOW}The firewall (ufw) is on and may hide \"Nexus TV\" from the cast menu. Run:${NC}\n"
-    printf "     ${CYAN}sudo ufw allow 1900/udp && sudo ufw allow 8766/tcp${NC}\n"
-  fi
-fi
-
 # 3. Sudo Privileges for TV Power Off / Desktop Session Restart
 printf "\n${BLUE}${BOLD}[3/4] Configuring maintenance privileges...${NC}\n"
+# One password, once: without it the TV can't power off from the remote, and an active firewall (ufw on
+# Zorin/Ubuntu) keeps phones away: "Nexus TV" is then missing from the YouTube cast menu, because the phone
+# hears the TV but can't open its page on TCP 8766.
+PRIV_SETUP="$APP_DIR/deploy/setup-privileges.sh"
+priv_current() {
+  { [ -f /etc/sudoers.d/imactv-tv ] || [ -f /etc/sudoers.d/zz-tvremote-power ]; } &&
+    cmp -s "$APP_DIR/deploy/imactv-firewall" /usr/local/sbin/imactv-firewall
+}
+firewall_hint() {
+  if command -v ufw >/dev/null && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; then
+    printf "${YELLOW}The firewall (ufw) is on: phones can't reach the TV until you run:${NC}\n"
+    printf "     ${CYAN}sudo bash %s${NC}\n" "$PRIV_SETUP"
+  fi
+}
 if [ "$SKIP_PRIVILEGES" = true ]; then
   printf "${YELLOW}Skipping sudo privileges configuration (--skip-privileges).${NC}\n"
+  firewall_hint
+elif priv_current; then
+  printf "${GREEN}✓ Maintenance privileges already configured in /etc/sudoers.d/${NC}\n"
+  case "$(sudo -n /usr/local/sbin/imactv-firewall open 2>/dev/null)" in
+    open) printf "${GREEN}✓ Firewall open for the phone remote and music casting${NC}\n" ;;
+    closed) firewall_hint ;;
+  esac
+elif [ "$EUID" -eq 0 ]; then
+  bash "$PRIV_SETUP"
+elif sudo -n true 2>/dev/null; then
+  sudo bash "$PRIV_SETUP"
+elif [ -t 0 ]; then
+  printf "Nexus TV needs your password once, to let the remote power off the TV and to let phones through\n"
+  printf "the firewall (the remote, and \"Nexus TV\" in the YouTube cast menu).\n"
+  sudo bash "$PRIV_SETUP" || { printf "${YELLOW}Skipped: no password given.${NC}\n"; firewall_hint; }
 else
-  if [ -f /etc/sudoers.d/imactv-tv ] || [ -f /etc/sudoers.d/zz-tvremote-power ]; then
-    printf "${GREEN}✓ Maintenance privileges already configured in /etc/sudoers.d/${NC}\n"
-  elif [ "$EUID" -ne 0 ]; then
-    if sudo -n true 2>/dev/null; then
-      sudo bash "$APP_DIR/deploy/setup-privileges.sh"
-    else
-      printf "${YELLOW}sudo requires a password; skipping sudo privileges setup.${NC}\n"
-    fi
-  else
-    bash "$APP_DIR/deploy/setup-privileges.sh"
-  fi
+  printf "${YELLOW}sudo requires a password and this isn't a terminal; skipping sudo privileges setup.${NC}\n"
+  firewall_hint
 fi
 
 # 4. Deploy Controller Service and Autostart

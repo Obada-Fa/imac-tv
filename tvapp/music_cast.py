@@ -235,7 +235,22 @@ def firewall(etc="/etc"):
     return None
 
 
-def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc", clock=time.time):
+FIREWALL_HELPER = "/usr/local/sbin/imactv-firewall"       # root-owned, passwordless in sudoers (deploy/setup-privileges.sh)
+
+
+def firewall_helper(arg, helper=FIREWALL_HELPER, run=subprocess.run):
+    """`open` (let phones through an active firewall) or `status`: "off", "open" or "closed"; None when the
+    helper isn't installed or sudo wants a password (install.sh hasn't had one yet)."""
+    if not os.access(helper, os.X_OK):
+        return None
+    try:
+        p = run(["sudo", "-n", helper, arg], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc", clock=time.time, fw=firewall_helper):
     """Each step a phone goes through to list "Nexus TV": [(ok True/False/None for advice, text)]."""
     data_dir = Path(data_dir)
     state = (status or {}).get("state")
@@ -272,8 +287,12 @@ def check(data_dir, status, search=ssdp_search, page=device_page, etc="/etc", cl
             lines.append((False, "It doesn't answer searches on %s (%s): restart casting." % (addr, a.get("iface"))))
     lines.extend(heard_lines(net, port, clock()))
     if firewall(etc) == "ufw":
-        lines.append((None, "The firewall is on: phones can't reach the TV unless it allows UDP 1900 and TCP %d "
-                            "(sudo ufw allow 1900/udp && sudo ufw allow %d/tcp, or run ./install.sh again)." % (port, port)))
+        if fw("open") == "open":                         # opens it too, if the installer never could
+            lines.append((True, "Firewall: open for phones (TCP 8765, %d and UDP 1900)" % port))
+        else:
+            lines.append((False, "The firewall is on and blocks phones: \"Nexus TV\" stays out of the cast menu until "
+                                 "you run ./install.sh again on this PC and give your password when it asks "
+                                 "(or: sudo ufw allow 1900/udp && sudo ufw allow %d/tcp)." % port))
     lines.append((None, "The phone must be on the same Wi-Fi (not a guest network, which hides other devices). "
                         "Still missing? Use Link with TV code in the YouTube app: it works on any network."))
     return lines

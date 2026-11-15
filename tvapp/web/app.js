@@ -1461,6 +1461,7 @@
       setState = await api('/api/settings');
       $('set-error').textContent = setState.display_error || '';
       renderSettings();
+      if (settingsCategory === 'network') loadNetwork();     // opening Settings on the Network page: read it afresh
     } catch (err) { $('set-error').textContent = err.message; }
   }
   function renderSettings() {
@@ -1609,7 +1610,7 @@
   });
 
   $('settings-open').onclick = () => showTab('settings');
-  const categories = ['Appearance', 'Ambient', 'Display', 'Playback', 'Connections', 'System'];
+  const categories = ['Appearance', 'Ambient', 'Display', 'Playback', 'Network', 'Connections', 'System'];
   let settingsCategory = 'appearance';
   try { const saved = sessionStorage.getItem('settings-category'); if (categories.some(c => c.toLowerCase() === saved)) settingsCategory = saved; } catch (e) {}
   function selectCategory(id, focus = false) {
@@ -1622,17 +1623,19 @@
       if (active) { if (focus) b.focus(); b.scrollIntoView({block: 'nearest', inline: 'nearest'}); }
     });
     $('settings-sub').textContent = CATEGORY_SUB[id] || '';
+    if (id === 'network') setTimeout(loadNetwork, 0);       // after this script has run: `net` is declared further down
   }
   // The TV's subtitles and glyphs for each category, so both screens say the same thing.
   const CATEGORY_SUB = {appearance: 'Make it yours. Shape the look and choose a lighter experience.',
     ambient: 'Set the mood for the moments between watching.', display: 'A comfortable picture, matched to your screen.',
-    playback: 'Your languages, quality and watching preferences.', connections: 'Keep your phone and streaming services close.',
+    playback: 'Your languages, quality and watching preferences.', network: 'Wi-Fi and Bluetooth: get the TV and your devices connected.', connections: 'Keep your phone and streaming services close.',
     system: 'Everything you need to keep your TV running smoothly.'};
   const CATEGORY_GLYPH = {
     appearance: '<circle cx="12" cy="12" r="7"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor" stroke="none"/>',
     ambient: '<path d="M16.5 15.8A6.6 6.6 0 0 1 9.2 6a6.6 6.6 0 1 0 7.3 9.8z"/>',
     display: '<rect x="4" y="5.5" width="16" height="10.5" rx="1.5"/><path d="M9.5 19.5h5M12 16v3.5"/>',
     playback: '<circle cx="12" cy="12" r="7.5"/><path d="M10.3 9v6l5-3z"/>',
+    network: '<path d="M4.6 10.4a10.5 10.5 0 0 1 14.8 0M7.4 13.3a6.5 6.5 0 0 1 9.2 0M10.1 16.1a2.7 2.7 0 0 1 3.8 0"/><circle cx="12" cy="18.7" r=".9" fill="currentColor" stroke="none"/>',
     connections: '<rect x="5" y="5" width="7" height="14" rx="1.6"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18 7.5a6.5 6.5 0 0 1 0 9"/>',
     system: '<circle cx="12" cy="12" r="2.6"/><path d="M12 4.5v2.2M12 17.3v2.2M4.5 12h2.2M17.3 12h2.2M6.7 6.7l1.6 1.6M15.7 15.7l1.6 1.6M6.7 17.3l1.6-1.6M15.7 8.3l1.6-1.6"/>'};
   categories.forEach((c, i) => {
@@ -1783,6 +1786,90 @@
       rows.append(b);
     }
     access.append(card, rows);
+  }
+  // ---- Network: the TV's Wi-Fi and Bluetooth, the same `wifi` and `bluetooth` actions as the TV's Settings -> Network.
+  // Loaded when the page is opened (not on every settings poll); Bluetooth is re-read every 3 s while it searches.
+  const net = {wifi: null, bluetooth: null, open: '', pass: '', note: '', timer: null};
+  async function netCall(kind, params, busy) {
+    if (busy) { net.note = busy; renderNetwork(); }
+    try {
+      const r = await send(kind, params), res = (r && r.result) || r || {};
+      if (res[kind]) net[kind] = res[kind];
+      if (params.cmd !== 'status') net.note = params.cmd === 'scan' && res.done ? '' : (res.message || '');
+    } catch (e) { net.note = e.message; }
+    renderNetwork();
+    if (kind === 'bluetooth' && net.bluetooth && net.bluetooth.scanning && !net.timer)
+      net.timer = setTimeout(() => { net.timer = null; if (!$('settings-network').hidden) netCall('bluetooth', {cmd: 'status'}); }, 3000);
+  }
+  function loadNetwork() { netCall('wifi', {cmd: 'status'}); netCall('bluetooth', {cmd: 'status'}); }
+  function choiceRow(buttons) {
+    const chips = el('div', 'chips seg');
+    for (const [label, fn] of buttons) { const b = el('button', '', label); b.type = 'button'; b.onclick = fn; chips.append(b); }
+    return chips;
+  }
+  const BT_KIND = {audio: 'Speaker or headphones', keyboard: 'Keyboard', mouse: 'Mouse', gamepad: 'Controller', phone: 'Phone', computer: 'Computer', tv: 'Screen', device: 'Device'};
+  function renderNetwork() {
+    const container = $('settings-network');
+    if (!container) return;
+    const typing = document.activeElement && document.activeElement.id === 'wifi-pass';
+    container.replaceChildren();
+    const wf = net.wifi, bt = net.bluetooth;
+    const toggle = key => { net.open = net.open === key ? '' : key; net.pass = ''; renderNetwork(); };
+    const wbox = section(container, 'Wi-Fi');
+    if (!wf) wbox.append(el('p', 'hint', 'Looking…'));
+    else if (!wf.available) wbox.append(el('p', 'hint', wf.ethernet ? 'The TV is on a wired network; it has no Wi-Fi card.' : 'No Wi-Fi card in the TV.'));
+    else {
+      wbox.append(switchRow('Wi-Fi', wf.enabled ? (wf.ssid || 'Not connected') : 'Off', !!wf.enabled, on => {
+        if (!on && !wf.ethernet && !confirm('Turn the TV\'s Wi-Fi off? This phone reaches the TV over it; it can only be turned back on at the TV.')) { renderNetwork(); return; }
+        netCall('wifi', {cmd: 'power', on}, on ? 'Turning Wi-Fi on…' : 'Turning Wi-Fi off…');
+      }));
+      for (const n of wf.enabled ? (wf.networks || []).slice(0, 14) : []) {
+        const key = 'w:' + n.ssid, strength = n.signal >= 70 ? 'Strong' : n.signal >= 45 ? 'Good' : 'Weak';
+        const sub = (n.active ? 'Connected' : n.saved ? 'Saved' : n.secure ? 'Needs a password' : 'Open network') + ' · ' + strength;
+        const row = actionRow(n.ssid, sub, () => toggle(key), n.active ? 'on' : '');
+        wbox.append(row);
+        if (net.open !== key) continue;
+        const join = password => {
+          if (!confirm('Move the TV to "' + n.ssid + '"? This phone has to be on that Wi-Fi too to keep controlling it.')) return;
+          net.open = ''; net.pass = '';
+          netCall('wifi', {cmd: 'connect', ssid: n.ssid, password: password || ''}, 'Connecting the TV to ' + n.ssid + '…');
+        };
+        const forget = ['Forget', () => { if (confirm('Forget "' + n.ssid + '"?' + (n.active && !wf.ethernet ? ' The TV goes offline until it joins another network.' : ''))) { net.open = ''; netCall('wifi', {cmd: 'forget', ssid: n.ssid}, 'Forgetting ' + n.ssid + '…'); } }];
+        if (n.active) wbox.append(choiceRow([forget]));
+        else if (n.saved) wbox.append(choiceRow([['Connect', () => join('')], forget]));
+        else if (!n.secure) wbox.append(choiceRow([['Connect', () => join('')]]));
+        else {
+          const form = el('form', 'keyrow'), input = el('input'), go = el('button', '', 'Join');
+          input.id = 'wifi-pass'; input.type = 'text'; input.placeholder = 'Password for ' + n.ssid; input.value = net.pass;
+          for (const a of ['autocomplete', 'autocapitalize', 'autocorrect']) input.setAttribute(a, 'off');
+          input.spellcheck = false; input.oninput = () => { net.pass = input.value; };
+          go.type = 'submit'; go.style.width = 'auto';
+          form.onsubmit = e => { e.preventDefault(); if (input.value.length < 8) { net.note = 'Wi-Fi passwords have at least 8 characters.'; renderNetwork(); return; } join(input.value); };
+          form.append(input, go); wbox.append(form);
+          if (typing) input.focus();
+        }
+      }
+      if (wf.enabled) wbox.append(actionRow('Look for networks', 'Search again for Wi-Fi near the TV', () => netCall('wifi', {cmd: 'scan'}, 'Looking for networks…')));
+    }
+    const bbox = section(container, 'Bluetooth');
+    if (!bt) bbox.append(el('p', 'hint', 'Looking…'));
+    else if (!bt.available) bbox.append(el('p', 'hint', 'No Bluetooth in the TV.'));
+    else {
+      const names = (bt.devices || []).filter(d => d.connected).map(d => d.name);
+      bbox.append(switchRow('Bluetooth', bt.enabled ? (names.join(', ') || 'On') : 'Off', !!bt.enabled,
+        on => netCall('bluetooth', {cmd: 'power', on}, on ? 'Turning Bluetooth on…' : 'Turning Bluetooth off…')));
+      for (const d of bt.enabled ? (bt.devices || []).slice(0, 16) : []) {
+        const key = 'b:' + d.address, known = d.paired || d.connected;
+        const sub = (BT_KIND[d.kind] || 'Device') + ' · ' + (d.connected ? 'Connected' : d.paired ? 'Paired' : 'In range') + (d.battery != null ? ' · battery ' + d.battery + '%' : '');
+        const act = (cmd, busy) => { net.open = ''; netCall('bluetooth', {cmd, address: d.address}, busy + ' ' + d.name + '…'); };
+        bbox.append(actionRow(d.name, sub, () => known ? toggle(key) : act('connect', 'Pairing with'), d.connected ? 'on' : ''));
+        if (net.open === key) bbox.append(choiceRow([d.connected ? ['Disconnect', () => act('disconnect', 'Disconnecting')] : ['Connect', () => act('connect', 'Connecting to')],
+          ['Forget', () => { if (confirm('Forget "' + d.name + '"?')) act('forget', 'Forgetting'); }]]));
+      }
+      if (bt.enabled) bbox.append(actionRow(bt.scanning ? 'Looking for devices…' : 'Look for devices', 'Put the speaker, headphones, controller or keyboard in pairing mode',
+        () => netCall('bluetooth', {cmd: 'scan'})));
+    }
+    if (net.note) { const out = el('p', 'hint', net.note); out.setAttribute('role', 'status'); container.append(out); }
   }
   function renderMusicCasting() {
     const container = $('settings-music-cast'), cast = setState && setState.music_cast_service;
