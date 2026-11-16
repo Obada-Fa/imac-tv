@@ -123,6 +123,7 @@ else
     mpv
     ffmpeg
     libheif-examples
+    libheif-plugin-libde265
     uxplay
     avahi-daemon
     gstreamer1.0-tools
@@ -137,7 +138,7 @@ else
     streamlink
   )
   # Optional packages: install when the distro has them, otherwise carry on.
-  OPTIONAL_PKGS=(uxplay libheif-examples fonts-noto-core fonts-noto-ui-core fonts-inter streamlink)
+  OPTIONAL_PKGS=(uxplay libheif-examples libheif-plugin-libde265 fonts-noto-core fonts-noto-ui-core fonts-inter streamlink)
   REQUIRED_PKGS=()
   for pkg in "${APT_PKGS[@]}"; do
     if [[ " ${OPTIONAL_PKGS[*]} " == *" $pkg "* ]]; then

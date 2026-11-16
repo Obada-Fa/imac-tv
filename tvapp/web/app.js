@@ -20,8 +20,12 @@
       options.body = JSON.stringify(data);
     }
     const response = await fetch(path, options);
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'The TV did not respond');
+    const result = await response.json().catch(() => null);
+    if (!response.ok || result === null) {
+      const error = new Error(result?.error || 'Could not read the TV response');
+      error.status = response.status;
+      throw error;
+    }
     return result;
   }
 
@@ -313,7 +317,6 @@
     state = s;
     $('show-on-tv').hidden = !s.sharing?.media && !s.sharing?.airplay;
     $('show-on-tv').textContent = s.sharing?.source ? 'Sharing on TV' : 'Show on TV';
-    if (sheetName === 'sharing') renderSharing();
     if (!setState && !settingsAsked) { settingsAsked = true; loadSettings(); }   // node shape + Home's photo
     pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
@@ -390,6 +393,7 @@
     const remembered = sessionStorage.getItem('mode-' + (discord ? 'discord' : s.app));
     if (mode !== (remembered || preferred) && !sheetName && !keyboard.session) setMode(remembered || preferred);
     if (sheetName === 'more') renderMoreDynamic();
+    if (sheetName === 'sharing') renderSharing();
     if (tab === 'settings' && setState) {
       for (const [key, , , , , network] of setState.fields || []) {
         const control = $('setting-' + key);
@@ -813,20 +817,28 @@
   let refreshId = 0, renderedId = 0;
   async function refresh() {
     const id = ++refreshId, started = performance.now();
+    let s;
     try {
-      const s = await api('/api/state');
+      s = await api('/api/state');
+    } catch (err) {
       if (id < renderedId) return;
       renderedId = id;
+      if (err.status === 401 || err.message.includes('Pair')) { showPair(); return; }
+      if (!pair.hidden) return;
+      if (err.status) { message(err.message); return; }
+      connected(false, '● Reconnecting');
+      message('Reconnecting to the TV…');
+      return;
+    }
+    if (id < renderedId) return;
+    renderedId = id;
+    try {
       if (started < focusReadAt && state?.app === s.app) s.text_focus = state.text_focus;
       else focusReadAt = started;
       render(s);
     } catch (err) {
-      if (id < renderedId) return;
-      renderedId = id;
-      if (err.message.includes('Pair')) { showPair(); return; }
-      if (!pair.hidden) return;
-      connected(false, '● Reconnecting');
-      message('Reconnecting to the TV…');
+      console.error('Could not render the TV remote', err);
+      message('Could not refresh the remote. Close and reopen it.');
     }
   }
 
@@ -859,6 +871,7 @@
   let upload = null;
 
   function renderSharing() {
+    if (!$('sharing-state')) return;
     const sharing = state?.sharing || {};
     const item = sharing.item;
     $('sharing-state').textContent = item ? `${sharing.index + 1} / ${sharing.count} · ${item.name}` :

@@ -1,5 +1,7 @@
 """Temporary phone media and the receivers that share the TV display."""
+import io
 import json
+import logging
 from pathlib import Path
 import re
 import secrets
@@ -10,9 +12,42 @@ import tempfile
 import time
 import threading
 
+from PIL import Image, ImageCms, ImageOps
+
 LIMIT = 5 * 1024**3
+MAX_PHOTO_PIXELS = 100_000_000
 PHOTO_CODECS = {"mjpeg", "png", "webp", "hevc", "av1"}
 VIDEO_FORMATS = {"mov", "mp4", "matroska", "webm", "mpegts", "avi"}
+LOG = logging.getLogger(__name__)
+SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+
+
+def normalize_photo(path, output):
+    """Bake the camera profile into sRGB pixels before mpv decodes the still."""
+    try:
+        with Image.open(path) as source:
+            if source.width * source.height > MAX_PHOTO_PIXELS:
+                raise ValueError("This photo is too large to display")
+            photo = ImageOps.exif_transpose(source)
+            profile = photo.info.get("icc_profile")
+            alpha = None
+            if photo.mode in ("RGBA", "LA", "PA") or "transparency" in photo.info:
+                alpha = photo.convert("RGBA").getchannel("A")
+            if photo.mode not in ("RGB", "CMYK", "L", "LAB"):
+                photo = photo.convert("RGB")
+            if profile:
+                try:
+                    camera = ImageCms.getOpenProfile(io.BytesIO(profile))
+                    photo = ImageCms.profileToProfile(photo, camera, SRGB, outputMode="RGB")
+                except (ImageCms.PyCMSError, OSError, ValueError):
+                    LOG.warning("Could not apply the phone photo's embedded color profile")
+            if photo.mode != "RGB":
+                photo = photo.convert("RGB")
+            if alpha is not None:
+                photo.putalpha(alpha)
+            photo.save(output, format="PNG", icc_profile=SRGB.tobytes(), compress_level=1)
+    except (Image.DecompressionBombError, OSError, SyntaxError) as exc:
+        raise ValueError("This photo could not be decoded") from exc
 
 
 def inspect_file(path):
@@ -147,20 +182,27 @@ class Sharing:
                     target.write(block)
                     left -= len(block)
             kind = inspect_file(path)
-            if kind == "heif":
-                if not self.heif:
-                    raise RuntimeError("Install the TV’s HEIF decoder to open this photo")
-                converted = path.with_suffix(".jpg")
-                try:
-                    result = subprocess.run([self.heif, str(path), str(converted)],
-                                            capture_output=True, timeout=30)
-                    if result.returncode or not converted.is_file():
-                        raise ValueError("The HEIF photo could not be opened")
-                    converted.replace(path)
+            if kind in ("photo", "heif"):
+                with tempfile.TemporaryDirectory(dir=self.root) as temp:
+                    decoded = path
+                    if kind == "heif":
+                        if not self.heif:
+                            raise RuntimeError("Install the TV’s HEIF decoder to open this photo")
+                        decoded = Path(temp) / "decoded.png"
+                        result = subprocess.run([self.heif, str(path), str(decoded)],
+                                                capture_output=True, timeout=30)
+                        if result.returncode or not decoded.is_file():
+                            raise ValueError("The HEIF photo could not be opened")
+                    normalized = Path(temp) / "display.png"
+                    normalize_photo(decoded, normalized)
+                    rendered_size = normalized.stat().st_size
+                    with self.lock:
+                        if rendered_size - size > LIMIT - self.used:
+                            raise ValueError("There is not enough temporary space for this photo")
+                        normalized.replace(path)
+                        self.used += rendered_size - size
+                        size = rendered_size
                     kind = "photo"
-                finally:
-                    for extra in self.root.glob(converted.stem + "*.jpg"):
-                        extra.unlink(missing_ok=True)
             with self.lock:
                 if self.revision != revision:
                     raise ValueError("This sharing session ended")

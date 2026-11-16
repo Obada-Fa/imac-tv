@@ -3072,6 +3072,9 @@ class Handler(BaseHTTPRequestHandler):
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
             path = WEB / name
             payload = path.read_bytes()
+            if name == "index.html":
+                revision = (WEB / "app.js").stat().st_mtime_ns
+                payload = payload.replace(b'src="/app.js"', f'src="/app.js?v={revision:x}"'.encode())
             ctype = "text/html" if name.endswith("html") else "text/css" if name.endswith("css") else "text/javascript"
             self.send_response(200)
             self.send_header("Content-Type", ctype + "; charset=utf-8")

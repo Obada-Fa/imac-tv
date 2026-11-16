@@ -5,7 +5,9 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from phone_sharing import Sharing
+from PIL import Image, ImageCms
+
+from phone_sharing import normalize_photo, Sharing
 
 
 class UploadedMedia(unittest.TestCase):
@@ -19,6 +21,10 @@ class UploadedMedia(unittest.TestCase):
         probe = patch("phone_sharing.inspect_file", return_value="photo")
         probe.start()
         self.addCleanup(probe.stop)
+        normalize = patch("phone_sharing.normalize_photo",
+                          side_effect=lambda source, output: output.write_bytes(source.read_bytes()))
+        normalize.start()
+        self.addCleanup(normalize.stop)
 
     def test_photos_queue_in_order_and_stop_cleans_up(self):
         first = self.sharing.upload(io.BytesIO(b"first"), 5, "one.jpg", None)
@@ -74,3 +80,34 @@ class UploadedMedia(unittest.TestCase):
             self.sharing.upload(io.BytesIO(b"c"), 1, "c.jpg", original["id"])
         self.assertEqual(self.sharing.state()["item"]["name"], "b.jpg")
         self.assertEqual(self.sharing.used, 1)
+
+
+class DisplayPhoto(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.source = Path(temp.name) / "phone-photo"
+        self.output = Path(temp.name) / "display-photo"
+
+    def test_converts_profile_pixels_and_embeds_srgb(self):
+        camera_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("LAB"))
+        Image.new("LAB", (2, 1), (134, 170, 145)).save(
+            self.source, format="TIFF", icc_profile=camera_profile.tobytes())
+        normalize_photo(self.source, self.output)
+        with Image.open(self.output) as photo:
+            self.assertEqual((photo.format, photo.mode), ("PNG", "RGB"))
+            self.assertIn("srgb", ImageCms.getProfileName(io.BytesIO(photo.info["icc_profile"])).lower())
+            for actual, expected in zip(photo.getpixel((0, 0)), (195, 93, 99)):
+                self.assertAlmostEqual(actual, expected, delta=2)
+
+    def test_applies_orientation_to_rgb_png(self):
+        photo = Image.new("RGB", (2, 1), "red")
+        photo.putpixel((1, 0), (0, 0, 255))
+        orientation = Image.Exif()
+        orientation[274] = 6
+        photo.save(self.source, format="PNG", exif=orientation)
+        normalize_photo(self.source, self.output)
+        with Image.open(self.output) as display:
+            self.assertEqual(display.size, (1, 2))
+            self.assertEqual(display.getpixel((0, 0)), (255, 0, 0))
+            self.assertEqual(display.getpixel((0, 1)), (0, 0, 255))
