@@ -147,12 +147,19 @@ class _TvWebPageState extends State<TvWebPage> {
         );
       }
       if (!mounted) return;
+      // Keep the pairing cookie, but discard assets from the last TV release.
+      await web.clearCache();
+      if (!mounted) return;
       setState(() => _web = web);
       final code = widget.pairCode;
       // app=1: the TV sends phone browsers that scanned its QR on to this app; not this WebView.
       await web.loadRequest(origin.replace(
         path: '/',
-        queryParameters: code == null ? null : {'pair': code, 'app': '1'},
+        queryParameters: {
+          'app': '1',
+          'reload': DateTime.now().microsecondsSinceEpoch.toString(),
+          if (code != null) 'pair': code,
+        },
       ));
     } catch (_) {
       _unreachable();
