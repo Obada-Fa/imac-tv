@@ -955,6 +955,7 @@
         };
       });
       renderSharing();
+      return;
     } else if (name === 'web') { renderWebSheet(); return; }
     if (name === 'output') { renderOutputSheet(); return; }
     if (name === 'torbox') {
