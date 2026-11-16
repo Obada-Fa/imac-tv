@@ -676,8 +676,26 @@ class SettingsScreen(Screen):
                                lambda: self.confirm_access('old_link'))], into=side)
         pair.pack_start(side, True, True, 0)
         self.content.pack_start(pair, False, False, 0)
+        self.section('Show on TV')
+        self.sharing_status = self.note('', top=0)
+        self.update_sharing(getattr(self.shell, 'settings_status', {}) or {})
+        self.note('iPhone: Control Center → Screen Mirroring → Nexus TV.\n'
+                  'Android: Share to Nexus TV or open Mirror screen in the app.\n'
+                  'Either phone: open Show on TV in the paired web remote.', top=0)
+        self.grid([self.button('Stop sharing', '', False, ('share', 'stop'),
+                               lambda: cmd('sharing', {'cmd': 'stop'})),
+                   self.button('Restart AirPlay', '', False, ('share', 'restart'),
+                               lambda: cmd('sharing', {'cmd': 'restart_airplay'}))])
         self.render_music_cast()                         # beside phone pairing: it's the other thing a phone links to
         self.render_torbox()
+
+    def update_sharing(self, state):
+        sharing = state.get('sharing') or {}
+        item = sharing.get('item') or {}
+        text = (item.get('name') or ('Mirroring a phone' if sharing.get('source') else None)
+                or sharing.get('error') or ('AirPlay ready' if sharing.get('airplay_ready') else ''))
+        self.sharing_status.set_text(text)
+        self.sharing_status.set_visible(bool(text))
 
     def render_music_cast(self):
         """Music casting: on/off, restart, a "Link with TV code" for when the phone can't find the TV over the

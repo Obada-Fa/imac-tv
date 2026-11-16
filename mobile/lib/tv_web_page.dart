@@ -54,6 +54,9 @@ class _TvWebPageState extends State<TvWebPage> {
   @override
   void initState() {
     super.initState();
+    _sharing.setMethodCallHandler((call) async {
+      if (call.method == 'shared' && _ready) await _nativeShare('share');
+    });
     _controls.hardwareVolume.addListener(_syncNativeState);
     _controls.phoneMic.addListener(_syncNativeState);
     _controls.phoneSpeaker.addListener(_syncNativeState);
@@ -104,6 +107,7 @@ class _TvWebPageState extends State<TvWebPage> {
               setState(() => _ready = true);
               _syncNativeState();
               unawaited(_autoShareMic(origin));
+              unawaited(_nativeShare('share'));
             } catch (_) {
               _unreachable();
             }
@@ -135,9 +139,9 @@ class _TvWebPageState extends State<TvWebPage> {
       });
       if (web.platform is AndroidWebViewController) {
         await (web.platform as AndroidWebViewController).setOnShowFileSelector(
-          (_) async =>
+          (params) async =>
               await TvVolumeControl.channel.invokeListMethod<String>(
-                'pickImage',
+                'pickImage', {'sharing': params.mode == FileSelectorMode.openMultiple},
               ) ??
               [],
         );
@@ -171,12 +175,36 @@ class _TvWebPageState extends State<TvWebPage> {
     } catch (_) {}
   }
 
+  static const _sharing = MethodChannel('nexus_tv/sharing');
+
+  Future<void> _nativeShare(String action) async {
+    final origin = _origin?.origin;
+    if (!mounted || origin == null) return;
+    try {
+      final token = await TvVolumeControl.channel.invokeMethod<String>(
+        'pairCookie', {'origin': origin},
+      );
+      if (!mounted || _origin?.origin != origin || token == null || token.isEmpty) return;
+      await _sharing.invokeMethod<Object?>(action, {'origin': origin, 'token': token});
+    } on MissingPluginException {
+      return;
+    } on PlatformException catch (err) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.message ?? 'Could not share with the TV')),
+      );
+    }
+  }
+
   Future<void> _message(String raw) async {
     if (!mounted || _origin == null) return;
     try {
       final action = (jsonDecode(raw) as Map<String, dynamic>)['action'];
       final control = _controls.hardwareVolume;
       switch (action) {
+        case 'share':
+        case 'mirror':
+          await _nativeShare(action as String);
+          return;
         case 'status':
           await control.refresh();
         case 'start':
@@ -275,6 +303,7 @@ class _TvWebPageState extends State<TvWebPage> {
 
   @override
   void dispose() {
+    _sharing.setMethodCallHandler(null);
     _controls.hardwareVolume.removeListener(_syncNativeState);
     _controls.phoneMic.removeListener(_syncNativeState);
     _controls.phoneSpeaker.removeListener(_syncNativeState);

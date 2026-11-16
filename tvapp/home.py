@@ -1004,6 +1004,8 @@ class Home(Gtk.Window):
         settings = self.tops.get("settings")
         if settings and settings.category == "System":
             settings.update_system_status(state)
+        elif settings and settings.category == "Connections":
+            settings.update_sharing(state)
         self.set_remote(state.get("remote"))
         settings = self.tops.get("settings")
         if settings and not settings.torbox_busy and "torbox" in state:

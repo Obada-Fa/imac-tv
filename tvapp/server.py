@@ -36,6 +36,7 @@ import wallpapers
 import browser
 import nowplaying
 import music_cast
+import phone_sharing
 import wifi
 import bluetooth
 import phonemic
@@ -552,6 +553,8 @@ class Controller:
         self._yt_pending_mode = None    # (deadline, mode) while MPRIS changes tracks
         self._yt_busy = False
         self._yt_tick_at = 0.0
+        self.sharing = phone_sharing.Sharing(DATA, DISPLAY_ENV, self._sharing_takeover,
+                                                 lambda: self._return_home("home"), self.status_changed)
         threading.Thread(target=self._watch, daemon=True).start()
 
     @staticmethod
@@ -722,6 +725,22 @@ class Controller:
         except Exception:
             LOG.exception("Could not close paused YouTube")
 
+    def _sharing_takeover(self):
+        if self._mpv_active():
+            try:
+                mpv("set_property", "pause", True)
+                win = window_for("player")
+                if win:
+                    minimize(win)
+            except (OSError, RuntimeError):
+                pass
+        with self.lock:
+            self.generation += 1
+            self.buffering = None
+            self.health_suggestion = None
+            self.phase = "ready"
+        self._yield_audio()
+
     def _yield_audio(self):
         """A movie is starting: pause whatever else is playing and hide VacuumTube. Never resumed afterwards."""
         try:
@@ -772,6 +791,7 @@ class Controller:
         while True:
             time.sleep(2)
             self.updater.tick()
+            self.sharing.ensure_airplay()
             if time.monotonic() - self._yt_check_at >= 60:
                 self._yt_check_at = time.monotonic()
                 threading.Thread(target=self._close_youtube_if_long_paused, daemon=True).start()
@@ -972,6 +992,10 @@ class Controller:
 
     def _one_player(self):
         cast = music_cast.now(DATA)
+        if getattr(self, "sharing", None) and self.sharing.state().get("source"):
+            if cast and cast["status"] == "Playing":
+                music_cast.pause(DATA)
+            return
         if not cast or cast["status"] != "Playing":
             # Only read D-Bus at the faster rate when the cast receiver is playing.
             with self.lock:
@@ -998,6 +1022,8 @@ class Controller:
     def _youtube_tick(self):
         """Every few seconds: classify the YouTube track (again on every track change) and bring a video up."""
         try:
+            if getattr(self, "sharing", None) and self.sharing.state().get("source"):
+                return
             youtube_volume.enforce()
             self.youtube_link.ensure()
             self.youtube_link.set_video(self.app == "youtube")    # behind Home YouTube only plays sound
@@ -2116,7 +2142,8 @@ class Controller:
         percent, muted = self._system_volume()  # one system volume, also while mpv plays
         cpu_temp, gpu_temp = sysinfo.temps()
         gui = self._gui_up()
-        player = playback()
+        sharing = self.sharing.state() if hasattr(self, "sharing") else {}
+        player = {"active": False} if sharing.get("source") else playback()
         yt_now = self.youtube_now()
         win = window_for(app) if gui else None
         if current_media is not None:
@@ -2149,6 +2176,7 @@ class Controller:
                 "timer": {"active": bool(deadline), "deadline": deadline},
                 "visualizer": self.visualizer_state(),
                 "music_cast": music_cast.now(DATA),
+                "sharing": sharing,
                 "phone_audio": self.phone_audio(),
                 "discord": app == "discord" or (gui and discord_in_front()),
                 "capabilities": {"timeline": player["active"], "subtitles": player["active"], "audio": player["active"]}}
@@ -2424,6 +2452,17 @@ class Controller:
             raise RuntimeError(str(exc)[:200])
 
     def action(self, action, params):
+        sharing = getattr(self, "sharing", None)
+        if sharing is not None:
+            if action == "sharing":
+                return sharing.control(params.get("cmd"))
+            if sharing.state().get("source"):
+                if action in ("home", "back"):
+                    return sharing.control("stop")
+                if action in ("select", "app_open", "play_media", "play_twitch"):
+                    sharing.stop(return_home=False)
+                elif action in ("left", "right", "play"):
+                    return sharing.control({"left": "previous", "right": "next", "play": "pause"}[action])
         if action == "update_check":
             return self.updater.check()
         if action == "update_install":
@@ -3341,6 +3380,8 @@ class Handler(BaseHTTPRequestHandler):
             CONTROL.status_changed()        # a command may change the state: no shared /api/state answer from before it
         try:
             self._do_post()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
         finally:
             if CONTROL:
                 CONTROL.status_changed()
@@ -3353,6 +3394,25 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(403, {"error": "Invalid origin"})
             return
         try:
+            if parsed.path in ("/api/sharing/upload", "/api/sharing/mirror"):
+                if not self.authorised(parsed.query):
+                    self.respond(401, {"error": "Phone is not paired"})
+                    return
+                self.close_connection = True
+                self.connection.settimeout(15)
+                if parsed.path.endswith("/mirror"):
+                    if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+                        raise ValueError("Expected a live stream")
+                    CONTROL.sharing.mirror(self)
+                    self.respond(200, {"ok": True})
+                else:
+                    if self.headers.get("Transfer-Encoding"):
+                        raise ValueError("Expected a fixed-size file")
+                    q = parse_qs(parsed.query)
+                    media = CONTROL.sharing.upload(self.rfile, int(self.headers.get("Content-Length", "0")),
+                                                   q.get("name", ["Phone media"])[0], q.get("id", [None])[0])
+                    self.respond(200, {"ok": True, "result": media})
+                return
             if parsed.path == "/api/retro/upload":
                 self.retro_upload(parsed)
                 return
@@ -3421,6 +3481,8 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError) as exc:
             LOG.info("Rejected request: %s", media_config.redact(exc))
             self.respond(400, {"error": media_config.redact(exc)})
+        except (BrokenPipeError, ConnectionResetError):
+            raise
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
             LOG.exception("Command failed")
             self.respond(503, {"error": media_config.redact(exc)[:300]})
@@ -3434,6 +3496,7 @@ def serve():
     CONTROL = Controller()
     if not os.environ.get("IMACTV_DATA_DIR"):  # not in tests: let phones through an active firewall (no-op without the helper)
         threading.Thread(target=music_cast.firewall_helper, args=("open",), daemon=True).start()
+    CONTROL.sharing.ensure_airplay()
     MUSIC.start()                             # "Nexus TV" in the YouTube Music cast menu, sound only
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True

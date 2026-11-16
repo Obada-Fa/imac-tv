@@ -3,6 +3,8 @@ package com.nexus.tv
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -22,6 +24,12 @@ class MainActivity : FlutterActivity() {
     private var linkChannel: MethodChannel? = null
     /** A nexustv:// link that started the app, until Flutter asks for it. */
     private var initialLink: String? = null
+    private var sharingChannel: MethodChannel? = null
+    private var pendingShare = emptyList<Uri>()
+    private var pendingMirror: Intent? = null
+    private var mirroringResult: MethodChannel.Result? = null
+    private var mirrorAudioRequest: (() -> Unit)? = null
+
 
     private fun tvLink(intent: Intent?): String? =
         intent?.data?.takeIf { it.scheme == "nexustv" }?.toString()
@@ -34,12 +42,19 @@ class MainActivity : FlutterActivity() {
             PhoneSpeakerService.stop(this)
         }
         if (savedInstanceState == null) initialLink = tvLink(intent)
+        pendingShare = PhoneMedia.sharedUris(intent)
         super.onCreate(savedInstanceState)
     }
 
     // singleTop: a QR link while the app is open arrives here instead of a second activity.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val shared = PhoneMedia.sharedUris(intent)
+        if (shared.isNotEmpty()) {
+            pendingShare = shared
+            sharingChannel?.invokeMethod("shared", null)
+            return
+        }
         val link = tvLink(intent) ?: return
         setIntent(intent)
         linkChannel?.invokeMethod("link", link)
@@ -51,6 +66,54 @@ class MainActivity : FlutterActivity() {
             setMethodCallHandler { call, result ->
                 when (call.method) {
                     "initialLink" -> { result.success(initialLink); initialLink = null }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        sharingChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "nexus_tv/sharing").apply {
+            setMethodCallHandler { call, result ->
+                val origin = call.argument<String>("origin").orEmpty()
+                val cookie = "imactv=" + call.argument<String>("token").orEmpty()
+                when (call.method) {
+                    "share" -> {
+                        val files = pendingShare
+                        if (files.isEmpty() || !runCatching { TvConnection.validate(origin, cookie) }.isSuccess) {
+                            result.success(false)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            ShareUploadService.start(this@MainActivity, origin, cookie, files)
+                            pendingShare = emptyList()
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.error("share_failed", "Open Nexus TV to finish sharing", null)
+                        }
+                    }
+                    "mirror" -> {
+                        try {
+                            TvConnection.validate(origin, cookie)
+                            check(pendingMirror == null)
+                            val manager = getSystemService(MediaProjectionManager::class.java)
+                            pendingMirror = Intent(this@MainActivity, ScreenMirrorService::class.java)
+                                .putExtra("origin", origin).putExtra("cookie", cookie)
+                            mirroringResult = result
+                            val launch = {
+                                @Suppress("DEPRECATION")
+                                startActivityForResult(manager.createScreenCaptureIntent(), 7311)
+                            }
+                            if (Build.VERSION.SDK_INT >= 29 &&
+                                checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                mirrorAudioRequest = launch
+                                requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7312)
+                            } else launch()
+                        } catch (_: Exception) {
+                            if (mirroringResult === result) {
+                                pendingMirror = null
+                                mirroringResult = null
+                            }
+                            result.error("mirror_failed", "Could not start screen sharing", null)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -136,7 +199,12 @@ class MainActivity : FlutterActivity() {
                                 @Suppress("DEPRECATION")
                                 startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                                     addCategory(Intent.CATEGORY_OPENABLE)
-                                    type = "image/*"
+                                    val share = call.argument<Boolean>("sharing") == true
+                                    type = if (share) "*/*" else "image/*"
+                                    if (share) {
+                                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/*", "video/*"))
+                                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                    }
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }, 7303)
                             } catch (_: Exception) {
@@ -198,6 +266,12 @@ class MainActivity : FlutterActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 7312) {
+            val launch = mirrorAudioRequest
+            mirrorAudioRequest = null
+            launch?.invoke()
+            return
+        }
         if (requestCode == 7305) {
             val launch = pendingMic
             pendingMic = null
@@ -225,9 +299,27 @@ class MainActivity : FlutterActivity() {
     @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 7311) {
+            val service = pendingMirror
+            val result = mirroringResult
+            pendingMirror = null
+            mirroringResult = null
+            if (resultCode == RESULT_OK && service != null && data != null) {
+                try {
+                    startForegroundService(service.putExtra("permission", data))
+                    result?.success(null)
+                } catch (_: Exception) {
+                    result?.error("mirror_failed", "Could not start screen sharing", null)
+                }
+            } else {
+                result?.success(null)
+            }
+        }
         if (requestCode == 7303) {
             val uri = data?.data?.toString()
-            pendingImage?.success(if (resultCode == RESULT_OK && uri != null) listOf(uri) else emptyList<String>())
+            pendingImage?.success(if (resultCode == RESULT_OK && uri != null) listOf(uri) else data?.clipData?.let { clip ->
+                (0 until clip.itemCount).map { clip.getItemAt(it).uri.toString() }
+            }.orEmpty())
             pendingImage = null
         }
     }

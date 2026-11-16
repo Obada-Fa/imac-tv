@@ -171,6 +171,18 @@ Clones `https://github.com/shy1132/VacuumTube.git`, installs Node.js/npm depende
 
 ---
 
+## Show photos, videos, or a phone screen
+
+Connect the phone and Nexus TV to the same local network.
+
+- **iPhone screen:** Open Control Center → Screen Mirroring → Nexus TV. Enter the PIN shown on the TV if prompted.
+- **Android screen:** In the Nexus TV app, open Show on TV → Mirror screen and approve Android's prompt. Use the Android sharing indicator or the remote's Stop sharing button to end the session. Android 10 and later can include media audio when the app permits capture.
+- **Photos and videos:** In the paired web remote, open Show on TV → Choose photos or videos. On Android you can also select media in Gallery or Google Photos and tap Share → Nexus TV. If you haven't paired the app yet, select and pair the TV first.
+
+The first supported file appears as soon as it finishes transferring. Use Previous and Next to browse the selection. Stop sharing returns to TV Home and clears the temporary files. Keep a browser upload open until it finishes.
+
+Run the installer on the TV to add the receiver dependencies. If the iPhone can't see Nexus TV, check that Avahi is running, both devices are on the same LAN, and the firewall allows AirPlay. Use Settings → Connections → Show on TV → Restart AirPlay to restart the receiver. The Android receiver uses the existing paired remote connection.
+
 ## Project Structure
 
 ```

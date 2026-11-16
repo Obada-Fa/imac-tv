@@ -121,13 +121,23 @@ else
     flatpak
     unzip
     mpv
+    ffmpeg
+    libheif-examples
+    uxplay
+    avahi-daemon
+    gstreamer1.0-tools
+    gir1.2-gstreamer-1.0
+    gstreamer1.0-plugins-base
+    gstreamer1.0-plugins-good
+    gstreamer1.0-plugins-bad
+    gstreamer1.0-libav
     fonts-noto-core
     fonts-noto-ui-core
     fonts-inter
     streamlink
   )
   # Optional packages: install when the distro has them, otherwise carry on.
-  OPTIONAL_PKGS=(fonts-noto-core fonts-noto-ui-core fonts-inter streamlink)
+  OPTIONAL_PKGS=(uxplay libheif-examples fonts-noto-core fonts-noto-ui-core fonts-inter streamlink)
   REQUIRED_PKGS=()
   for pkg in "${APT_PKGS[@]}"; do
     if [[ " ${OPTIONAL_PKGS[*]} " == *" $pkg "* ]]; then

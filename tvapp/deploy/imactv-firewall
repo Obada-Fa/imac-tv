@@ -3,11 +3,11 @@
 # allowed without a password in /etc/sudoers.d/imactv-tv. It takes no input beyond "open" or "status":
 #   open    let phones reach the TV through an active firewall (ufw, firewalld), then print the status
 #   status  print "off" (no firewall running), "open" or "closed"
-# Ports: 8765/tcp phone remote, 8766/tcp cast (DIAL) page, 1900/udp cast discovery (SSDP).
+# Ports: 8765/tcp phone remote, 8766/tcp cast (DIAL) page, 1900/udp cast discovery (SSDP), 5353/udp mDNS, 7000–7002 AirPlay.
 set -u
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-TCP="8765 8766"
-UDP="1900"
+TCP="8765 8766 7000 7001 7002"
+UDP="1900 5353 7000 7001 7002"
 
 ufw_on() { command -v ufw >/dev/null 2>&1 && grep -qs '^ENABLED=yes' /etc/ufw/ufw.conf; }
 firewalld_on() { command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; }

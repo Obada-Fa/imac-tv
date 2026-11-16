@@ -309,7 +309,11 @@
   function render(s) {
     renderTorboxRow('set-torbox-row', s.torbox);
     renderArabicRow(s.arabic);
+    if (!state && window.NexusTv) window.NexusTv.postMessage(JSON.stringify({action: 'share'}));
     state = s;
+    $('show-on-tv').hidden = !s.sharing?.media && !s.sharing?.airplay;
+    $('show-on-tv').textContent = s.sharing?.source ? 'Sharing on TV' : 'Show on TV';
+    if (sheetName === 'sharing') renderSharing();
     if (!setState && !settingsAsked) { settingsAsked = true; loadSettings(); }   // node shape + Home's photo
     pair.hidden = true; $('connection').hidden = false;
     connected(Boolean(s.gui), s.gui ? '● Connected' : '● TV starting');
@@ -851,15 +855,107 @@
     if (state) sessionStorage.setItem('mode-' + (state.discord || state.app === 'discord' ? 'discord' : state.app), which);
   }
 
+  $('show-on-tv').onclick = () => openSheet('sharing');
+  let upload = null;
+
+  function renderSharing() {
+    const sharing = state?.sharing || {};
+    const item = sharing.item;
+    $('sharing-state').textContent = item ? `${sharing.index + 1} / ${sharing.count} · ${item.name}` :
+      sharing.source ? 'Screen mirroring' : sharing.error || '';
+    $('sharing-queue').hidden = !item;
+    $('sharing-video').hidden = item?.kind !== 'video';
+    $('sharing-stop').hidden = !sharing.source && !upload;
+    $('sharing-files').disabled = !!upload || !sharing.media;
+    $('sharing-airplay').hidden = !sharing.airplay;
+    $('sharing-airplay').textContent = sharing.airplay_ready ?
+      'iPhone · Control Center → Screen Mirroring → Nexus TV' : 'AirPlay receiver unavailable';
+    $('sharing-restart').hidden = !sharing.airplay;
+    $('sharing-mirror').hidden = !window.NexusTv || !sharing.mirror;
+  }
+
+  async function shareFiles(files) {
+    if (upload || !files.length) return;
+    const job = upload = {request: null, cancelled: false};
+    let id;
+    let error;
+    renderSharing();
+    try {
+      for (const [index, file] of files.entries()) {
+        if (job.cancelled) break;
+        const query = new URLSearchParams({name: file.name});
+        if (id) query.set('id', id);
+        try {
+          const result = await new Promise((resolve, reject) => {
+            const request = job.request = new XMLHttpRequest();
+            request.open('POST', '/api/sharing/upload?' + query);
+            request.responseType = 'json';
+            request.upload.onprogress = event => {
+              const percent = Math.floor(100 * event.loaded / file.size);
+              const status = $('sharing-progress');
+              if (status) status.textContent = `Sending ${index + 1} of ${files.length} · ${percent}%`;
+            };
+            request.onload = () => request.status === 200 ? resolve(request.response.result) :
+              reject(new Error(request.response?.error || 'Could not send this file'));
+            request.onerror = request.onabort = () => reject(new Error('Upload interrupted'));
+            request.send(file);
+          });
+          id = result.id;
+          if (state) state.sharing = result;
+          if (sheetName === 'sharing') renderSharing();
+        } catch (err) {
+          error = err.message;
+          if (id || job.cancelled) break;
+        }
+      }
+    } finally {
+      upload = null;
+      if (sheetName === 'sharing') {
+        $('sharing-progress').textContent = job.cancelled ? '' : error || '';
+        renderSharing();
+      }
+      refresh();
+    }
+  }
+
   function openSheet(name) {
     keyboard.close();
     sheetName = name; sheet.hidden = false; updateTabbar();
-    $('sheet-title').textContent = {web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', ytsearch: 'Search YouTube', arabic: 'ArabP2P sign in', tmdb: 'TMDB key', subdl: 'SubDL key', subsource: 'Subsource key', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
+    $('sheet-title').textContent = {sharing: 'Show on TV', web: 'Browser', more: 'Quick actions', off: 'Turn off', torbox: 'Connect TorBox', ytsearch: 'Search YouTube', arabic: 'ArabP2P sign in', tmdb: 'TMDB key', subdl: 'SubDL key', subsource: 'Subsource key', subs: 'Subtitles', audio: 'Audio', others: 'All apps', output: 'Sound output'}[name];
     const content = $('sheet-content');
     delete content.dataset.sig;
     if (name === 'subs' || name === 'audio') { renderTrackSheet(); return; }
     if (name === 'others') { renderOthersSheet(); return; }
-    if (name === 'web') { renderWebSheet(); return; }
+    if (name === 'sharing') {
+      content.innerHTML = `<p id="sharing-state" class="meta" role="status"></p>
+        <div class="sheet-row"><button id="sharing-files" type="button">Choose photos or videos</button>
+        <button id="sharing-mirror" type="button" hidden>Mirror screen</button></div>
+        <input id="sharing-picker" type="file" accept="image/*,video/*" multiple hidden>
+        <p id="sharing-progress" class="meta" role="status"></p><p id="sharing-airplay" class="meta"></p>
+        <div id="sharing-queue" class="sheet-row" hidden><button data-share="previous">Previous</button><button data-share="next">Next</button></div>
+        <div id="sharing-video" class="sheet-row" hidden><button data-share="rewind">−10s</button><button data-share="pause">Play / Pause</button><button data-share="forward">+10s</button></div>
+        <div class="sheet-row"><button id="sharing-restart" data-share="restart_airplay">Restart AirPlay</button>
+        <button id="sharing-stop" data-share="stop">Stop sharing</button></div>`;
+      $('sharing-files').onclick = () => $('sharing-picker').click();
+      $('sharing-picker').onchange = event => {
+        const files = Array.from(event.target.files);
+        event.target.value = '';
+        shareFiles(files);
+      };
+      $('sharing-mirror').onclick = () => window.NexusTv.postMessage(JSON.stringify({action: 'mirror'}));
+      content.querySelectorAll('[data-share]').forEach(button => {
+        button.onclick = async () => {
+          if (button.dataset.share === 'stop' && upload) {
+            upload.cancelled = true;
+            upload.request?.abort();
+          }
+          try { await send('sharing', {cmd: button.dataset.share}); }
+          catch (_) { /* send displays the TV error */ }
+          finally { refresh(); }
+        };
+      });
+      renderSharing();
+    } else if (name === 'web') { renderWebSheet(); return; }
     if (name === 'output') { renderOutputSheet(); return; }
     if (name === 'torbox') {
       renderTorbox(content);
